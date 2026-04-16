@@ -88,14 +88,57 @@ export function schedulePersist(): void {
   persistTimer = setTimeout(() => {
     persistTimer = null;
     const state = store.getState();
+    const edges: Record<string, { dx?: number; dy?: number }> = {};
+    for (const [id, v] of state.edgeOffsets) edges[id] = { ...v };
     postToHost({
       type: 'layout:persist',
       payload: {
-        tables: toTableLayoutRecord(state.positions, state.hiddenTables),
+        tables: toTableLayoutRecord(state.positions, state.hiddenTables, state.tableColors),
         groups: state.groups,
         viewport: state.viewport,
+        edges,
         version: 1,
       },
     });
   }, PERSIST_DEBOUNCE_MS);
+}
+
+/**
+ * Drag the middle segment of a Manhattan edge. Updates `edgeOffsets` on each frame
+ * and schedules persist on pointer up.
+ */
+export function startEdgeDrag(refId: string, axis: 'v' | 'h', e: PointerEvent, target: HTMLElement): void {
+  e.stopPropagation();
+  e.preventDefault();
+  const state = store.getState();
+  const origin = state.edgeOffsets.get(refId) ?? {};
+  const startX = e.clientX;
+  const startY = e.clientY;
+  try { target.setPointerCapture(e.pointerId); } catch { /* noop */ }
+  document.body.classList.add('ddd-is-edge-dragging');
+
+  const onMove = (ev: PointerEvent) => {
+    const zoom = store.getState().viewport.zoom;
+    const dxScreen = ev.clientX - startX;
+    const dyScreen = ev.clientY - startY;
+    const dxWorld = dxScreen / zoom;
+    const dyWorld = dyScreen / zoom;
+    if (axis === 'v') {
+      store.getState().setEdgeOffset(refId, { dx: Math.round((origin.dx ?? 0) + dxWorld) });
+    } else {
+      store.getState().setEdgeOffset(refId, { dy: Math.round((origin.dy ?? 0) + dyWorld) });
+    }
+  };
+  const onUp = (ev: PointerEvent) => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    try { target.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
+    document.body.classList.remove('ddd-is-edge-dragging');
+    schedulePersist();
+  };
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
 }

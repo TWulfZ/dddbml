@@ -59,6 +59,7 @@ export interface TableLayout {
   x: number;
   y: number;
   hidden?: boolean;
+  color?: string;
 }
 
 export interface GroupLayout {
@@ -73,11 +74,17 @@ export interface ViewportLayout {
   zoom: number;
 }
 
+export interface EdgeLayout {
+  dx?: number;
+  dy?: number;
+}
+
 export interface Layout {
   version: 1;
   viewport: ViewportLayout;
   tables: Record<QualifiedName, TableLayout>;
   groups: Record<string, GroupLayout>;
+  edges?: Record<string, EdgeLayout>;
 }
 
 /* ----- Protocol: Host → Webview ----- */

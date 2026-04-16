@@ -5,8 +5,19 @@ export type Side = 'left' | 'right' | 'top' | 'bottom';
 
 export interface EdgeRoute {
   id: string;
-  d: string; // SVG path data
+  d: string;
+  /** Middle segment of the Manhattan path, exposed so callers can render a draggable handle over it. */
+  midSeg?: { x1: number; y1: number; x2: number; y2: number; axis: 'v' | 'h' };
+  /** Resolved port coordinates (world space), useful for hit-testing / highlighting. */
+  source: { x: number; y: number };
+  target: { x: number; y: number };
 }
+
+/** Optional per-endpoint port override — used to align edges with the PK/FK column row. */
+export type ColumnYResolver = (table: QualifiedName, column: string) => number | undefined;
+
+/** User-adjusted offsets to the middle segment, keyed by ref id. */
+export type EdgeOffsetResolver = (refId: string) => { dx?: number; dy?: number } | undefined;
 
 interface PortAssignment {
   sourceSide: Side;
@@ -24,6 +35,8 @@ interface PortAssignment {
 export function routeRefs(
   refs: Ref[],
   bboxOf: (name: QualifiedName) => Bbox | undefined,
+  columnYResolver?: ColumnYResolver,
+  offsetResolver?: EdgeOffsetResolver,
 ): EdgeRoute[] {
   // 1. decide sides for each edge
   const decisions: Array<{ ref: Ref; srcBbox: Bbox; tgtBbox: Bbox; sourceSide: Side; targetSide: Side } | null> = [];
@@ -90,10 +103,30 @@ export function routeRefs(
     const d = decisions[i];
     if (!d) continue;
     const assign = portAssign[i]!;
-    const a = portPoint(d.srcBbox, assign.sourceSide, assign.sourceRatio);
-    const b = portPoint(d.tgtBbox, assign.targetSide, assign.targetRatio);
-    const path = buildManhattanPath(a, assign.sourceSide, b, assign.targetSide);
-    out.push({ id: d.ref.id, d: path });
+
+    let sourceY: number | undefined;
+    let targetY: number | undefined;
+    if (columnYResolver) {
+      if (assign.sourceSide === 'left' || assign.sourceSide === 'right') {
+        const offset = d.ref.source.columns[0] ? columnYResolver(d.ref.source.table, d.ref.source.columns[0]) : undefined;
+        if (offset !== undefined) sourceY = d.srcBbox.y + offset;
+      }
+      if (assign.targetSide === 'left' || assign.targetSide === 'right') {
+        const offset = d.ref.target.columns[0] ? columnYResolver(d.ref.target.table, d.ref.target.columns[0]) : undefined;
+        if (offset !== undefined) targetY = d.tgtBbox.y + offset;
+      }
+    }
+
+    const a = portPoint(d.srcBbox, assign.sourceSide, assign.sourceRatio, sourceY);
+    const b = portPoint(d.tgtBbox, assign.targetSide, assign.targetRatio, targetY);
+
+    // All routes are H-V-H (forced horizontal sides). midX is draggable via offsetResolver.
+    const userOffset = offsetResolver?.(d.ref.id);
+    const midX = Math.round((a.x + b.x) / 2 + (userOffset?.dx ?? 0));
+    const path = `M${a.x},${a.y} H${midX} V${b.y} H${b.x}`;
+    const midSeg = { x1: midX, y1: a.y, x2: midX, y2: b.y, axis: 'v' as const };
+
+    out.push({ id: d.ref.id, d: path, midSeg, source: a, target: b });
   }
   return out;
 }
@@ -116,48 +149,28 @@ function orientationOfSide(side: Side): 'h' | 'v' {
 }
 
 function chooseSides(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {
+  // dbdiagram-style: always exit/enter horizontally. Column-aligned ports only make sense horizontally,
+  // so forcing left/right for every edge keeps routing predictable and aligned with column rows.
   const srcC = centerOf(src);
   const tgtC = centerOf(tgt);
   const dx = tgtC.x - srcC.x;
-  const dy = tgtC.y - srcC.y;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    return dx >= 0
-      ? { sourceSide: 'right', targetSide: 'left' }
-      : { sourceSide: 'left', targetSide: 'right' };
-  }
-  return dy >= 0
-    ? { sourceSide: 'bottom', targetSide: 'top' }
-    : { sourceSide: 'top', targetSide: 'bottom' };
+  return dx >= 0
+    ? { sourceSide: 'right', targetSide: 'left' }
+    : { sourceSide: 'left', targetSide: 'right' };
 }
 
 function centerOf(b: Bbox): { x: number; y: number } {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
 }
 
-function portPoint(b: Bbox, side: Side, ratio: number): { x: number; y: number } {
+function portPoint(b: Bbox, side: Side, ratio: number, overrideY?: number, overrideX?: number): { x: number; y: number } {
   const r = Math.max(0.05, Math.min(0.95, ratio));
   switch (side) {
-    case 'left':   return { x: b.x,           y: b.y + b.h * r };
-    case 'right':  return { x: b.x + b.w,     y: b.y + b.h * r };
-    case 'top':    return { x: b.x + b.w * r, y: b.y };
-    case 'bottom': return { x: b.x + b.w * r, y: b.y + b.h };
+    case 'left':   return { x: b.x,           y: overrideY ?? b.y + b.h * r };
+    case 'right':  return { x: b.x + b.w,     y: overrideY ?? b.y + b.h * r };
+    case 'top':    return { x: overrideX ?? b.x + b.w * r, y: b.y };
+    case 'bottom': return { x: overrideX ?? b.x + b.w * r, y: b.y + b.h };
   }
 }
 
-function buildManhattanPath(a: { x: number; y: number }, aSide: Side, b: { x: number; y: number }, bSide: Side): string {
-  const aH = aSide === 'left' || aSide === 'right';
-  const bH = bSide === 'left' || bSide === 'right';
-
-  if (aH && bH) {
-    const midX = (a.x + b.x) / 2;
-    return `M${a.x},${a.y} H${midX} V${b.y} H${b.x}`;
-  }
-  if (!aH && !bH) {
-    const midY = (a.y + b.y) / 2;
-    return `M${a.x},${a.y} V${midY} H${b.x} V${b.y}`;
-  }
-  if (aH) {
-    return `M${a.x},${a.y} H${b.x} V${b.y}`;
-  }
-  return `M${a.x},${a.y} V${b.y} H${b.x}`;
-}
+// buildManhattanPath is now inlined in routeRefs because chooseSides forces H-V-H only.

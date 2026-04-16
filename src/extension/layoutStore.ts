@@ -1,12 +1,12 @@
 import * as vscode from 'vscode';
-import type { Layout, GroupLayout, TableLayout } from '../shared/types';
+import type { EdgeLayout, Layout, GroupLayout, TableLayout } from '../shared/types';
 
 export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
   return dbmlUri.with({ path: dbmlUri.path + '.layout.json' });
 }
 
 export function emptyLayout(): Layout {
-  return { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {} };
+  return { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
 }
 
 export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
@@ -42,7 +42,22 @@ export function parseLayout(text: string): Layout {
   const viewport = toViewport(r.viewport);
   const tables = toTables(r.tables);
   const groups = toGroups(r.groups);
-  return { version: 1, viewport, tables, groups };
+  const edges = toEdges(r.edges);
+  return { version: 1, viewport, tables, groups, edges };
+}
+
+function toEdges(raw: unknown): Record<string, EdgeLayout> {
+  const out: Record<string, EdgeLayout> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue;
+    const vv = v as Record<string, unknown>;
+    const e: EdgeLayout = {};
+    if (typeof vv.dx === 'number' && Number.isFinite(vv.dx)) e.dx = Math.round(vv.dx);
+    if (typeof vv.dy === 'number' && Number.isFinite(vv.dy)) e.dy = Math.round(vv.dy);
+    if (e.dx !== undefined || e.dy !== undefined) out[k] = e;
+  }
+  return out;
 }
 
 function toViewport(raw: unknown): Layout['viewport'] {
@@ -63,6 +78,7 @@ function toTables(raw: unknown): Record<string, TableLayout> {
     const vv = v as Record<string, unknown>;
     const entry: TableLayout = { x: numeric(vv.x, 0, true), y: numeric(vv.y, 0, true) };
     if (vv.hidden === true) entry.hidden = true;
+    if (typeof vv.color === 'string' && vv.color.length > 0) entry.color = vv.color;
     out[k] = entry;
   }
   return out;
@@ -115,6 +131,7 @@ export function serializeLayout(layout: Layout): string {
     const comma = i < tableKeys.length - 1 ? ',' : '';
     const parts = [`"x": ${Math.round(v.x)}`, `"y": ${Math.round(v.y)}`];
     if (v.hidden) parts.push('"hidden": true');
+    if (v.color) parts.push(`"color": ${JSON.stringify(v.color)}`);
     lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
   });
   lines.push('  },');
@@ -130,7 +147,24 @@ export function serializeLayout(layout: Layout): string {
     const comma = i < groupKeys.length - 1 ? ',' : '';
     lines.push(`    ${JSON.stringify(k)}: {${body}}${comma}`);
   });
-  lines.push('  }');
+
+  const edgeEntries = Object.entries(layout.edges ?? {}).filter(([, v]) => v.dx !== undefined || v.dy !== undefined);
+  if (edgeEntries.length === 0) {
+    lines.push('  },');
+    lines.push('  "edges": {}');
+  } else {
+    lines.push('  },');
+    lines.push('  "edges": {');
+    edgeEntries.sort(([a], [b]) => a.localeCompare(b));
+    edgeEntries.forEach(([k, v], i) => {
+      const parts: string[] = [];
+      if (v.dx !== undefined) parts.push(`"dx": ${Math.round(v.dx)}`);
+      if (v.dy !== undefined) parts.push(`"dy": ${Math.round(v.dy)}`);
+      const comma = i < edgeEntries.length - 1 ? ',' : '';
+      lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
+    });
+    lines.push('  }');
+  }
 
   lines.push('}');
   lines.push('');

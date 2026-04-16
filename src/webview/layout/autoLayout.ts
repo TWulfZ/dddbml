@@ -49,12 +49,21 @@ export function autoLayout(
   return out;
 }
 
+/** Geometric constants used across router, renderer, and layout. MUST match CSS `.ddd-table__header`, `.ddd-table__col`, `.ddd-table__cols`. */
+export const TABLE_HEADER_H = 28;
+export const TABLE_ROW_H = 20;
+export const TABLE_WIDTH = 240;
+export const TABLE_BOTTOM_PAD = 8; // matches .ddd-table__cols padding (4 top + 4 bottom)
+
 /**
  * Estimate node height based on column count. Width fixed.
- * Later (M3 LOD), real measured sizes replace this.
  */
 export function estimateSize(columnCount: number): NodeSize {
-  const HEADER = 28;
-  const ROW = 20;
-  return { width: 240, height: HEADER + columnCount * ROW + 8 };
+  return { width: TABLE_WIDTH, height: TABLE_HEADER_H + columnCount * TABLE_ROW_H + TABLE_BOTTOM_PAD };
+}
+
+/** Y offset (from table top) for the vertical center of a column row at `index`. */
+export function columnCenterY(index: number): number {
+  // 4px top-padding of .ddd-table__cols before rows start.
+  return TABLE_HEADER_H + 4 + index * TABLE_ROW_H + TABLE_ROW_H / 2;
 }

@@ -6,11 +6,13 @@ import { EdgeLayer } from './render/edgeLayer';
 import { CollapsedGroupNode } from './render/collapsedGroupNode';
 import { GroupContainer } from './render/groupContainer';
 import { ZoomButtons } from './render/zoomButtons';
+import { ActionsPanel } from './render/actionsPanel';
 import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
 import { lodForZoom } from './render/lod';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
-import type { QualifiedName, Ref, WebviewToHost } from '../shared/types';
+import { Tooltip } from './render/tooltip';
+import type { QualifiedName, Ref, Table, WebviewToHost } from '../shared/types';
 
 interface AppProps {
   post: (msg: WebviewToHost) => void;
@@ -33,6 +35,7 @@ export function App(_props: AppProps) {
   const ready = useAppStore((s) => s.ready);
   const groupState = useAppStore((s) => s.groups);
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
+  const tableColors = useAppStore((s) => s.tableColors);
   const selection = useAppStore((s) => s.selection);
 
   useEffect(() => {
@@ -53,6 +56,27 @@ export function App(_props: AppProps) {
   const columnCountByTable = useMemo(() => {
     const m = new Map<QualifiedName, number>();
     for (const t of schema.tables) m.set(t.name, t.columns.length);
+    return m;
+  }, [schema]);
+
+  const tablesByName = useMemo(() => {
+    const m = new Map<QualifiedName, Table>();
+    for (const t of schema.tables) m.set(t.name, t);
+    return m;
+  }, [schema]);
+
+  /** Set of "table::column" keys for every column that participates in any ref. */
+  const fkColumnsByTable = useMemo(() => {
+    const m = new Map<QualifiedName, Set<string>>();
+    const add = (table: QualifiedName, col: string) => {
+      let s = m.get(table);
+      if (!s) { s = new Set(); m.set(table, s); }
+      s.add(col);
+    };
+    for (const r of schema.refs) {
+      for (const c of r.source.columns) add(r.source.table, c);
+      for (const c of r.target.columns) add(r.target.table, c);
+    }
     return m;
   }, [schema]);
 
@@ -330,6 +354,37 @@ export function App(_props: AppProps) {
     return m;
   }, [positions, derived.collapsedNodes]);
 
+  // World bounding box covering every rendered element — used to size the SVG edge layer
+  // so paths are inside its coordinate viewport (more robust than overflow:visible on 0x0 parent).
+  const worldBbox = useMemo(() => {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const t of schema.tables) {
+      if (derived.hiddenTables.has(t.name) || derived.collapsedTables.has(t.name)) continue;
+      const pos = positions.get(t.name);
+      if (!pos) continue;
+      const size = estimateSize(t.columns.length);
+      if (pos.x < minX) minX = pos.x;
+      if (pos.y < minY) minY = pos.y;
+      if (pos.x + size.width > maxX) maxX = pos.x + size.width;
+      if (pos.y + size.height > maxY) maxY = pos.y + size.height;
+    }
+    for (const g of derived.collapsedNodes) {
+      if (g.x < minX) minX = g.x;
+      if (g.y < minY) minY = g.y;
+      if (g.x + g.w > maxX) maxX = g.x + g.w;
+      if (g.y + g.h > maxY) maxY = g.y + g.h;
+    }
+    for (const c of derived.containers) {
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x + c.w > maxX) maxX = c.x + c.w;
+      if (c.y + c.h > maxY) maxY = c.y + c.h;
+    }
+    if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 800, h: 600 };
+    const P = 400;
+    return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
+  }, [schema, positions, derived]);
+
   const lod = lodForZoom(viewport.zoom);
   const worldTransform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
   const visibleRefs = visibleNames
@@ -354,13 +409,16 @@ export function App(_props: AppProps) {
             <EdgeLayer
               refs={visibleRefs}
               positions={positionsEffective}
-              columnCountByTable={columnCountByTable}
+              tablesByName={tablesByName}
               groupSizes={derived.collapsedNodes}
+              worldBbox={worldBbox}
             />
             {renderedTables.map((t) => {
               if (visibleNames && !visibleNames.has(t.name)) return null;
               const pos = positions.get(t.name);
               if (!pos) return null;
+              const groupColor = t.groupName ? (groupState[t.groupName]?.color ?? colorForGroup(t.groupName)) : undefined;
+              const tColor = tableColors.get(t.name) ?? groupColor;
               return (
                 <TableNode
                   key={t.name}
@@ -369,6 +427,8 @@ export function App(_props: AppProps) {
                   y={pos.y}
                   lod={lod}
                   selected={selection.has(t.name)}
+                  color={tColor}
+                  fkColumns={fkColumnsByTable.get(t.name)}
                 />
               );
             })}
@@ -406,6 +466,7 @@ export function App(_props: AppProps) {
         ) : null}
         {ready ? <GroupPanel /> : null}
         {ready ? <ZoomButtons /> : null}
+        {ready ? <ActionsPanel /> : null}
       </div>
       {parseError ? (
         <div class="ddd-banner" title={parseError.message}>
@@ -419,6 +480,7 @@ export function App(_props: AppProps) {
           {selection.size > 0 ? ` · ${selection.size} selected` : ''}
         </div>
       ) : null}
+      <Tooltip />
     </>
   );
 }

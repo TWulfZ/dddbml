@@ -88,3 +88,28 @@ export const IconGoToFile = (p?: IconProps) => wrap(
   'M4 2v12h3v-1H5V3h5v3h3v2h1V5l-3-3H4zm7 1.5L12.5 5H11V3.5zM9 10l-1 1 2 2-2 2 1 1 3-3-3-3z',
   p,
 );
+
+export const IconSettings = (p?: IconProps) => wrap(
+  'M9.1 1h-2.2l-.4 2.2-1.1.47-1.86-1.3-1.57 1.56 1.3 1.87-.46 1.1L0.5 7.2v2.2l2.21.4.46 1.1-1.3 1.87 1.57 1.57 1.86-1.3 1.1.46.4 2.2h2.22l.4-2.2 1.1-.46 1.87 1.3 1.56-1.57-1.3-1.86.47-1.1 2.2-.4V7.2l-2.2-.4-.47-1.1 1.3-1.87-1.57-1.57-1.86 1.3-1.1-.46L9.1 1zM8 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z',
+  p,
+);
+
+export const IconClose = (p?: IconProps) => wrap(
+  'M8 7.29 3.35 2.65l-.7.7L7.29 8l-4.64 4.65.7.7L8 8.71l4.65 4.64.7-.7L8.71 8l4.64-4.65-.7-.7L8 7.29z',
+  p,
+);
+
+export const IconSearch = (p?: IconProps) => wrap(
+  'M11.5 6.5a5 5 0 1 1-10 0 5 5 0 0 1 10 0zm-1.42 3.94a5 5 0 1 1 .7-.7l3.54 3.54-.71.7-3.53-3.54z',
+  p,
+);
+
+export const IconChevronUp = (p?: IconProps) => wrap(
+  'M13 10l-5-5-5 5 .7.7L8 6.42l4.3 4.28L13 10z',
+  p,
+);
+
+export const IconFilter = (p?: IconProps) => wrap(
+  'M2 3h12v1.5L9.5 9v4L6.5 11V9L2 4.5V3zm1.2 1 4.3 4.3v2.3l1 .7V8.3L12.8 4H3.2z',
+  p,
+);
