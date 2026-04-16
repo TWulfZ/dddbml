@@ -21,6 +21,15 @@
   ],
   "main": "./dist/extension/extension/extension.js",
   "packageManager": "pnpm@10.33.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dddbml/dddbml"
+  },
+  "homepage": "https://github.com/dddbml/dddbml#readme",
+  "bugs": {
+    "url": "https://github.com/dddbml/dddbml/issues"
+  },
   "contributes": {
     "commands": [
       {
