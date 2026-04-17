@@ -2,7 +2,7 @@
   "name": "dddbml",
   "displayName": "dddbml — DBML Diagram with Git-friendly Layout",
   "description": "Interactive DBML diagram renderer for VSCode with per-table position persistence, TableGroup collapse for DDD contexts, and viewport culling for large schemas (5000+ tables).",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "TWulfZ",
   "icon": "docs/icon.png",
   "engines": {
@@ -70,11 +70,36 @@
       }
     ],
     "keybindings": [
-      { "command": "dddbml.zoomIn",       "key": "ctrl+=",       "mac": "cmd+=",       "when": "activeWebviewPanelId == 'dddbml.diagram'" },
-      { "command": "dddbml.zoomIn",       "key": "ctrl+shift+=", "mac": "cmd+shift+=", "when": "activeWebviewPanelId == 'dddbml.diagram'" },
-      { "command": "dddbml.zoomOut",      "key": "ctrl+-",       "mac": "cmd+-",       "when": "activeWebviewPanelId == 'dddbml.diagram'" },
-      { "command": "dddbml.resetView",    "key": "ctrl+0",       "mac": "cmd+0",       "when": "activeWebviewPanelId == 'dddbml.diagram'" },
-      { "command": "dddbml.fitToContent", "key": "ctrl+1",       "mac": "cmd+1",       "when": "activeWebviewPanelId == 'dddbml.diagram'" }
+      {
+        "command": "dddbml.zoomIn",
+        "key": "ctrl+=",
+        "mac": "cmd+=",
+        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+      },
+      {
+        "command": "dddbml.zoomIn",
+        "key": "ctrl+shift+=",
+        "mac": "cmd+shift+=",
+        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+      },
+      {
+        "command": "dddbml.zoomOut",
+        "key": "ctrl+-",
+        "mac": "cmd+-",
+        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+      },
+      {
+        "command": "dddbml.resetView",
+        "key": "ctrl+0",
+        "mac": "cmd+0",
+        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+      },
+      {
+        "command": "dddbml.fitToContent",
+        "key": "ctrl+1",
+        "mac": "cmd+1",
+        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+      }
     ],
     "menus": {
       "editor/title": [
@@ -95,19 +120,25 @@
     "languages": [
       {
         "id": "dbml",
-        "extensions": [".dbml"],
-        "aliases": ["DBML", "dbml"]
+        "extensions": [
+          ".dbml"
+        ],
+        "aliases": [
+          "DBML",
+          "dbml"
+        ]
       }
     ]
   },
   "activationEvents": [
-    "onLanguage:dbml"
+    "onLanguage:dbml",
+    "onCommand:dddbml.openDiagram"
   ],
   "scripts": {
-    "build:extension": "tsc -p tsconfig.extension.json",
+    "build:extension": "node -e \"require('fs').rmSync('dist/extension',{recursive:true,force:true})\" && esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --minify --sourcemap",
     "build:webview": "vite build",
     "build": "pnpm run build:extension && pnpm run build:webview",
-    "watch:extension": "tsc -p tsconfig.extension.json --watch",
+    "watch:extension": "esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --sourcemap --watch",
     "watch:webview": "vite build --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -125,6 +156,7 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.4.0",
     "vite": "^5.3.0",
     "vitest": "^2.0.0"
