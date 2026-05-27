@@ -21,8 +21,9 @@ export function worldToScreen(world: Point): Point {
 
 export function zoomAt(screen: Point, factor: number): void {
   const state = store.getState();
+  const { zoomMin, zoomMax } = state.settings;
   const vp = state.viewport;
-  const nextZoom = clamp(vp.zoom * factor, 0.08, 4);
+  const nextZoom = clamp(vp.zoom * factor, zoomMin, zoomMax);
   if (nextZoom === vp.zoom) return;
   const world = { x: (screen.x - vp.x) / vp.zoom, y: (screen.y - vp.y) / vp.zoom };
   const nextX = screen.x - world.x * nextZoom;
@@ -46,6 +47,7 @@ export function resetView(): void {
 
 export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
   const state = store.getState();
+  const { zoomMin, zoomMax } = state.settings;
   const tables = state.schema.tables;
   if (tables.length === 0) return;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -64,7 +66,7 @@ export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
   const availH = Math.max(1, rect.height - padding * 2);
   const worldW = Math.max(1, maxX - minX);
   const worldH = Math.max(1, maxY - minY);
-  const zoom = clamp(Math.min(availW / worldW, availH / worldH), 0.08, 4);
+  const zoom = clamp(Math.min(availW / worldW, availH / worldH), zoomMin, zoomMax);
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
   const x = rect.width / 2 - cx * zoom;

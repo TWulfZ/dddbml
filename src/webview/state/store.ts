@@ -1,6 +1,8 @@
 import { createStore } from 'zustand/vanilla';
 import { useSyncExternalStore } from 'preact/compat';
-import type { EdgeLayout, GroupLayout, Layout, ParseError, QualifiedName, Schema, TableLayout, ViewportLayout } from '../../shared/types';
+import type { AppSettings, EdgeLayout, GroupLayout, Layout, ParseError, QualifiedName, Schema, TableLayout, ViewportLayout } from '../../shared/types';
+import { defaultSettings } from '../../shared/types';
+import type { ExporterMeta } from '../../shared/exporters/types';
 
 export interface TooltipState {
   title: string;
@@ -25,6 +27,12 @@ export interface AppState {
   tooltip: TooltipState | null;
   /** Ephemeral view flag: render only PK + FK columns in tables. Not persisted. */
   showOnlyPkFk: boolean;
+  settings: AppSettings;
+  exporters: ExporterMeta[];
+  /** When true, the Export modal is open. */
+  exportPromptOpen: boolean;
+  /** When true, the Settings panel is open. */
+  settingsPanelOpen: boolean;
 }
 
 export interface AppActions {
@@ -42,6 +50,10 @@ export interface AppActions {
   clearSelection(): void;
   setTooltip(t: TooltipState | null): void;
   toggleShowOnlyPkFk(): void;
+  setSettings(s: AppSettings): void;
+  setExporters(list: ExporterMeta[]): void;
+  setExportPromptOpen(open: boolean): void;
+  setSettingsPanelOpen(open: boolean): void;
 }
 
 const initial: AppState = {
@@ -58,6 +70,10 @@ const initial: AppState = {
   selection: new Set(),
   tooltip: null,
   showOnlyPkFk: false,
+  settings: defaultSettings(),
+  exporters: [],
+  exportPromptOpen: false,
+  settingsPanelOpen: false,
 };
 
 export const store = createStore<AppState & AppActions>((set, _get) => ({
@@ -146,6 +162,18 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   toggleShowOnlyPkFk() {
     set((s) => ({ showOnlyPkFk: !s.showOnlyPkFk }));
+  },
+  setSettings(s) {
+    set({ settings: s });
+  },
+  setExporters(list) {
+    set({ exporters: list });
+  },
+  setExportPromptOpen(open) {
+    set({ exportPromptOpen: open });
+  },
+  setSettingsPanelOpen(open) {
+    set({ settingsPanelOpen: open });
   },
 }));
 

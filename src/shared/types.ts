@@ -4,6 +4,8 @@
  * They cross the postMessage boundary and are JSON-serialized.
  */
 
+import type { ExportCommandPayload, ExporterMeta } from './exporters/types';
+
 export type QualifiedName = string; // e.g., "public.users"
 
 export interface Column {
@@ -87,6 +89,45 @@ export interface Layout {
   edges?: Record<string, EdgeLayout>;
 }
 
+/* ----- Settings ----- */
+
+export interface AppSettings {
+  zoomStep: number;
+  zoomMin: number;
+  zoomMax: number;
+  lod: {
+    mediumThreshold: number;
+    lowThreshold: number;
+  };
+  export: {
+    defaultFormat: string;
+    typeorm: {
+      dialect: string;
+      singularize: boolean;
+      includeImports: boolean;
+      emitNullableExplicit: boolean;
+    };
+  };
+}
+
+export function defaultSettings(): AppSettings {
+  return {
+    zoomStep: 1.2,
+    zoomMin: 0.08,
+    zoomMax: 4,
+    lod: { mediumThreshold: 0.6, lowThreshold: 0.3 },
+    export: {
+      defaultFormat: 'typeorm',
+      typeorm: {
+        dialect: 'postgres',
+        singularize: true,
+        includeImports: true,
+        emitNullableExplicit: true,
+      },
+    },
+  };
+}
+
 /* ----- Protocol: Host → Webview ----- */
 
 export type ViewportCommand = 'zoomIn' | 'zoomOut' | 'resetView' | 'fitToContent';
@@ -96,7 +137,11 @@ export type HostToWebview =
   | { type: 'layout:loaded'; payload: Layout }
   | { type: 'layout:external-change'; payload: Layout }
   | { type: 'theme:change'; payload: { kind: 'light' | 'dark' } }
-  | { type: 'viewport:command'; payload: { action: ViewportCommand } };
+  | { type: 'viewport:command'; payload: { action: ViewportCommand } }
+  | { type: 'exporters:list'; payload: { exporters: ExporterMeta[] } }
+  | { type: 'export:result'; payload: { ok: boolean; warnings?: string[]; message?: string } }
+  | { type: 'settings:loaded'; payload: AppSettings }
+  | { type: 'export:prompt' };
 
 /* ----- Protocol: Webview → Host ----- */
 
@@ -105,4 +150,23 @@ export type WebviewToHost =
   | { type: 'layout:persist'; payload: Partial<Layout> }
   | { type: 'command:reveal'; payload: { tableName: QualifiedName } }
   | { type: 'command:pruneOrphans' }
+  | { type: 'command:export'; payload: ExportCommandPayload }
+  | { type: 'settings:update'; payload: Partial<FlatSettingsPatch> }
   | { type: 'error:log'; payload: { message: string; stack?: string } };
+
+/**
+ * Flat dotted-key patch shape used by `settings:update`. Keys match the
+ * `dddbml.*` configuration keys (without the `dddbml.` prefix).
+ */
+export interface FlatSettingsPatch {
+  'zoomStep': number;
+  'zoomMin': number;
+  'zoomMax': number;
+  'lod.mediumThreshold': number;
+  'lod.lowThreshold': number;
+  'export.defaultFormat': string;
+  'export.typeorm.dialect': string;
+  'export.typeorm.singularize': boolean;
+  'export.typeorm.includeImports': boolean;
+  'export.typeorm.emitNullableExplicit': boolean;
+}

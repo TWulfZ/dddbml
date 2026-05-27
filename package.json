@@ -49,6 +49,11 @@
         "category": "dddbml"
       },
       {
+        "command": "dddbml.exportSchema",
+        "title": "dddbml: Export Schema…",
+        "category": "dddbml"
+      },
+      {
         "command": "dddbml.zoomIn",
         "title": "dddbml: Zoom In",
         "category": "dddbml"
@@ -128,11 +133,80 @@
           "dbml"
         ]
       }
-    ]
+    ],
+    "configuration": {
+      "title": "dddbml",
+      "properties": {
+        "dddbml.zoomStep": {
+          "type": "number",
+          "default": 1.2,
+          "minimum": 1.01,
+          "maximum": 4,
+          "description": "Multiplicative zoom factor applied per zoom-in / zoom-out click or keyboard shortcut."
+        },
+        "dddbml.zoomMin": {
+          "type": "number",
+          "default": 0.08,
+          "minimum": 0.01,
+          "maximum": 1,
+          "description": "Minimum allowed zoom level (1 = 100%)."
+        },
+        "dddbml.zoomMax": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Maximum allowed zoom level (1 = 100%)."
+        },
+        "dddbml.lod.mediumThreshold": {
+          "type": "number",
+          "default": 0.6,
+          "minimum": 0.05,
+          "maximum": 1,
+          "description": "Below this zoom level, tables render in header-only LOD (name only, no columns)."
+        },
+        "dddbml.lod.lowThreshold": {
+          "type": "number",
+          "default": 0.3,
+          "minimum": 0.01,
+          "maximum": 1,
+          "description": "Below this zoom level, tables render as colored rectangles (no text). Must be lower than mediumThreshold."
+        },
+        "dddbml.export.defaultFormat": {
+          "type": "string",
+          "default": "typeorm",
+          "description": "Format pre-selected in the Export modal. Must match a registered exporter id."
+        },
+        "dddbml.export.typeorm.dialect": {
+          "type": "string",
+          "default": "postgres",
+          "enum": [
+            "postgres"
+          ],
+          "description": "SQL dialect that drives DBML→TypeScript type mapping for the TypeORM exporter."
+        },
+        "dddbml.export.typeorm.singularize": {
+          "type": "boolean",
+          "default": true,
+          "description": "Singularize class names using an English heuristic (e.g. order_items → OrderItem)."
+        },
+        "dddbml.export.typeorm.includeImports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Emit the typeorm import line at the top of the generated file."
+        },
+        "dddbml.export.typeorm.emitNullableExplicit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Always include `nullable: true/false` in @Column options for non-primary columns."
+        }
+      }
+    }
   },
   "activationEvents": [
     "onLanguage:dbml",
-    "onCommand:dddbml.openDiagram"
+    "onCommand:dddbml.openDiagram",
+    "onCommand:dddbml.exportSchema"
   ],
   "scripts": {
     "build:extension": "node -e \"require('fs').rmSync('dist/extension',{recursive:true,force:true})\" && esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --minify --sourcemap",
@@ -141,6 +215,7 @@
     "watch:extension": "esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --sourcemap --watch",
     "watch:webview": "vite build --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:gen": "mkdir -p test/fixtures && node scripts/gen-small-fixture.mjs > test/fixtures/small.dbml && node scripts/gen-huge-fixture.mjs > test/fixtures/huge.dbml",
     "test": "vitest run",
     "test:watch": "vitest",
     "package": "vsce package --no-dependencies",

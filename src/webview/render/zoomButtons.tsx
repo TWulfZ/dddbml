@@ -5,15 +5,16 @@ import { IconFitScreen, IconMinus, IconPlus } from '../icons';
 
 export function ZoomButtons() {
   const viewport = useAppStore((s) => s.viewport);
+  const zoomStep = useAppStore((s) => s.settings.zoomStep);
   const getEl = () => document.querySelector<HTMLElement>('.ddd-viewport');
 
   return (
     <div class="ddd-zoom">
-      <button class="ddd-zoom__btn" title="Zoom out (Ctrl+-)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(1 / 1.2, el); }}>
+      <button class="ddd-zoom__btn" title="Zoom out (Ctrl+-)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(1 / zoomStep, el); }}>
         <IconMinus size={13} />
       </button>
       <ZoomInput zoom={viewport.zoom} />
-      <button class="ddd-zoom__btn" title="Zoom in (Ctrl+=)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(1.2, el); }}>
+      <button class="ddd-zoom__btn" title="Zoom in (Ctrl+=)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(zoomStep, el); }}>
         <IconPlus size={13} />
       </button>
       <button class="ddd-zoom__btn" title="Fit to content (Ctrl+1)" onClick={() => { const el = getEl(); if (el) fitToContent(el); }}>
@@ -25,13 +26,14 @@ export function ZoomButtons() {
 
 function ZoomInput({ zoom }: { zoom: number }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const { zoomMin, zoomMax } = useAppStore((s) => ({ zoomMin: s.settings.zoomMin, zoomMax: s.settings.zoomMax }));
   const displayed = draft ?? String(Math.round(zoom * 100));
 
   const commit = () => {
     if (draft === null) return;
     const n = parseFloat(draft.replace('%', '').trim());
     if (Number.isFinite(n) && n > 0) {
-      const nextZoom = Math.max(0.08, Math.min(4, n / 100));
+      const nextZoom = Math.max(zoomMin, Math.min(zoomMax, n / 100));
       store.getState().setViewport({ zoom: nextZoom });
     }
     setDraft(null);

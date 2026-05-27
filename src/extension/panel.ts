@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
-import type { HostToWebview, Layout, ViewportCommand, WebviewToHost, Schema } from '../shared/types';
+import type { ExportCommandPayload } from '../shared/exporters/types';
+import type { FlatSettingsPatch, HostToWebview, Layout, Ref, ViewportCommand, WebviewToHost, Schema, QualifiedName } from '../shared/types';
 import { parseDbml } from './parser';
 import { emptyLayout, readLayout, sidecarUri, writeLayout } from './layoutStore';
+import { getExporter, listExporters } from './exporters';
+import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
 
 const PERSIST_DEBOUNCE_MS = 200;
 
@@ -71,9 +74,16 @@ export class DiagramPanel {
       vscode.window.onDidChangeActiveColorTheme(() => {
         this.post({ type: 'theme:change', payload: { kind: this.currentThemeKind() } });
       }),
+      onSettingsChange(() => {
+        this.post({ type: 'settings:loaded', payload: loadSettings() });
+      }),
     );
 
     this.setupWatchers();
+  }
+
+  public openExportModal(): void {
+    this.post({ type: 'export:prompt' });
   }
 
   public reveal(): void {
@@ -141,11 +151,66 @@ export class DiagramPanel {
       case 'command:reveal':
         void this.revealTable(msg.payload.tableName);
         return;
+      case 'command:export':
+        void this.runExport(msg.payload);
+        return;
+      case 'settings:update':
+        void applySettingsPatch(msg.payload as Partial<FlatSettingsPatch>);
+        return;
       case 'error:log':
         console.error('[dddbml webview]', msg.payload.message, msg.payload.stack);
         return;
       default:
         return;
+    }
+  }
+
+  private async runExport(payload: ExportCommandPayload): Promise<void> {
+    const exporter = getExporter(payload.formatId);
+    if (!exporter) {
+      void vscode.window.showErrorMessage(`dddbml: unknown export format "${payload.formatId}".`);
+      this.post({ type: 'export:result', payload: { ok: false, message: 'unknown format' } });
+      return;
+    }
+
+    const filtered = payload.scope === 'selected'
+      ? filterSchemaBySelection(this.lastValidSchema, new Set(payload.selection))
+      : this.lastValidSchema;
+
+    if (filtered.tables.length === 0) {
+      const message = payload.scope === 'selected'
+        ? 'dddbml: nothing to export — selection is empty.'
+        : 'dddbml: nothing to export — schema has no tables.';
+      void vscode.window.showWarningMessage(message);
+      this.post({ type: 'export:result', payload: { ok: false, message } });
+      return;
+    }
+
+    try {
+      const result = exporter.export({
+        schema: filtered,
+        scope: payload.scope,
+        selection: payload.selection,
+        options: payload.options,
+      });
+
+      const doc = await vscode.workspace.openTextDocument({
+        content: result.content,
+        language: result.language,
+      });
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Active, preview: false });
+
+      if (result.warnings && result.warnings.length > 0) {
+        const head = result.warnings.slice(0, 3).join('\n');
+        const more = result.warnings.length > 3 ? `\n…and ${result.warnings.length - 3} more.` : '';
+        void vscode.window.showInformationMessage(`dddbml export warnings:\n${head}${more}`);
+      }
+
+      this.post({ type: 'export:result', payload: { ok: true, warnings: result.warnings } });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      void vscode.window.showErrorMessage(`dddbml: export failed — ${message}`);
+      this.post({ type: 'export:result', payload: { ok: false, message } });
     }
   }
 
@@ -189,6 +254,8 @@ export class DiagramPanel {
     await this.sendLayout();
     await this.sendSchema();
     this.post({ type: 'theme:change', payload: { kind: this.currentThemeKind() } });
+    this.post({ type: 'settings:loaded', payload: loadSettings() });
+    this.post({ type: 'exporters:list', payload: { exporters: listExporters() } });
   }
 
   private async sendSchema(): Promise<void> {
@@ -343,4 +410,15 @@ function splitQualified(qn: string): [string, string] {
   const idx = qn.indexOf('.');
   if (idx < 0) return ['public', qn];
   return [qn.slice(0, idx), qn.slice(idx + 1)];
+}
+
+function filterSchemaBySelection(schema: Schema, selection: Set<QualifiedName>): Schema {
+  const tables = schema.tables.filter((t) => selection.has(t.name));
+  const refs: Ref[] = schema.refs.filter(
+    (r) => selection.has(r.source.table) && selection.has(r.target.table),
+  );
+  const groups = schema.groups
+    .map((g) => ({ ...g, tables: g.tables.filter((t) => selection.has(t)) }))
+    .filter((g) => g.tables.length > 0);
+  return { tables, refs, groups };
 }

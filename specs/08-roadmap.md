@@ -25,22 +25,28 @@ Scope congelado. Ver `00-overview.md` para criterios de éxito.
 
 ## v1.1 (siguiente iteración, post-feedback)
 
-Candidatos ordenados por expected value:
+Implementado:
+
+- **Export to TypeORM** (`specs/09-exporters.md`): genera entities TS desde schema completo o selección. Arquitectura registry+strategy soporta Prisma/SQL/Mermaid sin tocar dispatch.
+- **Settings** (`specs/10-settings.md`): zoom step/min/max, LOD thresholds y defaults de export configurables vía VSC `contributes.configuration`.
+
+Candidatos restantes (ordenados por expected value):
 
 1. **Minimap**: panel flotante con vista aérea, viewport indicator draggable. Crítico para nav de >500 tablas.
 2. **Search & go-to-table**: Ctrl+P dentro del diagrama, centra viewport en la tabla.
 3. **Select tabla → highlight edges**: hover/click en tabla resalta sus relaciones.
 4. **Export PNG/SVG** del viewport actual (útil para docs).
-5. **Rename layout entry** command: facilita cuando usuario renombra tabla en DBML.
-6. **JSON schema publicado**: endpoint estable para `$schema` del layout file.
-7. **Multi-archivo DBML con `!include`**: soporta split de schemas grandes.
+5. **Export to Prisma**: nuevo módulo en `src/extension/exporters/prisma/` + 1 línea de registro. Arquitectura ya lista.
+6. **Rename layout entry** command: facilita cuando usuario renombra tabla en DBML.
+7. **JSON schema publicado**: endpoint estable para `$schema` del layout file.
+8. **Multi-archivo DBML con `!include`**: soporta split de schemas grandes.
 
 ## v2 (speculative)
 
 - **Dangling edges**: edges que apuntan a grupos hidden se dibujan como punteados hacia borde con label.
 - **Mini-layouts por grupo**: cada `TableGroup` puede tener su propio sub-layout auto-optimizado.
 - **Diff visual de schema**: dado `git diff` de `.dbml`, resaltar en el diagrama qué tablas/columnas cambiaron (verde/rojo).
-- **Export a Mermaid/PlantUML**: formato texto para embeber en markdown.
+- **Export a Mermaid/PlantUML / SQL DDL**: nuevos exporters bajo `src/extension/exporters/` siguiendo el contract en `09-exporters.md`.
 - **Better edge routing**: algoritmo basado en A* con obstacle avoidance (edges no cruzan tablas).
 - **Collaborative cursors** vía Live Share API de VSC.
 

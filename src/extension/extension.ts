@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { DiagramPanel } from './panel';
+import './exporters'; // side-effect: register built-in exporters
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
@@ -24,6 +25,22 @@ export function activate(context: vscode.ExtensionContext): void {
       if (active) return active.pruneOrphans();
       const uri = resolveActiveDbmlUri();
       if (uri) DiagramPanel.get(uri)?.pruneOrphans();
+    }),
+
+    vscode.commands.registerCommand('dddbml.exportSchema', async () => {
+      const active = DiagramPanel.getActive();
+      if (active) {
+        active.openExportModal();
+        return;
+      }
+      const uri = resolveActiveDbmlUri();
+      if (!uri) {
+        vscode.window.showErrorMessage('dddbml: open a .dbml file first.');
+        return;
+      }
+      DiagramPanel.createOrShow(context, uri);
+      // Defer the prompt until the panel is hydrated; the webview will be ready shortly.
+      setTimeout(() => DiagramPanel.get(uri)?.openExportModal(), 250);
     }),
 
     vscode.commands.registerCommand('dddbml.zoomIn',       () => DiagramPanel.getActive()?.sendViewportCommand('zoomIn')),

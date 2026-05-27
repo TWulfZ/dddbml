@@ -7,11 +7,14 @@ import { CollapsedGroupNode } from './render/collapsedGroupNode';
 import { GroupContainer } from './render/groupContainer';
 import { ZoomButtons } from './render/zoomButtons';
 import { ActionsPanel } from './render/actionsPanel';
+import { schedulePersist } from './persistence';
 import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
 import { lodForZoom } from './render/lod';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
+import { ExportModal } from './render/exportModal';
+import { SettingsPanel } from './render/settingsPanel';
 import type { QualifiedName, Ref, Table, WebviewToHost } from '../shared/types';
 
 interface AppProps {
@@ -37,6 +40,7 @@ export function App(_props: AppProps) {
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
   const tableColors = useAppStore((s) => s.tableColors);
   const selection = useAppStore((s) => s.selection);
+  const lodThresholds = useAppStore((s) => s.settings.lod);
 
   useEffect(() => {
     if (!ready) return;
@@ -316,6 +320,24 @@ export function App(_props: AppProps) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         store.getState().clearSelection();
+        return;
+      }
+      // Skip when typing inside an input/textarea/contenteditable (e.g. color popup).
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        if (store.getState().past.length === 0) return;
+        store.getState().undo();
+        schedulePersist();
+      } else if ((k === 'z' && e.shiftKey) || k === 'y') {
+        e.preventDefault();
+        if (store.getState().future.length === 0) return;
+        store.getState().redo();
+        schedulePersist();
       }
     };
 
@@ -385,7 +407,7 @@ export function App(_props: AppProps) {
     return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
   }, [schema, positions, derived]);
 
-  const lod = lodForZoom(viewport.zoom);
+  const lod = lodForZoom(viewport.zoom, lodThresholds);
   const worldTransform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
   const visibleRefs = visibleNames
     ? derived.effectiveRefs.filter((r) => visibleNames.has(r.source.table) || visibleNames.has(r.target.table))
@@ -481,6 +503,8 @@ export function App(_props: AppProps) {
         </div>
       ) : null}
       <Tooltip />
+      <ExportModal />
+      <SettingsPanel />
     </>
   );
 }

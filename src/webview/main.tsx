@@ -26,12 +26,25 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
     case 'theme:change':
       state.setTheme(msg.payload.kind);
       return;
+    case 'settings:loaded':
+      state.setSettings(msg.payload);
+      return;
+    case 'exporters:list':
+      state.setExporters(msg.payload.exporters);
+      return;
+    case 'export:prompt':
+      state.setExportPromptOpen(true);
+      return;
+    case 'export:result':
+      state.setExportPromptOpen(false);
+      return;
     case 'viewport:command': {
       const el = document.querySelector<HTMLElement>('.ddd-viewport');
       if (!el) return;
+      const step = state.settings.zoomStep;
       switch (msg.payload.action) {
-        case 'zoomIn':       zoomAtCenter(1.2, el); return;
-        case 'zoomOut':      zoomAtCenter(1 / 1.2, el); return;
+        case 'zoomIn':       zoomAtCenter(step, el); return;
+        case 'zoomOut':      zoomAtCenter(1 / step, el); return;
         case 'resetView':    resetView(); return;
         case 'fitToContent': fitToContent(el); return;
       }

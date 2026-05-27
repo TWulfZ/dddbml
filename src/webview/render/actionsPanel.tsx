@@ -1,14 +1,29 @@
 import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
-import { IconChevronDown, IconChevronUp, IconFilter } from '../icons';
+import { schedulePersist } from '../persistence';
+import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconRedo, IconSettings, IconUndo } from '../icons';
 
 /**
  * Floating bottom-center actions panel. Collapses to a single chevron handle.
- * Hosts view-toggles that are ephemeral (not persisted), e.g. show-only-PK/FK.
+ * Hosts view-toggles that are ephemeral (not persisted), plus modal triggers
+ * (Export, Settings).
  */
 export function ActionsPanel() {
   const [open, setOpen] = useState(false);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const pastLen = useAppStore((s) => s.past.length);
+  const futureLen = useAppStore((s) => s.future.length);
+
+  const undo = () => {
+    if (store.getState().past.length === 0) return;
+    store.getState().undo();
+    schedulePersist();
+  };
+  const redo = () => {
+    if (store.getState().future.length === 0) return;
+    store.getState().redo();
+    schedulePersist();
+  };
 
   return (
     <div class={`ddd-actions-panel ${open ? 'is-open' : 'is-closed'}`}>
@@ -22,12 +37,46 @@ export function ActionsPanel() {
       {open ? (
         <div class="ddd-actions-panel__body">
           <button
+            class="ddd-actions-btn"
+            disabled={pastLen === 0}
+            onClick={undo}
+            title="Undo (Ctrl+Z)"
+          >
+            <IconUndo size={12} />
+            <span>Undo</span>
+          </button>
+          <button
+            class="ddd-actions-btn"
+            disabled={futureLen === 0}
+            onClick={redo}
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            <IconRedo size={12} />
+            <span>Redo</span>
+          </button>
+          <button
             class={`ddd-actions-btn ${showOnlyPkFk ? 'is-active' : ''}`}
             onClick={() => store.getState().toggleShowOnlyPkFk()}
             title="Toggle PK/FK-only column view"
           >
             <IconFilter size={12} />
             <span>{showOnlyPkFk ? 'Show all columns' : 'PK/FK only'}</span>
+          </button>
+          <button
+            class="ddd-actions-btn"
+            onClick={() => store.getState().setExportPromptOpen(true)}
+            title="Export schema to TypeORM (or other formats)"
+          >
+            <IconGoToFile size={12} />
+            <span>Export…</span>
+          </button>
+          <button
+            class="ddd-actions-btn"
+            onClick={() => store.getState().setSettingsPanelOpen(true)}
+            title="Open settings"
+          >
+            <IconSettings size={12} />
+            <span>Settings</span>
           </button>
         </div>
       ) : null}
