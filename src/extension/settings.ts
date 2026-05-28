@@ -18,6 +18,8 @@ export function loadSettings(): AppSettings {
     },
     ui: {
       density: uiDensityOr(cfg.get<string>('ui.density'), defaults.ui.density),
+      snapToGrid: boolOr(cfg.get<boolean>('ui.snapToGrid'), defaults.ui.snapToGrid),
+      gridSize: numberOr(cfg.get<number>('ui.gridSize'), defaults.ui.gridSize),
     },
     export: {
       defaultFormat: stringOr(cfg.get<string>('export.defaultFormat'), defaults.export.defaultFormat),

@@ -28,7 +28,12 @@ export function schedulePersist(): void {
         if (v.dx !== undefined) e.dx = v.dx;
         if (v.dy !== undefined) e.dy = v.dy;
       }
-      if (e.waypoints || e.dx !== undefined || e.dy !== undefined) edges[id] = e;
+      if (v.color) e.color = v.color;
+      if (v.sourceSide) e.sourceSide = v.sourceSide;
+      if (v.targetSide) e.targetSide = v.targetSide;
+      if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
+        edges[id] = e;
+      }
     }
     postToHost({
       type: 'layout:persist',

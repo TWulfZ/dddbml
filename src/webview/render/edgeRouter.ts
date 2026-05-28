@@ -64,7 +64,10 @@ export function routeRefs(
       decisions.push(null);
       continue;
     }
-    const { sourceSide, targetSide } = chooseSides(srcBbox, tgtBbox);
+    const auto = chooseSides(srcBbox, tgtBbox);
+    const layout = layoutResolver?.(r.id);
+    const sourceSide: Side = layout?.sourceSide ?? auto.sourceSide;
+    const targetSide: Side = layout?.targetSide ?? auto.targetSide;
     decisions.push({ ref: r, srcBbox, tgtBbox, sourceSide, targetSide });
   }
 
@@ -205,12 +208,16 @@ function buildPath(
     cur = { x: w.x, y: w.y };
   }
 
-  if (lastAxis === 'h') {
+  if (waypoints.length === 0) {
+    // Default H-V-H: centered trunk (+ legacy dx). `cur` is still the source port here.
     const midX = Math.round((cur.x + b.x) / 2 + legacyDx);
     if (midX !== cur.x) pushCorner({ x: midX, y: cur.y }, false);
     if (b.y !== cur.y) pushCorner({ x: midX, y: b.y }, false);
     pushCorner({ x: b.x, y: b.y }, false);
   } else {
+    // Edited path: route the last vertex STRAIGHT into the port — vertical to b's row at
+    // cur.x, then horizontal into the port. No midX bridge, so the path can never double
+    // back into a spike; every leg flows one direction toward the target.
     if (b.y !== cur.y) pushCorner({ x: cur.x, y: b.y }, false);
     pushCorner({ x: b.x, y: b.y }, false);
   }
@@ -294,6 +301,81 @@ function buildSegments(corners: Array<{ x: number; y: number }>, waypoints: Wayp
     if (endsAtWaypoint) wpIdx++;
   }
   return segs;
+}
+
+/**
+ * Translate a dragged segment along its normal and return the new waypoint list.
+ *
+ * dbdiagram-style "segment dragging": a segment only moves perpendicular to itself, so the
+ * path can never gain a diagonal or a staircase "pico". Editing maps to whole-segment moves —
+ * a segment bounded by stored waypoint(s) shifts those waypoints' relevant coordinate; a bare
+ * bridge/stub segment inserts the minimal waypoint(s) to anchor the new bend. The router
+ * re-bridges the other axis to the (table-following) ports, so the result is port-independent.
+ *
+ * Always call with the ORIGINAL route snapshot + cumulative delta (not the live route) so
+ * repeated pointermove calls are idempotent and segment indices never drift mid-drag.
+ */
+export function computeSegmentDrag(
+  route: EdgeRoute,
+  segIndex: number,
+  dxWorld: number,
+  dyWorld: number,
+  snap: (n: number) => number = Math.round,
+): Waypoint[] {
+  const seg = route.segments[segIndex];
+  const W: Waypoint[] = route.waypoints.map((w) => ({ x: w.x, y: w.y }));
+  if (!seg) return W;
+
+  const startWp = segIndex > 0 ? route.segments[segIndex - 1]!.endWaypointIndex : null;
+  const endWp = seg.endWaypointIndex;
+
+  // Insertion index = number of stored waypoints that appear before this segment.
+  let insertIdx = 0;
+  for (let k = 0; k < segIndex; k++) if (route.segments[k]!.endWaypointIndex !== null) insertIdx++;
+
+  if (seg.axis === 'v') {
+    const newX = snap(seg.x1 + dxWorld);
+    let moved = false;
+    if (startWp !== null && W[startWp]) { W[startWp]!.x = newX; moved = true; }
+    if (endWp !== null && W[endWp]) { W[endWp]!.x = newX; moved = true; }
+    // Bare vertical trunk → one vertex pins x; the router re-bridges the y to the ports.
+    if (!moved) W.splice(insertIdx, 0, { x: newX, y: snap((seg.y1 + seg.y2) / 2) });
+  } else {
+    const newY = snap(seg.y1 + dyWorld);
+    let moved = false;
+    if (startWp !== null && W[startWp]) { W[startWp]!.y = newY; moved = true; }
+    if (endWp !== null && W[endWp]) { W[endWp]!.y = newY; moved = true; }
+    // Bare horizontal segment → clean parallel offset: two vertices at the segment's own
+    // endpoints (never thirds/midpoints), so dragging the middle can't make a tiny segment.
+    if (!moved) {
+      W.splice(insertIdx, 0, { x: snap(seg.x1), y: newY }, { x: snap(seg.x2), y: newY });
+    }
+  }
+  return simplifyWaypoints(W, route.source, route.target);
+}
+
+/**
+ * Drop waypoints that don't bend the polyline `[a, ...W, b]` (three colinear points or a
+ * duplicate), so dragging a segment back into line removes the bend instead of leaving a
+ * dead vertex. Conservative: only removes exact colinear/duplicate vertices.
+ */
+export function simplifyWaypoints(
+  W: Waypoint[],
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): Waypoint[] {
+  if (W.length === 0) return W;
+  const pts = [a, ...W, b];
+  const out: Waypoint[] = [];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1]!;
+    const cur = pts[i]!;
+    const next = pts[i + 1]!;
+    const colinear = (prev.x === cur.x && cur.x === next.x) || (prev.y === cur.y && cur.y === next.y);
+    const dup = prev.x === cur.x && prev.y === cur.y;
+    if (!colinear && !dup) out.push({ x: cur.x, y: cur.y });
+  }
+  return out;
 }
 
 function pushGroup(

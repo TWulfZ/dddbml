@@ -1,7 +1,8 @@
 import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
-import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconRedo, IconSettings, IconUndo } from '../icons';
+import { postToHost } from '../vscode';
+import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconMagnet, IconRedo, IconSettings, IconUndo } from '../icons';
 
 /**
  * Floating bottom-center actions panel. Footer row (undo/redo + chevron) is always visible.
@@ -10,6 +11,7 @@ import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconRedo, Ico
 export function ActionsPanel() {
   const [open, setOpen] = useState(false);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
   const pastLen = useAppStore((s) => s.past.length);
   const futureLen = useAppStore((s) => s.future.length);
 
@@ -42,6 +44,13 @@ export function ActionsPanel() {
           title="Redo (Ctrl+Shift+Z)"
         >
           <IconRedo size={13} />
+        </button>
+        <button
+          class={`ddd-hist-btn ${snapToGrid ? 'is-active' : ''}`}
+          onClick={() => postToHost({ type: 'settings:update', payload: { 'ui.snapToGrid': !snapToGrid } })}
+          title={snapToGrid ? 'Magnet on — snap to grid' : 'Magnet off — free move'}
+        >
+          <IconMagnet size={13} />
         </button>
         <button
           class="ddd-actions-panel__handle"

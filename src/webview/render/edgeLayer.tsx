@@ -1,11 +1,14 @@
 import { useRef, useState } from 'preact/hooks';
-import type { QualifiedName, Ref, Schema, Waypoint } from '../../shared/types';
+import { createPortal } from 'preact/compat';
+import type { QualifiedName, Ref, Schema } from '../../shared/types';
 import { columnCenterY, estimateSize } from '../layout/autoLayout';
-import { routeRefs, type EdgeRoute, type EdgeSegment } from './edgeRouter';
+import { routeRefs, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
-import { useAppStore } from '../state/store';
-import { removeWaypoint, resetEdgeWaypoints, startSegmentAddWaypoint, startWaypointDrag } from '../drag/dragController';
-import { ContextMenu, clampMenuAnchor } from './contextMenu';
+import { store, useAppStore } from '../state/store';
+import { startSegmentDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle } from '../drag/dragController';
+import type { EdgeStyle } from '../state/history';
+import { ColorPopup, popupAnchorFor } from './colorPopup';
+import { IconReset, IconSettings } from '../icons';
 
 interface GroupSize {
   name: string;
@@ -25,27 +28,27 @@ interface EdgeLayerProps {
 
 const GROUP_PREFIX = '__group__:';
 const SEGMENT_HOVER_THICKNESS = 14;
+/** Segments shorter than this (world units) get no drag grip — avoids grips on tiny legs. */
+const MIN_GRIP_LEN = 24;
 
-interface GhostState {
+interface ColorPopupState {
   refId: string;
-  segmentIndex: number;
-  insertIndex: number;
   x: number;
   y: number;
+  before: EdgeStyle;
 }
 
-interface ContextMenuState {
+interface HoverState {
   refId: string;
-  waypointIndex: number;
-  screenX: number;
-  screenY: number;
+  segIndex: number;
 }
 
 export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox }: EdgeLayerProps) {
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
+  const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [ghost, setGhost] = useState<GhostState | null>(null);
-  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [colorPopup, setColorPopup] = useState<ColorPopupState | null>(null);
+  const [hover, setHover] = useState<HoverState | null>(null);
 
   const groupByName = new Map<string, GroupSize>();
   if (groupSizes) for (const g of groupSizes) groupByName.set(g.name, g);
@@ -77,91 +80,76 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
   const refById = new Map<string, Ref>();
   for (const r of refs) refById.set(r.id, r);
 
-  const pointToWorld = (clientX: number, clientY: number): { x: number; y: number } | null => {
+  const worldToScreen = (x: number, y: number): { x: number; y: number } | null => {
     const svg = svgRef.current;
     if (!svg) return null;
-    const pt = svg.createSVGPoint();
-    pt.x = clientX;
-    pt.y = clientY;
     const ctm = svg.getScreenCTM();
     if (!ctm) return null;
-    const w = pt.matrixTransform(ctm.inverse());
-    return { x: w.x, y: w.y };
+    const pt = svg.createSVGPoint();
+    pt.x = x;
+    pt.y = y;
+    const s = pt.matrixTransform(ctm);
+    return { x: s.x, y: s.y };
   };
 
-  const projectOnSegment = (p: { x: number; y: number }, seg: EdgeSegment): Waypoint => {
-    if (seg.axis === 'h') {
-      const minX = Math.min(seg.x1, seg.x2);
-      const maxX = Math.max(seg.x1, seg.x2);
-      return { x: Math.round(Math.max(minX, Math.min(maxX, p.x))), y: seg.y1 };
-    }
-    const minY = Math.min(seg.y1, seg.y2);
-    const maxY = Math.max(seg.y1, seg.y2);
-    return { x: seg.x1, y: Math.round(Math.max(minY, Math.min(maxY, p.y))) };
+  const clientToWorldX = (clientX: number): number | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = 0;
+    return pt.matrixTransform(ctm.inverse()).x;
   };
 
-  const insertIndexFor = (r: EdgeRoute, segIndex: number): number => {
-    const seg = r.segments[segIndex];
-    if (!seg) return r.waypoints.length;
-    if (seg.endWaypointIndex !== null) return seg.endWaypointIndex;
-    return r.waypoints.length;
-  };
-
-  const onSegmentMove = (r: EdgeRoute, segIndex: number, e: PointerEvent) => {
-    const seg = r.segments[segIndex];
-    if (!seg) return;
-    const world = pointToWorld(e.clientX, e.clientY);
-    if (!world) return;
-    const proj = projectOnSegment(world, seg);
-    setGhost({ refId: r.id, segmentIndex: segIndex, insertIndex: insertIndexFor(r, segIndex), x: proj.x, y: proj.y });
-  };
-
-  const onSegmentLeave = (r: EdgeRoute) => {
-    setGhost((g) => (g && g.refId === r.id ? null : g));
+  const tableCenterX = (table: QualifiedName | undefined): number | null => {
+    if (!table) return null;
+    const b = bboxOf(table);
+    return b ? b.x + b.w / 2 : null;
   };
 
   const onSegmentPointerDown = (r: EdgeRoute, segIndex: number, e: PointerEvent) => {
     if (e.button !== 0) return;
-    const seg = r.segments[segIndex];
-    if (!seg) return;
-    const world = pointToWorld(e.clientX, e.clientY);
-    if (!world) return;
-    const proj = projectOnSegment(world, seg);
-    const insertIndex = insertIndexFor(r, segIndex);
-    setGhost(null);
-    startSegmentAddWaypoint(r.id, insertIndex, proj, e, e.currentTarget as SVGElement);
+    store.getState().setSelectedEdge(r.id);
+    startSegmentDrag(r, segIndex, e, e.currentTarget as SVGElement);
   };
 
-  const onWaypointPointerDown = (r: EdgeRoute, waypointIndex: number, e: PointerEvent) => {
+  const onEndpointPointerDown = (r: EdgeRoute, end: 'source' | 'target', e: PointerEvent) => {
     if (e.button !== 0) return;
-    startWaypointDrag(r.id, waypointIndex, e, e.currentTarget as SVGElement);
+    const ref = refById.get(r.id);
+    const cx = tableCenterX(end === 'source' ? ref?.source.table : ref?.target.table);
+    if (cx === null) return;
+    store.getState().setSelectedEdge(r.id);
+    startEndpointDrag(r.id, end, cx, e, e.currentTarget as SVGElement, clientToWorldX);
   };
 
-  const onWaypointDblClick = (r: EdgeRoute, waypointIndex: number) => {
-    removeWaypoint(r.id, waypointIndex);
-  };
+  const clearHover = (refId: string, segIndex: number) =>
+    setHover((h) => (h && h.refId === refId && h.segIndex === segIndex ? null : h));
 
-  const onWaypointContextMenu = (r: EdgeRoute, waypointIndex: number, e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const { x, y } = clampMenuAnchor(e.clientX, e.clientY);
-    setMenu({ refId: r.id, waypointIndex, screenX: x, screenY: y });
+  const selectedRoute = selectedEdgeId ? routes.find((r) => r.id === selectedEdgeId) ?? null : null;
+  // Screen anchor for the floating toolbar: midpoint of the selected edge's middle segment.
+  const toolbarPos = (() => {
+    if (!selectedRoute || selectedRoute.segments.length === 0) return null;
+    const mid = selectedRoute.segments[Math.floor(selectedRoute.segments.length / 2)]!;
+    return worldToScreen((mid.x1 + mid.x2) / 2, (mid.y1 + mid.y2) / 2);
+  })();
+
+  const svgSize = {
+    width: worldBbox.w,
+    height: worldBbox.h,
+    viewBox: `${worldBbox.x} ${worldBbox.y} ${worldBbox.w} ${worldBbox.h}`,
+  };
+  const svgStyle = {
+    position: 'absolute' as const,
+    left: `${worldBbox.x}px`,
+    top: `${worldBbox.y}px`,
   };
 
   return (
     <>
-      <svg
-        ref={svgRef}
-        class="ddd-edges"
-        width={worldBbox.w}
-        height={worldBbox.h}
-        viewBox={`${worldBbox.x} ${worldBbox.y} ${worldBbox.w} ${worldBbox.h}`}
-        style={{
-          position: 'absolute',
-          left: `${worldBbox.x}px`,
-          top: `${worldBbox.y}px`,
-        }}
-      >
+      {/* Base layer: edge strokes, arrowheads, direction dots. Painted behind the tables. */}
+      <svg ref={svgRef} class="ddd-edges" {...svgSize} style={svgStyle}>
         <defs>
           <marker id="ddd-mk-many" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
             <path d="M2,2 L10,6 L2,10 M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.2" />
@@ -180,69 +168,134 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
           const ref = refById.get(r.id);
           const startMarker = ref?.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)';
           const endMarker = ref?.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)';
+          const color = edgeLayouts.get(r.id)?.color;
           return (
-            <g key={r.id}>
+            <g key={r.id} style={color ? { color } : undefined}>
               <path
                 d={r.d}
                 class="ddd-edge"
+                style={color ? { stroke: color } : undefined}
                 marker-start={startMarker}
                 marker-end={endMarker}
               />
-              {r.segments.map((s, i) => (
-                <line
-                  key={`seg-${i}`}
-                  class="ddd-edge-segment-handle"
-                  x1={s.x1}
-                  y1={s.y1}
-                  x2={s.x2}
-                  y2={s.y2}
-                  stroke-width={SEGMENT_HOVER_THICKNESS}
-                  onPointerEnter={(e) => onSegmentMove(r, i, e as unknown as PointerEvent)}
-                  onPointerMove={(e) => onSegmentMove(r, i, e as unknown as PointerEvent)}
-                  onPointerLeave={() => onSegmentLeave(r)}
-                  onPointerDown={(e) => onSegmentPointerDown(r, i, e as unknown as PointerEvent)}
-                />
-              ))}
-              {r.waypoints.map((w, i) => (
-                <circle
-                  key={`wp-${i}`}
-                  class="ddd-edge-waypoint"
-                  cx={w.x}
-                  cy={w.y}
-                  r={5}
-                  onPointerDown={(e) => onWaypointPointerDown(r, i, e as unknown as PointerEvent)}
-                  onDblClick={() => onWaypointDblClick(r, i)}
-                  onContextMenu={(e) => onWaypointContextMenu(r, i, e as unknown as MouseEvent)}
-                />
-              ))}
-              {ghost && ghost.refId === r.id ? (
-                <circle
-                  class="ddd-edge-waypoint--ghost"
-                  cx={ghost.x}
-                  cy={ghost.y}
-                  r={5}
-                />
+              {/* Direction dots (visual only): origin endpoint (PK) and destination endpoint (FK). */}
+              <circle class="ddd-edge-end-dot is-source" cx={r.source.x} cy={r.source.y} r={3} />
+              <circle class="ddd-edge-end-dot is-target" cx={r.target.x} cy={r.target.y} r={3} />
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* Overlay layer: interactive handles. z-index above tables so handles stay grabbable
+          even where an edge crosses a table. SVG is pointer-transparent; only handles catch. */}
+      <svg class="ddd-edges ddd-edges-overlay" {...svgSize} style={svgStyle}>
+        {routes.map((r) => {
+          const selected = r.id === selectedEdgeId;
+          const color = edgeLayouts.get(r.id)?.color;
+          return (
+            <g key={r.id} style={color ? { color } : undefined}>
+              {selected ? (
+                <path d={r.d} class="ddd-edge is-selected" style={color ? { stroke: color } : undefined} />
+              ) : null}
+              {r.segments.map((s, i) => {
+                const len = Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1);
+                const showGhost = hover?.refId === r.id && hover.segIndex === i && len >= MIN_GRIP_LEN;
+                return (
+                  // pointerenter/leave on the <g> treat the grip as part of the segment, so
+                  // moving from the line onto the ghost grip doesn't drop the hover (no flicker).
+                  <g
+                    key={`seg-${i}`}
+                    onPointerEnter={() => setHover({ refId: r.id, segIndex: i })}
+                    onPointerLeave={() => clearHover(r.id, i)}
+                  >
+                    <line
+                      class="ddd-edge-segment-handle"
+                      x1={s.x1}
+                      y1={s.y1}
+                      x2={s.x2}
+                      y2={s.y2}
+                      stroke-width={SEGMENT_HOVER_THICKNESS}
+                      onPointerDown={(e) => { e.stopPropagation(); store.getState().setSelectedEdge(r.id); }}
+                    />
+                    {showGhost ? (
+                      <circle
+                        class={`ddd-edge-grip is-ghost ${s.axis === 'h' ? 'is-h' : 'is-v'}`}
+                        cx={(s.x1 + s.x2) / 2}
+                        cy={(s.y1 + s.y2) / 2}
+                        r={5}
+                        onPointerDown={(e) => onSegmentPointerDown(r, i, e as unknown as PointerEvent)}
+                      />
+                    ) : null}
+                  </g>
+                );
+              })}
+              {selected ? (
+                <>
+                  {r.waypoints.map((w, i) => (
+                    <circle key={`wp-${i}`} class="ddd-edge-vertex" cx={w.x} cy={w.y} r={4} />
+                  ))}
+                  <circle
+                    class="ddd-edge-endpoint"
+                    cx={r.source.x}
+                    cy={r.source.y}
+                    r={5}
+                    onPointerDown={(e) => onEndpointPointerDown(r, 'source', e as unknown as PointerEvent)}
+                  />
+                  <circle
+                    class="ddd-edge-endpoint"
+                    cx={r.target.x}
+                    cy={r.target.y}
+                    r={5}
+                    onPointerDown={(e) => onEndpointPointerDown(r, 'target', e as unknown as PointerEvent)}
+                  />
+                </>
               ) : null}
             </g>
           );
         })}
       </svg>
-      {menu ? (
-        <ContextMenu
-          x={menu.screenX}
-          y={menu.screenY}
-          items={[
-            {
-              label: 'Remove waypoint',
-              onClick: () => removeWaypoint(menu.refId, menu.waypointIndex),
-            },
-            {
-              label: 'Reset edge waypoints',
-              onClick: () => resetEdgeWaypoints(menu.refId),
-              danger: true,
-            },
-          ]}
-          onClose={() => setMenu(null)}
+
+      {selectedRoute && toolbarPos
+        ? createPortal(
+            <div
+              class="ddd-edge-toolbar"
+              style={{ left: `${toolbarPos.x}px`, top: `${toolbarPos.y}px` }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <span class="ddd-edge-toolbar__label">Reset line</span>
+              <button
+                class="ddd-edge-toolbar__btn"
+                title="Reset line"
+                onClick={() => resetEdgeWaypoints(selectedRoute.id)}
+              >
+                <IconReset size={13} />
+              </button>
+              <button
+                class="ddd-edge-toolbar__btn"
+                title="Edge color"
+                onClick={(e) => {
+                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  const { x, y } = popupAnchorFor(rect);
+                  setColorPopup({ refId: selectedRoute.id, x, y, before: readEdgeStyle(selectedRoute.id) });
+                }}
+              >
+                <IconSettings size={13} />
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
+      {colorPopup ? (
+        <ColorPopup
+          current={edgeLayouts.get(colorPopup.refId)?.color ?? '#888888'}
+          x={colorPopup.x}
+          y={colorPopup.y}
+          onPick={(c) => store.getState().setEdgeColor(colorPopup.refId, c)}
+          onReset={() => store.getState().setEdgeColor(colorPopup.refId, null)}
+          onClose={() => {
+            commitEdgeStyle(colorPopup.refId, colorPopup.before, 'Edge color');
+            setColorPopup(null);
+          }}
         />
       ) : null}
     </>

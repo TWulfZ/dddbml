@@ -188,6 +188,18 @@
           ],
           "description": "Visual density of tables and rows. Controls table width, row height, padding, and font size."
         },
+        "dddbml.ui.snapToGrid": {
+          "type": "boolean",
+          "default": false,
+          "description": "Magnet mode: snap table positions and edge bend vertices to the grid, and show a dotted grid background."
+        },
+        "dddbml.ui.gridSize": {
+          "type": "number",
+          "default": 16,
+          "minimum": 2,
+          "maximum": 128,
+          "description": "World-unit spacing of the snap grid used when magnet mode (ui.snapToGrid) is on."
+        },
         "dddbml.export.defaultFormat": {
           "type": "string",
           "default": "typeorm",

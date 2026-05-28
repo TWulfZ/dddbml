@@ -82,8 +82,19 @@ export interface Waypoint {
 }
 
 export interface EdgeLayout {
-  /** User-placed waypoints in absolute world coords. Empty/undefined = auto H-V-H routing. */
+  /**
+   * Orthogonal bend vertices in absolute world coords. Empty/undefined = auto H-V-H routing.
+   * Edited via segment dragging (never free placement) so the path stays axis-aligned: a
+   * waypoint's relevant coordinate pins a trunk while the router re-bridges the other axis to
+   * the (table-following) ports — which is why moving a table never strands a waypoint.
+   */
   waypoints?: Waypoint[];
+  /** Per-edge stroke color (BC palette value or custom hex). Absent = theme default. */
+  color?: string;
+  /** Manual override of the auto-chosen source port side. Absent = `chooseSides`. */
+  sourceSide?: 'left' | 'right';
+  /** Manual override of the auto-chosen target port side. Absent = `chooseSides`. */
+  targetSide?: 'left' | 'right';
   /** @deprecated v1 — single H-V-H midX offset. Migrated to a single waypoint on first persist. */
   dx?: number;
   /** @deprecated v1 — see `dx`. */
@@ -112,6 +123,10 @@ export interface AppSettings {
   };
   ui: {
     density: UiDensity;
+    /** Magnet mode: snap table positions and edge bend vertices to `gridSize`. */
+    snapToGrid: boolean;
+    /** World-unit grid spacing used when `snapToGrid` is on. */
+    gridSize: number;
   };
   export: {
     defaultFormat: string;
@@ -130,7 +145,7 @@ export function defaultSettings(): AppSettings {
     zoomMin: 0.08,
     zoomMax: 4,
     lod: { mediumThreshold: 0.6, lowThreshold: 0.3 },
-    ui: { density: 'cozy' },
+    ui: { density: 'cozy', snapToGrid: false, gridSize: 16 },
     export: {
       defaultFormat: 'typeorm',
       typeorm: {
@@ -180,6 +195,8 @@ export interface FlatSettingsPatch {
   'lod.mediumThreshold': number;
   'lod.lowThreshold': number;
   'ui.density': UiDensity;
+  'ui.snapToGrid': boolean;
+  'ui.gridSize': number;
   'export.defaultFormat': string;
   'export.typeorm.dialect': string;
   'export.typeorm.singularize': boolean;

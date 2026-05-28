@@ -29,7 +29,27 @@ export interface WaypointCommand {
   timestamp: number;
 }
 
-export type EditCommand = MoveCommand | WaypointCommand;
+/** Snapshot of an edge's non-shape style fields (color + port side overrides). */
+export interface EdgeStyle {
+  color?: string;
+  sourceSide?: 'left' | 'right';
+  targetSide?: 'left' | 'right';
+}
+
+/**
+ * Action history entry for edge style changes (color, port-side flip).
+ * Same snapshot semantics as the others: `from`/`to` are full style snapshots.
+ */
+export interface EdgeStyleCommand {
+  kind: 'edgeStyle';
+  refId: string;
+  from: EdgeStyle;
+  to: EdgeStyle;
+  label: string;
+  timestamp: number;
+}
+
+export type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand;
 
 /**
  * Build a MoveCommand from a drag's origins map and the post-drag positions.
@@ -104,4 +124,17 @@ function waypointsEqual(a: Waypoint[], b: Waypoint[]): boolean {
     if (a[i]!.x !== b[i]!.x || a[i]!.y !== b[i]!.y) return false;
   }
   return true;
+}
+
+/** Build an EdgeStyleCommand. Returns null when from and to are identical (no-op). */
+export function buildEdgeStyleCommand(
+  refId: string,
+  from: EdgeStyle,
+  to: EdgeStyle,
+  label: string,
+): EdgeStyleCommand | null {
+  if (from.color === to.color && from.sourceSide === to.sourceSide && from.targetSide === to.targetSide) {
+    return null;
+  }
+  return { kind: 'edgeStyle', refId, from: { ...from }, to: { ...to }, label, timestamp: Date.now() };
 }

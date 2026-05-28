@@ -1,6 +1,8 @@
 import { store } from '../state/store';
-import { buildMoveCommand, buildWaypointCommand } from '../state/history';
+import { buildEdgeStyleCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle } from '../state/history';
 import { schedulePersist } from '../persistence';
+import { computeSegmentDrag, type EdgeRoute } from '../render/edgeRouter';
+import { gridSnapper } from '../layout/grid';
 import type { Waypoint } from '../../shared/types';
 
 /**
@@ -52,12 +54,13 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
 
   const onMove = (ev: PointerEvent) => {
     const currentZoom = store.getState().viewport.zoom;
+    const snap = gridSnapper();
     const dx = (ev.clientX - pointerStartX) / currentZoom;
     const dy = (ev.clientY - pointerStartY) / currentZoom;
     const entries: Array<[string, { x: number; y: number }]> = [];
     for (const [n, o] of origins) {
-      const nx = Math.round(o.x + dx);
-      const ny = Math.round(o.y + dy);
+      const nx = snap(o.x + dx);
+      const ny = snap(o.y + dy);
       entries.push([n, { x: nx, y: ny }]);
       if (n === tableName) {
         node.style.transform = `translate3d(${nx}px, ${ny}px, 0)`;
@@ -84,33 +87,23 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
   window.addEventListener('pointercancel', onUp);
 }
 
-const NEIGHBOR_COLLAPSE_THRESHOLD = 12;
-
 function snapshotWaypoints(refId: string): Waypoint[] {
   const layout = store.getState().edgeLayouts.get(refId);
   return layout?.waypoints ? layout.waypoints.map((w) => ({ x: w.x, y: w.y })) : [];
 }
 
-function adjacentWaypoint(refId: string, index: number, side: -1 | 1): Waypoint | null {
-  const layout = store.getState().edgeLayouts.get(refId);
-  const wps = layout?.waypoints;
-  if (!wps) return null;
-  const i = index + side;
-  if (i < 0 || i >= wps.length) return null;
-  return wps[i] ?? null;
-}
-
 /**
- * Drag an existing waypoint. The user's pointer maps directly to world coords (clamped to
- * integers). On drop, if the dragged waypoint lands within `NEIGHBOR_COLLAPSE_THRESHOLD`
- * world units of either neighbor, the dragged waypoint is removed instead (collapse UX).
+ * Drag an edge segment along its normal (dbdiagram-style segment dragging). The drag always
+ * recomputes from the ORIGINAL route snapshot + cumulative delta, so it is idempotent and the
+ * segment index never drifts as waypoints are inserted mid-drag. Spikes are impossible because
+ * `computeSegmentDrag` only ever moves whole segments and re-simplifies colinear vertices.
  */
-export function startWaypointDrag(refId: string, waypointIndex: number, e: PointerEvent, target: SVGElement | HTMLElement): void {
+export function startSegmentDrag(route: EdgeRoute, segIndex: number, e: PointerEvent, target: SVGElement | HTMLElement): void {
+  if (e.button !== 0) return;
   e.stopPropagation();
   e.preventDefault();
+  const refId = route.id;
   const from = snapshotWaypoints(refId);
-  if (waypointIndex < 0 || waypointIndex >= from.length) return;
-  const origin = from[waypointIndex]!;
   const startX = e.clientX;
   const startY = e.clientY;
   try { target.setPointerCapture(e.pointerId); } catch { /* noop */ }
@@ -120,10 +113,8 @@ export function startWaypointDrag(refId: string, waypointIndex: number, e: Point
     const zoom = store.getState().viewport.zoom;
     const dxWorld = (ev.clientX - startX) / zoom;
     const dyWorld = (ev.clientY - startY) / zoom;
-    store.getState().moveWaypoint(refId, waypointIndex, {
-      x: Math.round(origin.x + dxWorld),
-      y: Math.round(origin.y + dyWorld),
-    });
+    const wps = computeSegmentDrag(route, segIndex, dxWorld, dyWorld, gridSnapper());
+    store.getState().setEdgeWaypoints(refId, wps);
   };
 
   const onUp = (ev: PointerEvent) => {
@@ -133,21 +124,8 @@ export function startWaypointDrag(refId: string, waypointIndex: number, e: Point
     try { target.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
     document.body.classList.remove('ddd-is-edge-dragging');
 
-    // Drop-to-collapse: if the dragged waypoint lands near a neighbor, remove it.
-    const layout = store.getState().edgeLayouts.get(refId);
-    const current = layout?.waypoints?.[waypointIndex];
-    if (current) {
-      const prev = adjacentWaypoint(refId, waypointIndex, -1);
-      const next = adjacentWaypoint(refId, waypointIndex, +1);
-      const near = (w: Waypoint | null): boolean =>
-        w !== null && Math.hypot(w.x - current.x, w.y - current.y) <= NEIGHBOR_COLLAPSE_THRESHOLD;
-      if (near(prev) || near(next)) {
-        store.getState().removeWaypoint(refId, waypointIndex);
-      }
-    }
-
     const to = snapshotWaypoints(refId);
-    const op = to.length < from.length ? 'remove' : 'move';
+    const op = to.length > from.length ? 'add' : to.length < from.length ? 'remove' : 'move';
     const cmd = buildWaypointCommand(refId, from, to, op);
     if (cmd) store.getState().pushWaypointCommand(cmd);
     schedulePersist();
@@ -158,34 +136,59 @@ export function startWaypointDrag(refId: string, waypointIndex: number, e: Point
   window.addEventListener('pointercancel', onUp);
 }
 
+/** Reset an edge's shape (waypoints + side overrides) and push history. Keeps color. */
+export function resetEdgeWaypoints(refId: string): void {
+  const fromWps = snapshotWaypoints(refId);
+  const fromStyle = readEdgeStyle(refId);
+  store.getState().resetEdgeShape(refId);
+  const wpCmd = buildWaypointCommand(refId, fromWps, [], 'clear');
+  if (wpCmd) store.getState().pushWaypointCommand(wpCmd);
+  // Reset also drops side overrides — capture that as a style command so undo restores them.
+  const styleCmd = buildEdgeStyleCommand(refId, fromStyle, readEdgeStyle(refId), 'Reset edge port sides');
+  if (styleCmd) store.getState().pushEdgeStyleCommand(styleCmd);
+  schedulePersist();
+}
+
+/** Snapshot an edge's style (color + side overrides) for history diffing. */
+export function readEdgeStyle(refId: string): EdgeStyle {
+  const l = store.getState().edgeLayouts.get(refId);
+  const s: EdgeStyle = {};
+  if (l?.color) s.color = l.color;
+  if (l?.sourceSide) s.sourceSide = l.sourceSide;
+  if (l?.targetSide) s.targetSide = l.targetSide;
+  return s;
+}
+
+/** Push an EdgeStyleCommand for the change since `before`, then persist. No-op if unchanged. */
+export function commitEdgeStyle(refId: string, before: EdgeStyle, label: string): void {
+  const cmd = buildEdgeStyleCommand(refId, before, readEdgeStyle(refId), label);
+  if (cmd) store.getState().pushEdgeStyleCommand(cmd);
+  schedulePersist();
+}
+
 /**
- * Click on a segment → insert a waypoint at `projectedPoint`, then drag it with the same
- * pointer stream so the user can fine-tune position before releasing.
+ * Drag an edge endpoint across its table to flip the port side (left <-> right). The side is
+ * chosen by which half of the table the pointer is over; committed as one EdgeStyleCommand.
  */
-export function startSegmentAddWaypoint(
+export function startEndpointDrag(
   refId: string,
-  insertIndex: number,
-  projectedPoint: Waypoint,
+  end: 'source' | 'target',
+  tableCenterX: number,
   e: PointerEvent,
   target: SVGElement | HTMLElement,
+  toWorldX: (clientX: number) => number | null,
 ): void {
+  if (e.button !== 0) return;
   e.stopPropagation();
   e.preventDefault();
-  const from = snapshotWaypoints(refId);
-  store.getState().insertWaypoint(refId, insertIndex, projectedPoint);
-  const startX = e.clientX;
-  const startY = e.clientY;
+  const before = readEdgeStyle(refId);
   try { target.setPointerCapture(e.pointerId); } catch { /* noop */ }
   document.body.classList.add('ddd-is-edge-dragging');
 
   const onMove = (ev: PointerEvent) => {
-    const zoom = store.getState().viewport.zoom;
-    const dxWorld = (ev.clientX - startX) / zoom;
-    const dyWorld = (ev.clientY - startY) / zoom;
-    store.getState().moveWaypoint(refId, insertIndex, {
-      x: Math.round(projectedPoint.x + dxWorld),
-      y: Math.round(projectedPoint.y + dyWorld),
-    });
+    const wx = toWorldX(ev.clientX);
+    if (wx === null) return;
+    store.getState().setEdgeSide(refId, end, wx >= tableCenterX ? 'right' : 'left');
   };
 
   const onUp = (ev: PointerEvent) => {
@@ -194,35 +197,10 @@ export function startSegmentAddWaypoint(
     window.removeEventListener('pointercancel', onUp);
     try { target.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
     document.body.classList.remove('ddd-is-edge-dragging');
-
-    const to = snapshotWaypoints(refId);
-    const cmd = buildWaypointCommand(refId, from, to, 'add');
-    if (cmd) store.getState().pushWaypointCommand(cmd);
-    schedulePersist();
+    commitEdgeStyle(refId, before, 'Flip edge port');
   };
 
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
-}
-
-/** Remove a waypoint and push history. Used by double-click on the circle. */
-export function removeWaypoint(refId: string, index: number): void {
-  const from = snapshotWaypoints(refId);
-  if (index < 0 || index >= from.length) return;
-  store.getState().removeWaypoint(refId, index);
-  const to = snapshotWaypoints(refId);
-  const cmd = buildWaypointCommand(refId, from, to, 'remove');
-  if (cmd) store.getState().pushWaypointCommand(cmd);
-  schedulePersist();
-}
-
-/** Clear all waypoints of an edge and push history. Used by context menu "Reset edge". */
-export function resetEdgeWaypoints(refId: string): void {
-  const from = snapshotWaypoints(refId);
-  if (from.length === 0) return;
-  store.getState().clearWaypoints(refId);
-  const cmd = buildWaypointCommand(refId, from, [], 'clear');
-  if (cmd) store.getState().pushWaypointCommand(cmd);
-  schedulePersist();
 }

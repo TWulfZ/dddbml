@@ -1,118 +1,191 @@
 # 05 — Edge Routing
 
-## Algoritmo (v1, M4)
+## Propósito
 
-Manhattan ortogonal con 2-elbow máximo. Pasos:
+Rutear cada `Ref` del esquema como una **polilínea ortogonal (Manhattan)** limpia,
+editable por el usuario, predecible y estilo **dbdiagram**. El usuario debe poder
+doblar una arista (segmentar) **sin poder generar "picos"** (jogs/staircase) ni
+diagonales, y tidiar una arista a un click ("Reset line").
 
-### 1. Elegir lados
+## Contexto
 
-Para cada ref, dado bbox source y bbox target:
+`routeRefs()` (`src/webview/render/edgeRouter.ts`) corre dentro de `EdgeLayer`
+(`src/webview/render/edgeLayer.tsx`) en cada render, sobre los refs ya filtrados
+por visibilidad. El trabajo por frame escala con aristas visibles, no totales.
 
+Estado del problema (capturas `2026-05-27`): el modelo v1 deja **colocar
+waypoints libres en cualquier coord world**. Al mover una tabla los puertos
+siguen a la tabla (se recomputan) pero los waypoints quedan **fijos** — y el
+ruteo entre ellos produce escaleras/picos irregulares. El usuario investigó
+dbdiagram y confirmó la semántica deseada:
+
+- **Los waypoints NO siguen a la tabla.** Sólo el primer/último tramo (stub) se
+  re-conecta al puerto flotante. Esto es correcto y deseado — no hay que anclar
+  waypoints relativos.
+- **El arreglo real es de *calidad de ruteo* + *modelo de edición*,** no de
+  "seguir". Con ruteo ortogonal limpio + edición por arrastre de segmentos
+  (picos imposibles) + un botón "Reset line", el sprawl post-move se vuelve
+  tolerable y corregible a un click.
+
+Terminología (para referencia): *orthogonal/Manhattan routing*; doblar
+arrastrando tramos = *segment dragging* (draw.io/yEd); el puerto que desliza por
+el lado de la tabla = *floating port/anchor*; los picos a eliminar = *jogs /
+staircase artifacts*; eliminarlos = *collinear merge* + restringir el arrastre a
+segmentos completos.
+
+## Decisiones (resueltas con el usuario)
+
+1. **Modelo de edición: sólo segment-drag por el punto medio (estilo dbdiagram).**
+   Se eliminó el arrastre de puntos libres. Cada segmento (largo ≥ `MIN_GRIP_LEN`)
+   muestra un *grip* en su punto medio cuando la arista está seleccionada; sólo
+   ese grip arrastra, en su normal (`computeSegmentDrag`), insertando offsets
+   limpios en los extremos del segmento. `simplifyWaypoints` colapsa colineales.
+   Además `buildPath` rutea el último vértice **recto al puerto** (sin `midX`)
+   cuando hay waypoints → la línea nunca se devuelve (sin picos).
+2. **Modo imán: setting global.** `dddbml.ui.snapToGrid` (bool, default `false`)
+   + `dddbml.ui.gridSize` (number, default 16), patrón spec 10. Snapper en
+   `webview/layout/grid.ts`, aplicado a posiciones de tabla y vértices de arista.
+3. **Color por arista:** `EdgeLayout.color` reusando `ColorPopup` + paleta BC.
+4. **Flip de puerto: sólo izq↔der**, vía `EdgeLayout.sourceSide`/`targetSide`
+   (override de `chooseSides`); arrastre del endpoint cruza el centro de la tabla.
+5. **"Reset line":** resetea forma (waypoints + sides), conserva color.
+6. **Entrega:** las 5 features en un solo cambio.
+
+### Preguntas abiertas restantes
+
+- **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
+  forma en `WaypointCommand`. Un reset emite ambos comandos.
+- **Ruteo del flip "contra-natura"** (puerto forzado al lado opuesto del target)
+  no dibuja un lazo de salida hacia afuera; usa el `midX` simple y puede cruzar
+  la tabla. Pulido a futuro (relacionado con obstacle avoidance, v2).
+
+## Diseño
+
+### 1. Ruteo ortogonal base (v1, conservado)
+
+Para cada ref, dado bbox source y target:
+
+**Elegir lados** (`chooseSides`): estilo dbdiagram, siempre horizontal —
+`dx = tgtCenter.x - srcCenter.x`; `dx >= 0` ⇒ source=right, target=left; si no,
+source=left, target=right. (Override manual: ver §4.)
+
+**Distribuir ports** en cada lado: agrupar por `(table, side)`, sortar por el
+otro extremo, asignar `ratio = (i+1)/(n+1)` (equidistante, sin tocar esquinas;
+clamp `[0.05, 0.95]`). Alinear `y` del puerto a la fila de la columna PK/FK vía
+`columnYResolver` (`columnCenterY`).
+
+**Computar path** (`buildPath` → `collapseColinear`): polilínea ortogonal de
+ejes alternados, exit/enter horizontal por los puertos. Sin waypoints ⇒ H-V-H
+con `midX`. `collapseColinear` fusiona corners colineales **excepto** los
+waypoints de usuario. Migración legacy `dx`/`dy` conservada (ver código).
+
+> **Invariante:** todo segmento es estrictamente H o V; ejes alternan. Esto ya
+> se cumple. El bug no es éste — es que la *edición* puede crear waypoints en
+> posiciones que generan escaleras de micro-segmentos.
+
+### 2. Puertos flotantes + waypoints fijados (semántica dbdiagram)
+
+- Puertos se recomputan cada render desde el bbox actual (ya ocurre) → **siguen
+  a la tabla**.
+- Waypoints siguen en coords world absolutas (`EdgeLayout.waypoints`) → **fijos**.
+- Al mover una tabla, sólo el tramo stub se re-rutea. **No** se implementa anclaje
+  relativo ni "follow" de waypoints (decisión explícita del usuario).
+
+### 3. Interacción: arrastre de segmentos (segment dragging) — picos imposibles
+
+Reemplaza el arrastre de puntos libres. La ruta editable son corners
+`[port_a, w0…w_{n-1}, port_b]`, segmentos alternando H/V.
+
+- **Arrastrar un segmento interior** lo traslada **sólo en su normal**: un
+  segmento vertical mueve el `x` de sus dos corners; uno horizontal mueve el `y`.
+  Los corners se mantienen alineados ⇒ imposible crear diagonal o pico.
+- **Arrastrar un tramo stub** (adyacente a un puerto) **inserta** un par de
+  corners formando un codo limpio y luego traslada.
+- **`collapseColinear` corre tras cada edición** ⇒ corners redundantes
+  desaparecen; no se acumulan micro-segmentos.
+- **Snap a rejilla** si el modo imán está ON: redondear el desplazamiento a
+  `gridSize` (ver §6).
+- **Borrar un codo**: arrastrar un segmento hasta colinealidad con sus vecinos
+  (o doble-click sobre el corner) lo colapsa. Conserva el UX
+  `NEIGHBOR_COLLAPSE_THRESHOLD` existente, adaptado a corners.
+
+Implementación: nuevas acciones en `dragController.ts` (`startSegmentDrag`) y
+mutadores de store que muevan *pares* de corners en vez de un punto. Eliminar la
+proyección de punto libre (`startSegmentAddWaypoint` con punto arbitrario) y el
+arrastre de punto libre (`startWaypointDrag`).
+
+### 4. Flip de lado de puerto (origen izq↔der)
+
+El usuario arrastra el endpoint de la relación al otro lado del campo (der→izq).
+Se persiste un override por endpoint:
+
+```ts
+interface EdgeLayout {
+  waypoints?: Waypoint[];
+  color?: string;                       // §5
+  sourceSide?: 'left' | 'right';        // override de chooseSides
+  targetSide?: 'left' | 'right';
+  dx?: number; dy?: number;             // @deprecated v1
+}
 ```
-dx = targetCenter.x - sourceCenter.x
-dy = targetCenter.y - sourceCenter.y
 
-if |dx| >= |dy|:   # horizontal dominant
-  if dx >= 0: source→right, target→left
-  else:       source→left,  target→right
-else:              # vertical dominant
-  if dy >= 0: source→bottom, target→top
-  else:       source→top,    target→bottom
-```
+`routeRefs` usa el override si existe; si no, `chooseSides`. Drag del endpoint
+más allá del centro del campo conmuta el lado y persiste.
 
-Esto garantiza que el edge "apunta hacia" el target desde el lado correcto, y viceversa.
+### 5. Toolbar de arista seleccionada (color + reset) — reemplaza click derecho
 
-### 2. Distribuir ports en cada lado
+- Nuevo estado de selección de arista: `selectedEdgeId: string | null` en el
+  store (+ acción `setSelectedEdge`). Click sobre la arista la selecciona;
+  resalta y muestra toolbar flotante cerca del midpoint.
+- Toolbar (estilo dbdiagram "Reset line"): **↻ Reset line** (resetea waypoints +
+  flip de esa arista vía `resetEdgeWaypoints`) y **⚙ opciones** → abre
+  `ColorPopup` reusando `popupAnchorFor`, escribe `EdgeLayout.color`.
+- Reemplaza el `ContextMenu` por click derecho de waypoint en `edgeLayer.tsx`
+  (más intuitivo, confirmado por el usuario).
+- Render de arista aplica `stroke` desde `EdgeLayout.color` cuando existe.
 
-Múltiples edges compartiendo un lado de una tabla causarían solapamiento si todos usaran el centro. Solución:
+### 6. Modo imán + rejilla (grid snap)
 
-- Agrupar edges por `(tableName, side)` (source y target independientes → un edge participa en dos grupos).
-- Sortar cada grupo por el "otro extremo": para lado horizontal sortar por y del otro extremo; para lado vertical sortar por x. Esto reduce cruces.
-- Asignar `ratio = (i + 1) / (n + 1)` para i=0..n-1 → ports equidistantes que nunca tocan las esquinas.
+- **Toggle "imán"** en la barra de acciones (`actionsPanel.tsx`), junto a
+  undo/redo/filter. Estado según OQ #2.
+- **Fondo con puntos** (rejilla visible) sólo cuando el imán está ON: background
+  `radial-gradient` de puntos en la capa world (`app.tsx` canvas), con
+  `background-size = gridSize * zoom` y `background-position` siguiendo el pan
+  del viewport. Tokens de diseño en `style.css` (spec 12), sin px/hex mágicos.
+- **Snap** cuando ON: las posiciones de tabla (`dragController.startDrag`) y los
+  corners de arista (§3) redondean a múltiplos de `gridSize`. OFF ⇒ libertad
+  total (comportamiento actual).
 
-### 3. Computar path
+### 7. Historia (undo/redo) y persistencia
 
-Dado `a = portPoint(src, sourceSide, sourceRatio)` y `b = portPoint(tgt, targetSide, targetRatio)`:
+- Reusar el patrón `EditCommand` (`history.ts`): el segment-drag y el flip
+  emiten `WaypointCommand` (snapshot `from`/`to` de `waypoints` y/o sides). El
+  color de arista puede emitir un `EdgeStyleCommand` nuevo, o reusar el flujo de
+  `setEdgeLayout` + persist (ver patrón de `tableColors`). Decidir en
+  implementación según mínima superficie.
+- `persistence.ts` ya serializa `edges`; extender el serializador para incluir
+  `color`, `sourceSide`, `targetSide` (omitir defaults; mantener escritura
+  git-friendly: claves ordenadas, enteros, sin flags por defecto).
 
-| source H? | target H? | Path |
-|---|---|---|
-| Sí (left/right) | Sí | `M a H midX V b.y H b.x` (H→V→H, 2 elbows) |
-| No (top/bottom) | No | `M a V midY H b.x V b.y` (V→H→V, 2 elbows) |
-| Sí | No | `M a H b.x V b.y` (H→V, 1 elbow) |
-| No | Sí | `M a V b.y H b.x` (V→H, 1 elbow) |
+## Limitaciones conocidas
 
-`midX = (a.x + b.x) / 2`, `midY = (a.y + b.y) / 2`.
-
-### 4. Port ratio clamp
-
-Clamp a `[0.05, 0.95]` para evitar que el port toque la esquina (artefactos visuales).
-
-## Ruteo con waypoints
-
-Cuando un edge tiene `EdgeLayout.waypoints = [w0, w1, …, wN-1]` (coords world-space), el router rutea por esos puntos en lugar del H-V-H simple. Algoritmo:
-
-```
-Input:
-  a = source port (world)
-  b = target port (world)
-  W = [w0, w1, …, wN-1]
-
-  P := [a]; cur := a; lastAxis := 'h'  // forced horizontal exit
-  for w in W:
-    if lastAxis == 'h':
-      if w.x != cur.x: P.push({x:w.x, y:cur.y}); lastAxis := 'h'
-      if w.y != cur.y: P.push({x:w.x, y:w.y});   lastAxis := 'v'
-    else:
-      if w.y != cur.y: P.push({x:cur.x, y:w.y}); lastAxis := 'v'
-      if w.x != cur.x: P.push({x:w.x,  y:w.y});  lastAxis := 'h'
-    cur := w
-
-  // tramo final hacia b (debe entrar horizontal por la fila de columna)
-  if lastAxis == 'h':
-    midX = round((cur.x + b.x) / 2)
-    P.push({x:midX, y:cur.y}); P.push({x:midX, y:b.y}); P.push({x:b.x, y:b.y})
-  else:
-    P.push({x:cur.x, y:b.y}); P.push({x:b.x, y:b.y})
-
-  collapseColinear(P)
-```
-
-Garantías:
-
-- Con `W = []`, la salida es pixel-idéntica al H-V-H original (back-compat total).
-- Cada segmento es horizontal o vertical (alternancia estricta).
-- Corners colineales (tres puntos sobre el mismo eje) se colapsan en un solo segmento — los waypoints sobreviven porque rompen el eje alternado.
-
-### Insertar waypoint en una arista
-
-UX (DBDiagram-style): hover sobre cualquier segmento muestra un círculo fantasma proyectado al pixel más cercano sobre ese segmento. Click + drag inserta el waypoint en el índice correcto (entre vecinos existentes según el segmento clickeado) y arrastra a la posición final en el mismo evento de puntero.
-
-### Migración legacy `dx`/`dy`
-
-El router prefiere `waypoints` sobre `dx`. Si `waypoints` está vacío y `dx` está presente, el midX original se desplaza por `dx` (comportamiento legado). El primer waypoint que el usuario agrega sobrescribe esta lógica y el siguiente persist suelta `dx`/`dy`.
-
-## Limitaciones conocidas v1
-
-1. **No evita tablas en el camino**. Si hay una tabla entre source y target, el edge la atraviesa. Algoritmo A* con obstacle avoidance llega en v2.
-2. **Choice de lado binario**. Tabla a 45° exactamente elige horizontal por tie-breaker `>=`. Aceptable.
-3. **Distribución de ports desconoce self-loops**. Refs de una tabla a sí misma (raro en DBML pero legal) producirían path degenerado. No crash pero visual feo. Fix en v1.1.
-4. **Sin curvatura en elbows**. 90° rígidos. v1.1 puede añadir `stroke-linejoin: round` o corners redondeados.
-
-## Caching y recomputación
-
-`routeRefs()` se llama dentro del componente `EdgeLayer` en cada render. Como `EdgeLayer` recibe `refs` ya filtrados por visibilidad (del `app.tsx`), el trabajo por frame escala con edges visibles, no con total.
-
-Optimización futura si se nota jank: memoizar routes por `(schema, positions)` con useMemo. En v1, recomputar en cada viewport change es aceptable para <500 visibles.
-
-## Flechas / direccionalidad
-
-v1 no dibuja flechas. El orden `source→target` en el path es suficiente semánticamente; visualmente todos los edges se ven iguales. Agregar marcadores `<marker>` SVG en v1.1 para distinguir `1:*` vs `*:*` etc.
+1. **No evita tablas en el camino** (sin obstacle avoidance). v2.
+2. **Tie-break de lado** binario (45° ⇒ horizontal). Aceptable.
+3. **Self-loops** (ref de tabla a sí misma) no soportados visualmente. v1.1.
+4. **Sin curvatura** en codos (90° rígidos). v1.1 opcional.
 
 ## Test plan
 
-`test/unit/edgeRouter.test.ts`:
-- Dos tablas en misma fila, target a la derecha → source=right, target=left, path H-V-H.
-- Dos tablas en misma columna, target abajo → source=bottom, target=top, path V-H-V.
-- Target arriba-derecha → horizontal gana (45° tiebreak).
-- 3 edges al mismo lado derecho de una tabla → ratios 0.25, 0.5, 0.75.
-- Edge con bbox faltante → omitido del output (no crash).
+`test/unit/edgeRouter*.test.ts` (actualizar `edgeRouter.waypoints.test.ts`):
+
+- Misma fila, target a la derecha ⇒ source=right, target=left, H-V-H.
+- Override `sourceSide`/`targetSide` respetado sobre `chooseSides`.
+- Segment-drag de un tramo vertical mueve `x` de ambos corners; ejes siguen
+  alternando; `collapseColinear` no deja micro-segmentos (no picos).
+- Drag de stub inserta codo limpio.
+- Snap ON ⇒ corners y posiciones múltiplos de `gridSize`.
+- Bbox faltante ⇒ arista omitida (no crash).
+- Back-compat: `waypoints=[]` ⇒ salida pixel-idéntica al H-V-H v1.
+
+`history.waypoint.test.ts` / `store.history.test.ts`: undo/redo de segment-drag,
+flip y color como replays puros.

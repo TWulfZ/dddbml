@@ -123,3 +123,13 @@ export const IconRedo = (p?: IconProps) => wrap(
   'M14 7.5 10 3.5V6H5a4 4 0 0 0 0 8h4v-1.2H5a2.8 2.8 0 0 1 0-5.6h5v2.5l4-2.2z',
   p,
 );
+
+export const IconReset = (p?: IconProps) => wrap(
+  'M8 2.5A5.5 5.5 0 1 0 13.5 8h-1.3A4.2 4.2 0 1 1 8 3.8V6l3.2-2.75L8 .5v2z',
+  p,
+);
+
+export const IconMagnet = (p?: IconProps) => wrap(
+  'M4 2v5a4 4 0 0 0 8 0V2H9.4v5a1.4 1.4 0 0 1-2.8 0V2H4zm0 1.6h2.6V2H4v1.6zM9.4 3.6H12V2H9.4v1.6z',
+  p,
+);

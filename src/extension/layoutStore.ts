@@ -67,7 +67,10 @@ function toEdges(raw: unknown): Record<string, EdgeLayout> {
     // Legacy fields: read for back-compat. Webview migrates to waypoints on next persist.
     if (typeof vv.dx === 'number' && Number.isFinite(vv.dx)) e.dx = Math.round(vv.dx);
     if (typeof vv.dy === 'number' && Number.isFinite(vv.dy)) e.dy = Math.round(vv.dy);
-    if (e.waypoints || e.dx !== undefined || e.dy !== undefined) out[k] = e;
+    if (typeof vv.color === 'string' && vv.color.length > 0) e.color = vv.color;
+    if (vv.sourceSide === 'left' || vv.sourceSide === 'right') e.sourceSide = vv.sourceSide;
+    if (vv.targetSide === 'left' || vv.targetSide === 'right') e.targetSide = vv.targetSide;
+    if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) out[k] = e;
   }
   return out;
 }
@@ -161,7 +164,9 @@ export function serializeLayout(layout: Layout): string {
   });
 
   const edgeEntries = Object.entries(layout.edges ?? {}).filter(([, v]) =>
-    (v.waypoints && v.waypoints.length > 0) || v.dx !== undefined || v.dy !== undefined,
+    (v.waypoints && v.waypoints.length > 0) ||
+    v.color !== undefined || v.sourceSide !== undefined || v.targetSide !== undefined ||
+    v.dx !== undefined || v.dy !== undefined,
   );
   if (edgeEntries.length === 0) {
     lines.push('  },');
@@ -172,21 +177,28 @@ export function serializeLayout(layout: Layout): string {
     edgeEntries.sort(([a], [b]) => a.localeCompare(b));
     edgeEntries.forEach(([k, v], i) => {
       const comma = i < edgeEntries.length - 1 ? ',' : '';
-      if (v.waypoints && v.waypoints.length > 0) {
-        // Multi-line array. Waypoints prevail over legacy dx/dy.
+      const hasWaypoints = !!(v.waypoints && v.waypoints.length > 0);
+      // Scalar fields in deterministic key order. Waypoints prevail over legacy dx/dy.
+      const scalars: string[] = [];
+      if (v.color) scalars.push(`"color": ${JSON.stringify(v.color)}`);
+      if (v.sourceSide) scalars.push(`"sourceSide": ${JSON.stringify(v.sourceSide)}`);
+      if (v.targetSide) scalars.push(`"targetSide": ${JSON.stringify(v.targetSide)}`);
+      if (!hasWaypoints) {
+        if (v.dx !== undefined) scalars.push(`"dx": ${Math.round(v.dx)}`);
+        if (v.dy !== undefined) scalars.push(`"dy": ${Math.round(v.dy)}`);
+      }
+      if (hasWaypoints) {
         lines.push(`    ${JSON.stringify(k)}: {`);
+        for (const part of scalars) lines.push(`      ${part},`);
         lines.push('      "waypoints": [');
-        v.waypoints.forEach((w, j) => {
+        v.waypoints!.forEach((w, j) => {
           const wc = j < v.waypoints!.length - 1 ? ',' : '';
           lines.push(`        { "x": ${Math.round(w.x)}, "y": ${Math.round(w.y)} }${wc}`);
         });
         lines.push('      ]');
         lines.push(`    }${comma}`);
       } else {
-        const parts: string[] = [];
-        if (v.dx !== undefined) parts.push(`"dx": ${Math.round(v.dx)}`);
-        if (v.dy !== undefined) parts.push(`"dy": ${Math.round(v.dy)}`);
-        lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
+        lines.push(`    ${JSON.stringify(k)}: { ${scalars.join(', ')} }${comma}`);
       }
     });
     lines.push('  }');

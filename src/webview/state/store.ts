@@ -3,7 +3,7 @@ import { useEffect, useReducer } from 'preact/hooks';
 import type { AppSettings, EdgeLayout, GroupLayout, Layout, ParseError, QualifiedName, Schema, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
-import type { EditCommand, MoveCommand, WaypointCommand } from './history';
+import type { EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
 
 export interface TooltipState {
   title: string;
@@ -20,7 +20,9 @@ export interface AppState {
   hiddenTables: Set<QualifiedName>;
   tableColors: Map<QualifiedName, string>;
   edgeLayouts: Map<string, EdgeLayout>;
-  groups: Record<string, { collapsed: boolean; hidden: boolean; color?: string }>;
+  /** Currently selected edge (ref id) — drives the floating edge toolbar. Null = none. */
+  selectedEdgeId: string | null;
+  groups: Record<string, GroupLayout>;
   viewport: ViewportLayout;
   theme: 'light' | 'dark';
   ready: boolean;
@@ -53,10 +55,11 @@ export interface AppActions {
   setTableHidden(name: QualifiedName, hidden: boolean): void;
   setTableColor(name: QualifiedName, color: string | null): void;
   setEdgeLayout(refId: string, layout: EdgeLayout | null): void;
-  insertWaypoint(refId: string, index: number, w: Waypoint): void;
-  moveWaypoint(refId: string, index: number, w: Waypoint): void;
-  removeWaypoint(refId: string, index: number): void;
-  clearWaypoints(refId: string): void;
+  setEdgeWaypoints(refId: string, waypoints: Waypoint[]): void;
+  setEdgeColor(refId: string, color: string | null): void;
+  setEdgeSide(refId: string, end: 'source' | 'target', side: 'left' | 'right' | null): void;
+  resetEdgeShape(refId: string): void;
+  setSelectedEdge(refId: string | null): void;
   setSelection(names: Iterable<QualifiedName>): void;
   clearSelection(): void;
   setTooltip(t: TooltipState | null): void;
@@ -67,6 +70,7 @@ export interface AppActions {
   setSettingsPanelOpen(open: boolean): void;
   pushMoveCommand(cmd: MoveCommand): void;
   pushWaypointCommand(cmd: WaypointCommand): void;
+  pushEdgeStyleCommand(cmd: EdgeStyleCommand): void;
   undo(): void;
   redo(): void;
   clearHistory(): void;
@@ -79,6 +83,7 @@ const initial: AppState = {
   hiddenTables: new Set(),
   tableColors: new Map(),
   edgeLayouts: new Map(),
+  selectedEdgeId: null,
   groups: {},
   viewport: { x: 0, y: 0, zoom: 1 },
   theme: 'light',
@@ -129,7 +134,12 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
         if (eo.dx !== undefined) e.dx = eo.dx;
         if (eo.dy !== undefined) e.dy = eo.dy;
       }
-      if (e.waypoints || e.dx !== undefined || e.dy !== undefined) edgeLayouts.set(id, e);
+      if (eo.color) e.color = eo.color;
+      if (eo.sourceSide === 'left' || eo.sourceSide === 'right') e.sourceSide = eo.sourceSide;
+      if (eo.targetSide === 'left' || eo.targetSide === 'right') e.targetSide = eo.targetSide;
+      if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
+        edgeLayouts.set(id, e);
+      }
     }
     set({
       positions,
@@ -196,58 +206,52 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       return { edgeLayouts: next };
     });
   },
-  insertWaypoint(refId, index, w) {
+  setEdgeWaypoints(refId, waypoints) {
     set((s) => {
       const next = new Map(s.edgeLayouts);
-      const existing = next.get(refId);
-      const wps = existing?.waypoints ? [...existing.waypoints] : [];
-      const clamped = Math.max(0, Math.min(index, wps.length));
-      wps.splice(clamped, 0, { x: Math.round(w.x), y: Math.round(w.y) });
-      next.set(refId, { ...existing, waypoints: wps });
+      const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
+      const wps = waypoints.map((w) => ({ x: Math.round(w.x), y: Math.round(w.y) }));
+      if (wps.length > 0) merged.waypoints = wps; else delete merged.waypoints;
+      writeLayout(next, refId, merged);
       return { edgeLayouts: next };
     });
   },
-  moveWaypoint(refId, index, w) {
+  setEdgeColor(refId, color) {
     set((s) => {
       const next = new Map(s.edgeLayouts);
-      const existing = next.get(refId);
-      if (!existing?.waypoints || index < 0 || index >= existing.waypoints.length) return s;
-      const wps = [...existing.waypoints];
-      wps[index] = { x: Math.round(w.x), y: Math.round(w.y) };
-      next.set(refId, { ...existing, waypoints: wps });
+      const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
+      if (color) merged.color = color; else delete merged.color;
+      writeLayout(next, refId, merged);
       return { edgeLayouts: next };
     });
   },
-  removeWaypoint(refId, index) {
+  setEdgeSide(refId, end, side) {
     set((s) => {
       const next = new Map(s.edgeLayouts);
-      const existing = next.get(refId);
-      if (!existing?.waypoints || index < 0 || index >= existing.waypoints.length) return s;
-      const wps = existing.waypoints.filter((_, i) => i !== index);
-      if (wps.length === 0) {
-        const rest: EdgeLayout = {};
-        if (existing.dx !== undefined) rest.dx = existing.dx;
-        if (existing.dy !== undefined) rest.dy = existing.dy;
-        if (rest.dx !== undefined || rest.dy !== undefined) next.set(refId, rest);
-        else next.delete(refId);
+      const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
+      if (end === 'source') {
+        if (side) merged.sourceSide = side; else delete merged.sourceSide;
       } else {
-        next.set(refId, { ...existing, waypoints: wps });
+        if (side) merged.targetSide = side; else delete merged.targetSide;
       }
+      writeLayout(next, refId, merged);
       return { edgeLayouts: next };
     });
   },
-  clearWaypoints(refId) {
+  resetEdgeShape(refId) {
     set((s) => {
-      const next = new Map(s.edgeLayouts);
-      const existing = next.get(refId);
+      const existing = s.edgeLayouts.get(refId);
       if (!existing) return s;
-      const rest: EdgeLayout = {};
-      if (existing.dx !== undefined) rest.dx = existing.dx;
-      if (existing.dy !== undefined) rest.dy = existing.dy;
-      if (rest.dx !== undefined || rest.dy !== undefined) next.set(refId, rest);
-      else next.delete(refId);
+      const next = new Map(s.edgeLayouts);
+      // Reset shape only (waypoints + side overrides + legacy); keep the user's color.
+      const merged: EdgeLayout = {};
+      if (existing.color) merged.color = existing.color;
+      writeLayout(next, refId, merged);
       return { edgeLayouts: next };
     });
+  },
+  setSelectedEdge(refId) {
+    set({ selectedEdgeId: refId });
   },
   setSelection(names) {
     set({ selection: new Set(names) });
@@ -277,6 +281,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
     set((s) => pushHistory(s, cmd));
   },
   pushWaypointCommand(cmd) {
+    set((s) => pushHistory(s, cmd));
+  },
+  pushEdgeStyleCommand(cmd) {
     set((s) => pushHistory(s, cmd));
   },
   undo() {
@@ -325,25 +332,42 @@ function applyCommand(
     for (const [name, pos] of entries) positions.set(name, { x: pos.x, y: pos.y });
     return { positions };
   }
-  const edgeLayouts = new Map(s.edgeLayouts);
-  const existing = edgeLayouts.get(cmd.refId);
-  const target = direction === 'undo' ? cmd.from : cmd.to;
-  if (target.length === 0) {
-    if (existing) {
-      const rest: EdgeLayout = {};
-      if (existing.dx !== undefined) rest.dx = existing.dx;
-      if (existing.dy !== undefined) rest.dy = existing.dy;
-      if (rest.dx !== undefined || rest.dy !== undefined) edgeLayouts.set(cmd.refId, rest);
-      else edgeLayouts.delete(cmd.refId);
-    }
-  } else {
-    edgeLayouts.set(cmd.refId, { ...existing, waypoints: target.map((w) => ({ x: w.x, y: w.y })) });
+  if (cmd.kind === 'edgeStyle') {
+    const edgeLayouts = new Map(s.edgeLayouts);
+    const merged: EdgeLayout = { ...(edgeLayouts.get(cmd.refId) ?? {}) };
+    const t = direction === 'undo' ? cmd.from : cmd.to;
+    if (t.color !== undefined) merged.color = t.color; else delete merged.color;
+    if (t.sourceSide !== undefined) merged.sourceSide = t.sourceSide; else delete merged.sourceSide;
+    if (t.targetSide !== undefined) merged.targetSide = t.targetSide; else delete merged.targetSide;
+    writeLayout(edgeLayouts, cmd.refId, merged);
+    return { edgeLayouts };
   }
+  const edgeLayouts = new Map(s.edgeLayouts);
+  const merged: EdgeLayout = { ...(edgeLayouts.get(cmd.refId) ?? {}) };
+  const target = direction === 'undo' ? cmd.from : cmd.to;
+  if (target.length === 0) delete merged.waypoints;
+  else merged.waypoints = target.map((w) => ({ x: w.x, y: w.y }));
+  writeLayout(edgeLayouts, cmd.refId, merged);
   return { edgeLayouts };
 }
 
+/** Write a pruned EdgeLayout into the map, or delete the key when it carries no data. */
+function writeLayout(map: Map<string, EdgeLayout>, refId: string, layout: EdgeLayout): void {
+  const clean: EdgeLayout = { ...layout };
+  if (clean.waypoints && clean.waypoints.length === 0) delete clean.waypoints;
+  const hasData =
+    (clean.waypoints !== undefined) ||
+    clean.color !== undefined ||
+    clean.sourceSide !== undefined ||
+    clean.targetSide !== undefined ||
+    clean.dx !== undefined ||
+    clean.dy !== undefined;
+  if (hasData) map.set(refId, clean);
+  else map.delete(refId);
+}
+
 export function useAppStore<T>(selector: (state: AppState & AppActions) => T): T {
-  const [, forceUpdate] = useReducer((c: number) => c + 1, 0);
+  const [, forceUpdate] = useReducer((c: number, _action: void) => c + 1, 0);
   useEffect(() => {
     let last = selector(store.getState());
     const unsub = store.subscribe(() => {

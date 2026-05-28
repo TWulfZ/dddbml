@@ -43,7 +43,7 @@ export function autoLayout(
 
   const out = new Map<QualifiedName, { x: number; y: number }>();
   for (const t of tables) {
-    const node = g.node(t.name) as dagre.Node | undefined;
+    const node = g.node(t.name) as { x?: number; y?: number; width: number; height: number } | undefined;
     if (node && typeof node.x === 'number' && typeof node.y === 'number') {
       out.set(t.name, { x: Math.round(node.x - node.width / 2), y: Math.round(node.y - node.height / 2) });
     }

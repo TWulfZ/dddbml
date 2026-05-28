@@ -42,6 +42,8 @@ export function App(_props: AppProps) {
   const selection = useAppStore((s) => s.selection);
   const lodThresholds = useAppStore((s) => s.settings.lod);
   const density = useAppStore((s) => s.settings.ui.density);
+  const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
+  const gridSize = useAppStore((s) => s.settings.ui.gridSize);
 
   useEffect(() => {
     document.body.dataset.density = density;
@@ -260,6 +262,7 @@ export function App(_props: AppProps) {
         marqueeActive = true;
         marqueeStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
         setMarquee({ x0: marqueeStart.x, y0: marqueeStart.y, x1: marqueeStart.x, y1: marqueeStart.y });
+        store.getState().setSelectedEdge(null);
         if (!e.shiftKey) store.getState().clearSelection();
         el.setPointerCapture(e.pointerId);
       }
@@ -325,6 +328,7 @@ export function App(_props: AppProps) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         store.getState().clearSelection();
+        store.getState().setSelectedEdge(null);
         return;
       }
       // Skip when typing inside an input/textarea/contenteditable (e.g. color popup).
@@ -430,6 +434,18 @@ export function App(_props: AppProps) {
       <div class="ddd-viewport" ref={viewportRef} tabIndex={0}>
         {ready && schema.tables.length > 0 ? (
           <div class="ddd-world" style={{ transform: worldTransform }}>
+            {snapToGrid ? (
+              <div
+                class="ddd-grid"
+                style={{
+                  left: `${worldBbox.x}px`,
+                  top: `${worldBbox.y}px`,
+                  width: `${worldBbox.w}px`,
+                  height: `${worldBbox.h}px`,
+                  backgroundSize: `${gridSize}px ${gridSize}px`,
+                }}
+              />
+            ) : null}
             {derived.containers.map((c) => (
               <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} />
             ))}

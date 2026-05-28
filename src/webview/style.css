@@ -248,6 +248,17 @@
     pointer-events: none;
   }
 
+  /* Magnet-mode dotted grid. Lives inside .ddd-world so it pans/zooms with the diagram;
+     background-size (world units) is set inline from the gridSize setting. */
+  .ddd-grid {
+    position: absolute;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.18;
+    background-image: radial-gradient(circle, var(--ddd-fg-muted) 1px, transparent 1.2px);
+    background-position: 0 0;
+  }
+
   .ddd-marquee {
     position: absolute;
     border: 1px solid var(--ddd-accent);
@@ -467,31 +478,110 @@
     stroke: var(--ddd-edge-hover);
     stroke-width: 2;
   }
+  .ddd-edges path.ddd-edge.is-selected {
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 2.2;
+  }
   .ddd-edges line.ddd-edge-segment-handle {
     stroke: transparent;
     pointer-events: stroke;
-    cursor: copy;
+    cursor: pointer;
   }
   .ddd-edges line.ddd-edge-segment-handle:hover {
     stroke: var(--ddd-accent);
     stroke-opacity: 0.18;
   }
-  .ddd-edges circle.ddd-edge-waypoint {
+  /* Midpoint drag grips — the only handle that creates/moves a bend (dbdiagram parity). */
+  .ddd-edges circle.ddd-edge-grip {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 2;
+    pointer-events: auto;
+  }
+  .ddd-edges circle.ddd-edge-grip.is-h { cursor: ns-resize; }
+  .ddd-edges circle.ddd-edge-grip.is-v { cursor: ew-resize; }
+  .ddd-edges circle.ddd-edge-grip:hover {
+    fill: var(--ddd-edge-selected);
+  }
+  /* Ghost grip: faint preview shown only while hovering a segment's middle. */
+  .ddd-edges circle.ddd-edge-grip.is-ghost {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-accent);
+    opacity: 0.55;
+    stroke-dasharray: 2 2;
+  }
+  .ddd-edges circle.ddd-edge-grip.is-ghost:hover {
+    opacity: 1;
+    stroke-dasharray: none;
+  }
+  /* Interactive handle overlay: above tables so handles stay grabbable over a table. */
+  .ddd-edges-overlay {
+    z-index: 6;
+  }
+  /* Direction dots (visual only): origin (PK) solid, destination (FK) ringed. */
+  .ddd-edges circle.ddd-edge-end-dot {
+    pointer-events: none;
+  }
+  .ddd-edges circle.ddd-edge-end-dot.is-source {
     fill: var(--ddd-edge);
+  }
+  .ddd-edges circle.ddd-edge-end-dot.is-target {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge);
+    stroke-width: 1.5;
+  }
+  /* Bend-vertex indicators (read-only; segments are dragged, not the vertices). */
+  .ddd-edges circle.ddd-edge-vertex {
+    fill: var(--ddd-edge-selected);
     stroke: var(--ddd-surface-raised);
     stroke-width: 1.5;
-    pointer-events: auto;
-    cursor: grab;
-    transition: fill var(--ddd-duration-fast), r var(--ddd-duration-fast);
-  }
-  .ddd-edges circle.ddd-edge-waypoint:hover {
-    fill: var(--ddd-accent);
-    r: 6;
-  }
-  .ddd-edges circle.ddd-edge-waypoint--ghost {
-    fill: var(--ddd-accent);
-    opacity: 0.5;
     pointer-events: none;
+  }
+  /* Endpoint handles flip the port side (left <-> right) when dragged across the table. */
+  .ddd-edges circle.ddd-edge-endpoint {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 2;
+    pointer-events: auto;
+    cursor: ew-resize;
+  }
+  .ddd-edges circle.ddd-edge-endpoint:hover {
+    fill: var(--ddd-edge-selected);
+  }
+
+  /* Floating edge toolbar (dbdiagram "Reset line"): portal to body, fixed at the edge midpoint. */
+  .ddd-edge-toolbar {
+    position: fixed;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+    transform: translate(-50%, calc(-100% - 10px));
+    padding: var(--ddd-space-2) var(--ddd-space-3);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+  }
+  .ddd-edge-toolbar__label {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    padding: 0 var(--ddd-space-1);
+  }
+  .ddd-edge-toolbar__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: var(--ddd-radius-sm);
+    background: transparent;
+    color: var(--ddd-fg);
+    cursor: pointer;
+  }
+  .ddd-edge-toolbar__btn:hover {
+    background: var(--ddd-surface-selected);
   }
 
   /* ----- Tooltip ----- */
@@ -1312,9 +1402,6 @@
   body.ddd-is-edge-dragging {
     cursor: grabbing !important;
   }
-  body.ddd-is-edge-dragging .ddd-edge-waypoint {
-    cursor: grabbing;
-  }
 
   /* ----- Toggle buttons ----- */
   .ddd-actions-btn.is-active {
@@ -1325,6 +1412,10 @@
   .ddd-actions-btn.is-active:hover {
     background: var(--ddd-accent-hover);
     border-color: var(--ddd-accent-hover);
+  }
+  .ddd-hist-btn.is-active {
+    color: var(--ddd-accent);
+    background: var(--ddd-surface-selected);
   }
   .ddd-icon-btn.is-on {
     color: var(--ddd-accent);
