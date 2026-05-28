@@ -36,7 +36,8 @@
       {
         "command": "dddbml.openDiagram",
         "title": "dddbml: Open Diagram",
-        "category": "dddbml"
+        "category": "dddbml",
+        "icon": "$(type-hierarchy-sub)"
       },
       {
         "command": "dddbml.resetLayout",
