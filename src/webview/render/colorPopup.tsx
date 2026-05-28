@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { BC_PALETTE_SIZE, bcVar } from '../groups/bcPalette';
 
 interface ColorPopupProps {
   current: string;
@@ -9,17 +10,27 @@ interface ColorPopupProps {
   onReset?: () => void;
 }
 
-const PRESETS: string[] = [
-  '#ef4444', '#f97316', '#f59e0b', '#eab308',
-  '#84cc16', '#22c55e', '#10b981', '#14b8a6',
-  '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1',
-  '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
-  '#64748b', '#78716c', '#737373', '#6b7280',
+interface BcPreset {
+  name: string;
+  border: string;
+}
+
+const BC_NAMES: readonly string[] = [
+  'Steel', 'Teal', 'Terracotta', 'Amethyst',
+  'Mustard', 'Cyan', 'Rose', 'Olive',
+  'Periwinkle', 'Slate', 'Clay', 'Moss',
 ];
+
+const PRESETS: BcPreset[] = Array.from({ length: BC_PALETTE_SIZE }, (_, i) => ({
+  name: BC_NAMES[i] ?? `BC ${i + 1}`,
+  border: bcVar(i + 1, 'border'),
+}));
 
 /**
  * Color picker overlay rendered at fixed screen coords so it escapes any parent
  * `overflow: hidden` (table headers, panel lists, group containers).
+ *
+ * Presets are the 12 BC palette colors. Custom hex input remains as escape hatch.
  */
 export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPopupProps) {
   const popupRef = useRef<HTMLDivElement>(null);
@@ -53,13 +64,14 @@ export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPop
       onClick={(e) => e.stopPropagation()}
     >
       <div class="ddd-color-popup__grid">
-        {PRESETS.map((c) => (
+        {PRESETS.map((preset) => (
           <button
-            key={c}
-            class={`ddd-color-chip${sameColor(c, current) ? ' is-active' : ''}`}
-            style={{ background: c }}
-            title={c}
-            onClick={() => { onPick(c); onClose(); }}
+            key={preset.border}
+            class={`ddd-color-chip${preset.border === current ? ' is-active' : ''}`}
+            style={{ background: preset.border }}
+            title={preset.name}
+            aria-label={preset.name}
+            onClick={() => { onPick(preset.border); onClose(); }}
           />
         ))}
       </div>
@@ -82,13 +94,18 @@ export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPop
   );
 }
 
-function sameColor(a: string, b: string): boolean {
-  return toHex(a).toLowerCase() === toHex(b).toLowerCase();
-}
-
+/**
+ * Best-effort hex extraction used to seed `<input type="color">`. Returns a fallback
+ * hex when the color is a CSS var() / color-mix() / hsl() that the picker cannot resolve.
+ */
 function toHex(color: string): string {
   if (!color) return '#888888';
-  if (color.startsWith('#')) return color.length === 4 ? '#' + color.slice(1).split('').map((c) => c + c).join('') : color.slice(0, 7);
+  if (color.startsWith('#')) {
+    return color.length === 4
+      ? '#' + color.slice(1).split('').map((c) => c + c).join('')
+      : color.slice(0, 7);
+  }
+  if (color.startsWith('var(') || color.startsWith('color-mix(')) return '#888888';
   const m = /^hsla?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)%\s*,\s*(\d+(?:\.\d+)?)%/.exec(color);
   if (!m) return '#888888';
   const h = Number(m[1]);
@@ -113,7 +130,7 @@ function toHex(color: string): string {
  * Prefers placing to the right of the trigger (like tooltips); falls back to the left side if clipped.
  * Vertically clamps so the popup fits in the viewport.
  */
-export function popupAnchorFor(rect: DOMRect, popupWidth = 220, popupHeight = 200): { x: number; y: number } {
+export function popupAnchorFor(rect: DOMRect, popupWidth = 240, popupHeight = 220): { x: number; y: number } {
   let x = rect.right + 8;
   if (x + popupWidth > window.innerWidth - 8) {
     x = rect.left - popupWidth - 8;

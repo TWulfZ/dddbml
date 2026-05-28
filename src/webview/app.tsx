@@ -41,6 +41,11 @@ export function App(_props: AppProps) {
   const tableColors = useAppStore((s) => s.tableColors);
   const selection = useAppStore((s) => s.selection);
   const lodThresholds = useAppStore((s) => s.settings.lod);
+  const density = useAppStore((s) => s.settings.ui.density);
+
+  useEffect(() => {
+    document.body.dataset.density = density;
+  }, [density]);
 
   useEffect(() => {
     if (!ready) return;
@@ -180,7 +185,7 @@ export function App(_props: AppProps) {
     }
 
     return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs };
-  }, [schema, positions, groupState, individuallyHidden]);
+  }, [schema, positions, groupState, individuallyHidden, density]);
 
   const spatialIndex = useMemo(() => {
     const idx = new SpatialIndex();
@@ -195,7 +200,7 @@ export function App(_props: AppProps) {
       idx.insert(groupId(g.name), { x: g.x, y: g.y, w: g.w, h: g.h });
     }
     return idx;
-  }, [schema, positions, derived]);
+  }, [schema, positions, derived, density]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const [viewportRect, setViewportRect] = useState({ w: 0, h: 0 });
@@ -405,7 +410,7 @@ export function App(_props: AppProps) {
     if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 800, h: 600 };
     const P = 400;
     return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
-  }, [schema, positions, derived]);
+  }, [schema, positions, derived, density]);
 
   const lod = lodForZoom(viewport.zoom, lodThresholds);
   const worldTransform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;

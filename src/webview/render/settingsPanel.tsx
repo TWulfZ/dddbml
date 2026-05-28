@@ -1,7 +1,7 @@
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { IconClose } from '../icons';
-import type { FlatSettingsPatch } from '../../shared/types';
+import type { FlatSettingsPatch, UiDensity } from '../../shared/types';
 
 type PatchKey = keyof FlatSettingsPatch;
 
@@ -24,6 +24,19 @@ export function SettingsPanel() {
         </div>
 
         <div class="ddd-modal__body">
+          <h4 class="ddd-modal__section">UI</h4>
+          <RadioGroupRow
+            label="Density"
+            hint="Table width, row height, and font size."
+            value={settings.ui.density}
+            options={[
+              { value: 'compact', label: 'Compact' },
+              { value: 'cozy', label: 'Cozy' },
+              { value: 'comfortable', label: 'Comfortable' },
+            ]}
+            onCommit={(v) => apply('ui.density', v)}
+          />
+
           <h4 class="ddd-modal__section">Viewport</h4>
           <NumberRow
             label="Zoom step"
@@ -162,5 +175,36 @@ function BoolRow({ label, value, onCommit }: { label: string; value: boolean; on
       />
       <span class="ddd-field__label">{label}</span>
     </label>
+  );
+}
+
+interface RadioGroupRowProps {
+  label: string;
+  hint?: string;
+  value: UiDensity;
+  options: Array<{ value: UiDensity; label: string }>;
+  onCommit(value: UiDensity): void;
+}
+
+function RadioGroupRow({ label, hint, value, options, onCommit }: RadioGroupRowProps) {
+  return (
+    <div class="ddd-field">
+      <span class="ddd-field__label">{label}</span>
+      <div class="ddd-radio-group" role="radiogroup" aria-label={label}>
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={value === opt.value}
+            class={`ddd-radio-group__option${value === opt.value ? ' is-active' : ''}`}
+            onClick={() => onCommit(opt.value)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+      {hint ? <small class="ddd-field__hint">{hint}</small> : null}
+    </div>
   );
 }

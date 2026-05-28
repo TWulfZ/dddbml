@@ -100,6 +100,8 @@ export interface Layout {
 
 /* ----- Settings ----- */
 
+export type UiDensity = 'compact' | 'cozy' | 'comfortable';
+
 export interface AppSettings {
   zoomStep: number;
   zoomMin: number;
@@ -107,6 +109,9 @@ export interface AppSettings {
   lod: {
     mediumThreshold: number;
     lowThreshold: number;
+  };
+  ui: {
+    density: UiDensity;
   };
   export: {
     defaultFormat: string;
@@ -125,6 +130,7 @@ export function defaultSettings(): AppSettings {
     zoomMin: 0.08,
     zoomMax: 4,
     lod: { mediumThreshold: 0.6, lowThreshold: 0.3 },
+    ui: { density: 'cozy' },
     export: {
       defaultFormat: 'typeorm',
       typeorm: {
@@ -173,6 +179,7 @@ export interface FlatSettingsPatch {
   'zoomMax': number;
   'lod.mediumThreshold': number;
   'lod.lowThreshold': number;
+  'ui.density': UiDensity;
   'export.defaultFormat': string;
   'export.typeorm.dialect': string;
   'export.typeorm.singularize': boolean;

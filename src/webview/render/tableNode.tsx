@@ -8,6 +8,7 @@ import { postToHost } from '../vscode';
 import { store, useAppStore } from '../state/store';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
 import { IconKey, IconNote, IconSettings } from '../icons';
+import { withAlpha } from '../groups/bcPalette';
 
 interface TableNodeProps {
   table: Table;
@@ -32,7 +33,7 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
 
   const selClass = selected ? ' is-selected' : '';
   const headerStyle = color
-    ? { background: tint(color, 0.22), borderTopColor: color }
+    ? { background: withAlpha(color, 0.22), borderTopColor: color }
     : {};
 
   if (lod === 'rect') {
@@ -215,16 +216,3 @@ function TableNoteIcon({ note, name }: { note: string; name: string }) {
   );
 }
 
-/** Mix a hex/hsl color with dark background to produce a subtle tint. Returns rgba. */
-function tint(color: string, alpha: number): string {
-  if (color.startsWith('hsl(')) return color.replace('hsl(', 'hsla(').replace(')', `, ${alpha})`);
-  if (color.startsWith('#')) {
-    const hex = color.slice(1);
-    const n = hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex.padEnd(6, '0');
-    const r = parseInt(n.slice(0, 2), 16);
-    const g = parseInt(n.slice(2, 4), 16);
-    const b = parseInt(n.slice(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  return color;
-}

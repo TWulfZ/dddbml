@@ -3,6 +3,7 @@ import type { TableGroup } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { ColorPopup, popupAnchorFor } from '../render/colorPopup';
+import { bcColorFor } from './bcPalette';
 import {
   IconChevronDown,
   IconChevronRight,
@@ -218,9 +219,10 @@ function TableRow({ tableName, hidden }: { tableName: string; hidden: boolean })
   );
 }
 
+/**
+ * Deterministic group color from the Bounded-Context palette.
+ * Source of truth: specs/12-design-system.md.
+ */
 export function colorForGroup(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
-  return `hsl(${hue}, 55%, 60%)`;
+  return bcColorFor(name);
 }

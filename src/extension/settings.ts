@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
-import { defaultSettings, type AppSettings, type FlatSettingsPatch } from '../shared/types';
+import { defaultSettings, type AppSettings, type FlatSettingsPatch, type UiDensity } from '../shared/types';
+
+const UI_DENSITY_VALUES: readonly UiDensity[] = ['compact', 'cozy', 'comfortable'];
 
 const CONFIG_ROOT = 'dddbml';
 
@@ -13,6 +15,9 @@ export function loadSettings(): AppSettings {
     lod: {
       mediumThreshold: numberOr(cfg.get<number>('lod.mediumThreshold'), defaults.lod.mediumThreshold),
       lowThreshold: numberOr(cfg.get<number>('lod.lowThreshold'), defaults.lod.lowThreshold),
+    },
+    ui: {
+      density: uiDensityOr(cfg.get<string>('ui.density'), defaults.ui.density),
     },
     export: {
       defaultFormat: stringOr(cfg.get<string>('export.defaultFormat'), defaults.export.defaultFormat),
@@ -63,4 +68,9 @@ function stringOr(v: unknown, fallback: string): string {
 }
 function boolOr(v: unknown, fallback: boolean): boolean {
   return typeof v === 'boolean' ? v : fallback;
+}
+function uiDensityOr(v: unknown, fallback: UiDensity): UiDensity {
+  return typeof v === 'string' && (UI_DENSITY_VALUES as readonly string[]).includes(v)
+    ? (v as UiDensity)
+    : fallback;
 }

@@ -172,6 +172,21 @@
           "maximum": 1,
           "description": "Below this zoom level, tables render as colored rectangles (no text). Must be lower than mediumThreshold."
         },
+        "dddbml.ui.density": {
+          "type": "string",
+          "default": "cozy",
+          "enum": [
+            "compact",
+            "cozy",
+            "comfortable"
+          ],
+          "enumDescriptions": [
+            "Tight rows and narrow tables. Best for diagrams with 200+ tables.",
+            "Default density. Balanced for typical DDD-sized diagrams.",
+            "Roomy rows and wide tables. Best for small focused views."
+          ],
+          "description": "Visual density of tables and rows. Controls table width, row height, padding, and font size."
+        },
         "dddbml.export.defaultFormat": {
           "type": "string",
           "default": "typeorm",

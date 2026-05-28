@@ -1,5 +1,7 @@
 import * as dagre from '@dagrejs/dagre';
 import type { QualifiedName, Ref, Table } from '../../shared/types';
+import { store } from '../state/store';
+import { densityMetrics } from './density';
 
 export interface NodeSize {
   width: number;
@@ -49,21 +51,25 @@ export function autoLayout(
   return out;
 }
 
-/** Geometric constants used across router, renderer, and layout. MUST match CSS `.ddd-table__header`, `.ddd-table__col`, `.ddd-table__cols`. */
-export const TABLE_HEADER_H = 28;
-export const TABLE_ROW_H = 20;
-export const TABLE_WIDTH = 240;
-export const TABLE_BOTTOM_PAD = 8; // matches .ddd-table__cols padding (4 top + 4 bottom)
+/**
+ * Geometric constants come from the active density (CSS tokens mirror in `density.ts`).
+ * Source of truth: specs/12-design-system.md.
+ */
+function activeMetrics() {
+  return densityMetrics(store.getState().settings.ui.density);
+}
 
 /**
- * Estimate node height based on column count. Width fixed.
+ * Estimate node footprint based on column count and the active density.
  */
 export function estimateSize(columnCount: number): NodeSize {
-  return { width: TABLE_WIDTH, height: TABLE_HEADER_H + columnCount * TABLE_ROW_H + TABLE_BOTTOM_PAD };
+  const m = activeMetrics();
+  return { width: m.tableWidth, height: m.headerHeight + columnCount * m.rowHeight + m.colsPad };
 }
 
 /** Y offset (from table top) for the vertical center of a column row at `index`. */
 export function columnCenterY(index: number): number {
-  // 4px top-padding of .ddd-table__cols before rows start.
-  return TABLE_HEADER_H + 4 + index * TABLE_ROW_H + TABLE_ROW_H / 2;
+  const m = activeMetrics();
+  const topPad = m.colsPad / 2;
+  return m.headerHeight + topPad + index * m.rowHeight + m.rowHeight / 2;
 }

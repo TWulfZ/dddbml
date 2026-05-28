@@ -1,5 +1,6 @@
 import { store } from '../state/store';
 import { schedulePersist } from '../persistence';
+import { withAlpha } from '../groups/bcPalette';
 
 interface GroupContainerProps {
   name: string;
@@ -35,7 +36,7 @@ export function GroupContainer({ name, x, y, w, h, color }: GroupContainerProps)
         width: `${w}px`,
         height: `${h}px`,
         borderColor: color,
-        background: colorWithAlpha(color, 0.08),
+        background: withAlpha(color, 0.08),
       }}
     >
       <div
@@ -48,23 +49,4 @@ export function GroupContainer({ name, x, y, w, h, color }: GroupContainerProps)
       </div>
     </div>
   );
-}
-
-function colorWithAlpha(color: string, alpha: number): string {
-  // Accepts hsl(...) or hex or hsla(...). Builds an rgba-like low-opacity fill.
-  if (color.startsWith('hsl(')) {
-    return color.replace('hsl(', 'hsla(').replace(')', `, ${alpha})`);
-  }
-  if (color.startsWith('hsla(')) return color;
-  if (color.startsWith('#')) {
-    const hex = color.slice(1);
-    const n = hex.length === 3
-      ? hex.split('').map((c) => c + c).join('')
-      : hex.padEnd(6, '0');
-    const r = parseInt(n.slice(0, 2), 16);
-    const g = parseInt(n.slice(2, 4), 16);
-    const b = parseInt(n.slice(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-  return color;
 }
