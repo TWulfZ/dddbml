@@ -21,7 +21,7 @@
     "ddd"
   ],
   "main": "./dist/extension/extension/extension.js",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.4.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -252,6 +252,7 @@
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
     "@dbml/core": "^3.9.0",
+    "@vscode/codicons": "^0.0.45",
     "preact": "^10.22.0",
     "zustand": "^5.0.0"
   },

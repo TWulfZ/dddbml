@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { FlatSettingsPatch, HostToWebview, Layout, Ref, ViewportCommand, WebviewToHost, Schema, QualifiedName } from '../shared/types';
 import { parseDbml } from './parser';
-import { emptyLayout, readLayout, sidecarUri, writeLayout } from './layoutStore';
+import { emptyLayout, mergeLayout, readLayout, sidecarUri, writeLayout } from './layoutStore';
 import { getExporter, listExporters } from './exporters';
 import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
 
@@ -293,12 +293,7 @@ export class DiagramPanel {
   }
 
   private onLayoutPersist(payload: Partial<Layout>): void {
-    const merged: Layout = {
-      version: 1,
-      viewport: payload.viewport ?? this.currentLayout.viewport,
-      tables: payload.tables ?? this.currentLayout.tables,
-      groups: payload.groups ?? this.currentLayout.groups,
-    };
+    const merged = mergeLayout(this.currentLayout, payload);
     this.currentLayout = merged;
     this.pendingPersist = merged;
     if (this.persistTimer) clearTimeout(this.persistTimer);
@@ -370,6 +365,9 @@ export class DiagramPanel {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'webview.js'),
     );
+    const codiconUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.context.extensionUri, 'dist', 'webview', 'codicon.css'),
+    );
     const nonce = generateNonce();
     const csp = [
       `default-src 'none'`,
@@ -387,6 +385,7 @@ export class DiagramPanel {
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>dddbml</title>
+<link href="${codiconUri}" rel="stylesheet" />
 <style>
   html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
   body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); }

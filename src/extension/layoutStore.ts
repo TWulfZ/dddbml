@@ -9,6 +9,21 @@ export function emptyLayout(): Layout {
   return { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
 }
 
+/**
+ * Merges a `layout:persist` partial onto the current layout. The webview sends a partial; a key
+ * it omits must keep its current value — never drop a sub-object. `edges` is included here on
+ * purpose: leaving it out is what silently wiped persisted waypoints/colors/sides to `{}`.
+ */
+export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
+  return {
+    version: 1,
+    viewport: payload.viewport ?? current.viewport,
+    tables: payload.tables ?? current.tables,
+    groups: payload.groups ?? current.groups,
+    edges: payload.edges ?? current.edges ?? {},
+  };
+}
+
 export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
   const uri = sidecarUri(dbmlUri);
   try {

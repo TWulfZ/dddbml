@@ -50,6 +50,9 @@ Razón de naming visible en lugar de carpeta oculta: usuario explicitó querer v
 | `groups.*.color` | string | opcional | CSS color hex. Si ausente, se usa color derivado del nombre (hash estable). |
 | `edges` | object | `{}` | Keys = ref id (`<srcTable>::<srcCols>\|<tgtTable>::<tgtCols>`). |
 | `edges.*.waypoints` | array | opcional | Lista ordenada de puntos `{ x, y }` en coords absolutas world-space por los que pasa la línea (ruteo Manhattan multi-segmento, ver spec 05). |
+| `edges.*.color` | string | opcional | Color de trazo por arista (valor de paleta BC o hex custom). Ausente = color de tema. Ver spec 05 §5. |
+| `edges.*.sourceSide` | string | opcional | `"left"` \| `"right"`. Override del lado de puerto origen elegido por `chooseSides`. Ver spec 05 §4. |
+| `edges.*.targetSide` | string | opcional | `"left"` \| `"right"`. Override del lado de puerto destino. Ver spec 05 §4. |
 | `edges.*.dx` | integer | opcional | **Legacy v1.** Offset del midX para H-V-H simple. Soft-migrate a `waypoints` en el siguiente persist. |
 | `edges.*.dy` | integer | opcional | **Legacy v1.** Ver `dx`. |
 
@@ -71,7 +74,7 @@ Reglas:
 - Cada waypoint en su propia línea, claves alfabéticas (`x` antes que `y`), enteros.
 - Si `waypoints` está presente y no vacío, `dx`/`dy` se omiten (los waypoints son la fuente de verdad).
 - Si `waypoints` está vacío o ausente y `dx`/`dy` están presentes, se preservan tal cual (legacy).
-- Entrada `edges[id]` se omite por completo si no hay `waypoints`, `dx`, ni `dy`.
+- Entrada `edges[id]` se omite por completo si no tiene ningún campo con datos: ni `waypoints`, `color`, `sourceSide`, `targetSide`, `dx`, ni `dy`.
 
 ## Reglas de serialización Git-friendly
 
@@ -89,6 +92,20 @@ Reglas del writer:
    - `collapsed: false`, `hidden: false` → se escriben explícitos sólo si alguna vez fueron `true` (para preservar intención); el writer los omite si nunca se tocaron.
 7. **Objetos inline en una sola línea** cuando caben < 80 chars (JSON pretty-print tiene modo compacto para hojas; implementar custom serializer o usar `json-stringify-pretty-compact`).
 8. **No comentarios** (JSON puro; si el usuario quiere anotaciones, va en otro archivo).
+
+## Merge de persistencia parcial (host)
+
+El webview envía `layout:persist` con un **`Partial<Layout>`**. El host hace
+merge contra `currentLayout` con la regla **"payload gana, si no se conserva el
+actual"** (`mergeLayout` en `layoutStore.ts`), nunca un reemplazo total.
+
+- Cada top-level key (`viewport`, `tables`, `groups`, `edges`) se reemplaza si
+  viene en el payload; si se omite, **se conserva la del layout actual**.
+- Invariante crítico: **omitir una key no debe borrar su sub-objeto.** Olvidar
+  `edges` en el merge fue la causa de que waypoints/colores/sides se vaciaran a
+  `"edges": {}` en cada persist (regresión cubierta por `layoutStore.merge.test.ts`).
+- El merge es por-key, no deep-merge: el payload de `tables`/`edges` es el set
+  completo de esa key (el webview serializa todo su estado, no un delta).
 
 ## Escritura atómica
 
