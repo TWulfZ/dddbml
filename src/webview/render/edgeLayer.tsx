@@ -30,6 +30,9 @@ const GROUP_PREFIX = '__group__:';
 const SEGMENT_HOVER_THICKNESS = 14;
 /** Segments shorter than this (world units) get no drag grip — avoids grips on tiny legs. */
 const MIN_GRIP_LEN = 24;
+/** Toolbar offset from the click point (screen px). Tweak to taste. */
+const TOOLBAR_OFFSET_X = 10;
+const TOOLBAR_OFFSET_Y = -40;
 
 interface ColorPopupState {
   refId: string;
@@ -49,6 +52,7 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
   const svgRef = useRef<SVGSVGElement>(null);
   const [colorPopup, setColorPopup] = useState<ColorPopupState | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [clickPos, setClickPos] = useState<{ x: number; y: number } | null>(null);
 
   const groupByName = new Map<string, GroupSize>();
   if (groupSizes) for (const g of groupSizes) groupByName.set(g.name, g);
@@ -111,6 +115,7 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
 
   const onSegmentPointerDown = (r: EdgeRoute, segIndex: number, e: PointerEvent) => {
     if (e.button !== 0) return;
+    setClickPos({ x: e.clientX, y: e.clientY });
     store.getState().setSelectedEdge(r.id);
     startSegmentDrag(r, segIndex, e, e.currentTarget as SVGElement);
   };
@@ -128,12 +133,10 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
     setHover((h) => (h && h.refId === refId && h.segIndex === segIndex ? null : h));
 
   const selectedRoute = selectedEdgeId ? routes.find((r) => r.id === selectedEdgeId) ?? null : null;
-  // Screen anchor for the floating toolbar: midpoint of the selected edge's middle segment.
-  const toolbarPos = (() => {
-    if (!selectedRoute || selectedRoute.segments.length === 0) return null;
-    const mid = selectedRoute.segments[Math.floor(selectedRoute.segments.length / 2)]!;
-    return worldToScreen((mid.x1 + mid.x2) / 2, (mid.y1 + mid.y2) / 2);
-  })();
+  // Screen anchor: click position + constant offset. Adjust TOOLBAR_OFFSET_X/Y at top of file.
+  const toolbarPos = selectedRoute && clickPos
+    ? { x: clickPos.x + TOOLBAR_OFFSET_X, y: clickPos.y + TOOLBAR_OFFSET_Y }
+    : null;
 
   const svgSize = {
     width: worldBbox.w,
@@ -215,7 +218,7 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
                       x2={s.x2}
                       y2={s.y2}
                       stroke-width={SEGMENT_HOVER_THICKNESS}
-                      onPointerDown={(e) => { e.stopPropagation(); store.getState().setSelectedEdge(r.id); }}
+                      onPointerDown={(e) => { e.stopPropagation(); setClickPos({ x: e.clientX, y: e.clientY }); store.getState().setSelectedEdge(r.id); }}
                     />
                     {showGhost ? (
                       <circle
@@ -262,7 +265,6 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
               style={{ left: `${toolbarPos.x}px`, top: `${toolbarPos.y}px` }}
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <span class="ddd-edge-toolbar__label">Reset line</span>
               <button
                 class="ddd-edge-toolbar__btn"
                 title="Reset line"

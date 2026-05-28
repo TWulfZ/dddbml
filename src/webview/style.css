@@ -556,19 +556,14 @@
     display: flex;
     align-items: center;
     gap: var(--ddd-space-2);
-    transform: translate(-50%, calc(-100% - 10px));
+    transform: none;
     padding: var(--ddd-space-2) var(--ddd-space-3);
     background: var(--ddd-surface-overlay);
     border: 1px solid var(--ddd-border);
     border-radius: var(--ddd-radius-md);
     box-shadow: var(--ddd-shadow-md);
   }
-  .ddd-edge-toolbar__label {
-    font-size: var(--ddd-text-sm);
-    color: var(--ddd-fg-muted);
-    padding: 0 var(--ddd-space-1);
-  }
-  .ddd-edge-toolbar__btn {
+.ddd-edge-toolbar__btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
