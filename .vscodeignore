@@ -1,6 +1,7 @@
 .vscode/**
 .vscode-test/**
 .claude/**
+.codegraph/**
 src/**
 test/**
 specs/**
