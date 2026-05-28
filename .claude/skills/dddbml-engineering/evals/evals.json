@@ -1,0 +1,70 @@
+{
+  "skill_name": "dddbml-engineering",
+  "notes": "Process/workflow skill. Eval agents PRODUCE a unified diff + NOTES (not mutate the repo), so with-skill + baseline runs execute in parallel without colliding on the working tree. Assertions are graded mainly from the emitted diff (which seam, settings enum, spec updated IN the change, anything reinvented) plus NOTES for process signals. eval-3 is deliberately under-specified to test the Open Questions / no-generic-guess behavior added in iteration-2.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "add-mysql-dialect",
+      "prompt": "Our TypeORM export only supports postgres right now. Add a MySQL dialect so I can export entities for our MySQL services too. The type mapping should be reasonable for the common dbml types (int, bigint, varchar, text, boolean, timestamp, uuid, decimal, json).",
+      "expected_output": "A new Dialect registered via registerDialect in src/extension/exporters/typeorm/dialects/ (e.g. mysql.ts) implementing mapType -> TsTypeMapping, wired through typeorm/dialects/index.ts, with the dddbml.export.typeorm.dialect enum in package.json extended to include 'mysql'. Should read specs/09-exporters.md first and update it IN the same change. Should reuse the existing Exporter/Dialect strategy rather than hand-rolling a parallel export path.",
+      "files": [],
+      "assertions": [
+        "Implements the Dialect interface (id, label, mapType returning TsTypeMapping) — does not invent a new exporter/base abstraction",
+        "New dialect file lives under src/extension/exporters/typeorm/dialects/ and is registered via registerDialect (wired in dialects/index.ts)",
+        "Extends the dddbml.export.typeorm.dialect enum in package.json to include the new dialect id",
+        "mapType covers the requested common dbml types (int, bigint, varchar, text, boolean, timestamp, uuid, decimal, json)",
+        "Updates specs/09-exporters.md IN the same change (not deferred), written in Spanish",
+        "Does not modify the shared core emit pipeline (template.ts / relations.ts / generate.ts) beyond what the dialect seam requires",
+        "Adds a colocated *.test.ts for the new dialect's mapType, matching the repo's test style",
+        "NOTES/summary shows specs/09 was consulted and the codebase navigated via codegraph rather than blind grep"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "fix-pan-flicker",
+      "prompt": "When I pan fast across a big schema (the huge fixture, ~5000 tables) some tables flicker and pop in and out near the edges of the viewport. Figure out what's causing it and fix it.",
+      "expected_output": "Investigation of the culling/LOD path (src/webview/app.tsx visible-set, render/spatialIndex.ts query, render/lod.ts thresholds) guided by specs/04-render-pipeline.md, a root-cause diagnosis (e.g. cull margin in world units instead of screen px so the overscan collapses when zoomed out), and a targeted fix that preserves the spatial index, culling, and single-SVG-edge-layer invariants. The matching spec is updated IN the same change. Not a rewrite.",
+      "files": [],
+      "assertions": [
+        "Diagnoses a concrete root cause in the culling/LOD path (e.g. margin in world units vs screen px, or LOD boundary thrash) rather than guessing",
+        "Fix is targeted to the render pipeline files (app.tsx / spatialIndex.ts / lod.ts) and does not remove or bypass the spatial index or culling",
+        "Preserves performance invariants: only-visible tables render, one SVG layer for all edges, auto-layout not run per frame",
+        "Does not rewrite the render pipeline or swap rendering tech",
+        "Updates specs/04-render-pipeline.md IN the same change when the culling/LOD behavior changed (not merely referenced)",
+        "NOTES/summary shows the render-pipeline spec was consulted and codegraph was used to navigate the pipeline"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "undoable-group-resize",
+      "prompt": "I want to resize a collapsed table-group box by dragging its corner, and have that resize be undoable with Ctrl+Z just like table moves and edge waypoints are. Wire up the undo/redo side of it (the command/history plumbing).",
+      "expected_output": "A new EditCommand variant added to the discriminated union in src/webview/state/history.ts with from/to snapshots, a builder that returns null on a no-op, a push action in store.ts, and an applyCommand case — following the MoveCommand/WaypointCommand pattern. Crucially: the request collides with specs 06 (collapsed box is fixed-size) and 11 (group undo excluded), so a good response surfaces that as an Open Question / decision rather than silently picking a generic design, and updates specs 11/06 IN the same change.",
+      "files": [],
+      "assertions": [
+        "Adds a new variant to the EditCommand union in history.ts with from/to snapshots (mirrors MoveCommand/WaypointCommand)",
+        "Adds a builder that returns null on a no-op resize",
+        "Adds a push action in store.ts and extends applyCommand for undo/redo replay — reuses the existing past/future stacks, does not create a second history stack",
+        "Respects snapshot-at-push-time semantics so undo->edit->redo stays deterministic",
+        "Surfaces the spec 06 (collapsed box fixed-size) vs spec 11 (group undo excluded) conflict as an Open Question / explicit decision for the user, instead of silently shipping a generic design",
+        "Updates specs/11-action-history.md (and 06 if affected) IN the same change, not deferred to a future PR",
+        "Stays within the asked command/history scope; does not sprawl into unrequested UI/persistence work",
+        "NOTES/summary shows the action-history spec was consulted and the command pattern located via codegraph (EditCommand/applyCommand)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "ambiguous-deprecated-tables",
+      "prompt": "Add a way to mark certain tables as 'deprecated' so they stand out in the diagram — we're cleaning up a legacy schema and want to see at a glance which tables are on the way out.",
+      "expected_output": "This request is deliberately under-specified (how is 'deprecated' marked — DBML note convention, a sidecar flag, a TableGroup? where is it stored? what's the visual treatment — color/badge/opacity/LOD? does it affect export or visibility?). A good spec-driven response does NOT silently ship one generic implementation; it produces a Spanish spec with a populated 'Preguntas abiertas' section enumerating these decisions, proposes a recommended design grounded in existing seams (store/types/render/design tokens), and surfaces the key choices for the user to confirm before committing to code.",
+      "files": [],
+      "assertions": [
+        "Recognizes the request is under-specified and does NOT silently ship a single generic implementation as if the design were settled",
+        "Produces a Spanish spec containing a populated 'Preguntas abiertas' / Open Questions section listing the real ambiguities (how 'deprecated' is marked, where stored, visual treatment, export/visibility interactions)",
+        "Identifies where the data would live (sidecar layout vs derived from DBML note) and which existing seams it would touch (shared types / store / render / design tokens) instead of inventing parallel machinery",
+        "Surfaces the key decisions for the user to confirm before implementation (spec-driven, not vibe-coded)",
+        "Any proposed styling reuses design tokens / BC palette and the CSS @layer order — no magic hex or px",
+        "NOTES/summary shows specs were read critically (not treated as absolute truth) and codegraph used to locate the relevant seams"
+      ]
+    }
+  ]
+}

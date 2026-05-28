@@ -7,4 +7,5 @@ coverage/
 .DS_Store
 Thumbs.db
 test/
-.claude
+.claude/**local.json
+.claude/skills/*-workspace/
