@@ -1,5 +1,5 @@
 import { store } from '../state/store';
-import { schedulePersist } from '../drag/dragController';
+import { schedulePersist } from '../persistence';
 
 interface CollapsedGroupNodeProps {
   name: string;

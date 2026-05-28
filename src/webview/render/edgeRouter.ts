@@ -1,13 +1,25 @@
-import type { QualifiedName, Ref } from '../../shared/types';
+import type { EdgeLayout, QualifiedName, Ref, Waypoint } from '../../shared/types';
 import type { Bbox } from './spatialIndex';
 
 export type Side = 'left' | 'right' | 'top' | 'bottom';
 
+export interface EdgeSegment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  axis: 'h' | 'v';
+  /** Index of the waypoint that ends this segment, or `null` for the final leg into the target. */
+  endWaypointIndex: number | null;
+}
+
 export interface EdgeRoute {
   id: string;
   d: string;
-  /** Middle segment of the Manhattan path, exposed so callers can render a draggable handle over it. */
-  midSeg?: { x1: number; y1: number; x2: number; y2: number; axis: 'v' | 'h' };
+  /** Copy of the user's waypoints in world coords for rendering circles. */
+  waypoints: Waypoint[];
+  /** Orthogonal segments composing the path, in order. Used for hover hit-testing and "click to add waypoint". */
+  segments: EdgeSegment[];
   /** Resolved port coordinates (world space), useful for hit-testing / highlighting. */
   source: { x: number; y: number };
   target: { x: number; y: number };
@@ -16,8 +28,8 @@ export interface EdgeRoute {
 /** Optional per-endpoint port override — used to align edges with the PK/FK column row. */
 export type ColumnYResolver = (table: QualifiedName, column: string) => number | undefined;
 
-/** User-adjusted offsets to the middle segment, keyed by ref id. */
-export type EdgeOffsetResolver = (refId: string) => { dx?: number; dy?: number } | undefined;
+/** Resolves the EdgeLayout (waypoints + legacy dx/dy) for an edge, keyed by ref id. */
+export type EdgeLayoutResolver = (refId: string) => EdgeLayout | undefined;
 
 interface PortAssignment {
   sourceSide: Side;
@@ -27,8 +39,13 @@ interface PortAssignment {
 }
 
 /**
- * Routes every ref orthogonally (Manhattan, 2-elbow max) and distributes
- * ports along each table side to minimize overlap when multiple edges share a side.
+ * Routes every ref orthogonally (Manhattan) and distributes ports along each
+ * table side to minimize overlap when multiple edges share a side.
+ *
+ * Routing modes per edge:
+ *   1. `EdgeLayout.waypoints` present → multi-waypoint Manhattan, alternating axes.
+ *   2. Legacy `EdgeLayout.dx` (no waypoints) → original H-V-H with midX offset (back-compat).
+ *   3. No layout → automatic H-V-H with midpoint between ports.
  *
  * Returns an ordered list matching refs[] order — callers can filter by visibility.
  */
@@ -36,7 +53,7 @@ export function routeRefs(
   refs: Ref[],
   bboxOf: (name: QualifiedName) => Bbox | undefined,
   columnYResolver?: ColumnYResolver,
-  offsetResolver?: EdgeOffsetResolver,
+  layoutResolver?: EdgeLayoutResolver,
 ): EdgeRoute[] {
   // 1. decide sides for each edge
   const decisions: Array<{ ref: Ref; srcBbox: Bbox; tgtBbox: Bbox; sourceSide: Side; targetSide: Side } | null> = [];
@@ -120,15 +137,163 @@ export function routeRefs(
     const a = portPoint(d.srcBbox, assign.sourceSide, assign.sourceRatio, sourceY);
     const b = portPoint(d.tgtBbox, assign.targetSide, assign.targetRatio, targetY);
 
-    // All routes are H-V-H (forced horizontal sides). midX is draggable via offsetResolver.
-    const userOffset = offsetResolver?.(d.ref.id);
-    const midX = Math.round((a.x + b.x) / 2 + (userOffset?.dx ?? 0));
-    const path = `M${a.x},${a.y} H${midX} V${b.y} H${b.x}`;
-    const midSeg = { x1: midX, y1: a.y, x2: midX, y2: b.y, axis: 'v' as const };
+    const layout = layoutResolver?.(d.ref.id);
+    const waypoints = layout?.waypoints && layout.waypoints.length > 0 ? layout.waypoints : [];
+    const legacyDx = waypoints.length === 0 && layout?.dx !== undefined ? layout.dx : 0;
 
-    out.push({ id: d.ref.id, d: path, midSeg, source: a, target: b });
+    const { corners } = buildPath(a, b, waypoints, legacyDx);
+    const d_str = pathString(corners);
+    const segments = buildSegments(corners, waypoints);
+
+    out.push({
+      id: d.ref.id,
+      d: d_str,
+      waypoints: waypoints.map((w) => ({ x: w.x, y: w.y })),
+      segments,
+      source: a,
+      target: b,
+    });
   }
   return out;
+}
+
+/**
+ * Build the corner points of an orthogonal polyline from `a` to `b`, passing through user waypoints.
+ *
+ * Both `a` and `b` are horizontal ports (chooseSides forces left/right). The polyline starts
+ * with a horizontal segment exiting `a` and ends with a horizontal segment entering `b`.
+ * Axes alternate at each waypoint.
+ *
+ * When `waypoints` is empty, falls back to the original H-V-H with optional `legacyDx` offset.
+ *
+ * Returns the corner list plus a parallel `isWaypoint` mask indicating which corners are
+ * user-placed (must be preserved by `collapseColinear`).
+ */
+function buildPath(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  waypoints: Waypoint[],
+  legacyDx: number,
+): { corners: Array<{ x: number; y: number }>; isWaypoint: boolean[] } {
+  const P: Array<{ x: number; y: number }> = [{ x: a.x, y: a.y }];
+  const wp: boolean[] = [false];
+  let cur = { x: a.x, y: a.y };
+  let lastAxis: 'h' | 'v' = 'h';
+
+  const pushCorner = (p: { x: number; y: number }, isUserWaypoint: boolean) => {
+    P.push(p);
+    wp.push(isUserWaypoint);
+  };
+
+  for (const w of waypoints) {
+    if (lastAxis === 'h') {
+      if (w.x !== cur.x) {
+        pushCorner({ x: w.x, y: cur.y }, false);
+        lastAxis = 'h';
+      }
+      // Always push the waypoint itself so it survives colinearity collapsing.
+      pushCorner({ x: w.x, y: w.y }, true);
+      if (w.y !== cur.y) lastAxis = 'v';
+    } else {
+      if (w.y !== cur.y) {
+        pushCorner({ x: cur.x, y: w.y }, false);
+        lastAxis = 'v';
+      }
+      pushCorner({ x: w.x, y: w.y }, true);
+      if (w.x !== cur.x) lastAxis = 'h';
+    }
+    cur = { x: w.x, y: w.y };
+  }
+
+  if (lastAxis === 'h') {
+    const midX = Math.round((cur.x + b.x) / 2 + legacyDx);
+    if (midX !== cur.x) pushCorner({ x: midX, y: cur.y }, false);
+    if (b.y !== cur.y) pushCorner({ x: midX, y: b.y }, false);
+    pushCorner({ x: b.x, y: b.y }, false);
+  } else {
+    if (b.y !== cur.y) pushCorner({ x: cur.x, y: b.y }, false);
+    pushCorner({ x: b.x, y: b.y }, false);
+  }
+
+  return collapseColinear(P, wp);
+}
+
+/**
+ * Remove redundant corners while preserving every user waypoint.
+ *
+ * Two conditions collapse a corner:
+ *   1. Exact duplicate of the previous point (`prev.x === cur.x && prev.y === cur.y`).
+ *   2. Three colinear points (prev → cur → next share x OR share y) AND `cur` is not a user waypoint.
+ *
+ * User waypoints (`isWaypoint[i] === true`) always survive — they may be visually mid-segment
+ * but the user placed them, and dragging them later must work even if currently colinear.
+ */
+function collapseColinear(
+  points: Array<{ x: number; y: number }>,
+  isWaypoint: boolean[],
+): { corners: Array<{ x: number; y: number }>; isWaypoint: boolean[] } {
+  if (points.length <= 2) return { corners: points, isWaypoint };
+  const outPoints: Array<{ x: number; y: number }> = [points[0]!];
+  const outWp: boolean[] = [isWaypoint[0]!];
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = outPoints[outPoints.length - 1]!;
+    const cur = points[i]!;
+    const next = points[i + 1]!;
+    const samePoint = prev.x === cur.x && prev.y === cur.y;
+    const colinear =
+      (prev.x === cur.x && cur.x === next.x) || (prev.y === cur.y && cur.y === next.y);
+    const isUserWp = isWaypoint[i]!;
+    if (samePoint && !isUserWp) continue;
+    if (colinear && !isUserWp) continue;
+    outPoints.push(cur);
+    outWp.push(isUserWp);
+  }
+  const last = points[points.length - 1]!;
+  const tail = outPoints[outPoints.length - 1]!;
+  if (last.x !== tail.x || last.y !== tail.y) {
+    outPoints.push(last);
+    outWp.push(isWaypoint[points.length - 1]!);
+  }
+  return { corners: outPoints, isWaypoint: outWp };
+}
+
+function pathString(points: Array<{ x: number; y: number }>): string {
+  if (points.length === 0) return '';
+  let s = `M${points[0]!.x},${points[0]!.y}`;
+  for (let i = 1; i < points.length; i++) s += ` L${points[i]!.x},${points[i]!.y}`;
+  return s;
+}
+
+/**
+ * Build segment descriptors from the corner list. The `endWaypointIndex` lets callers
+ * compute the insert position when the user clicks a segment to add a waypoint:
+ *
+ *   - If `endWaypointIndex === k`, segment ends exactly at waypoint k. Clicking it inserts
+ *     before waypoint k (the new waypoint takes index k, existing waypoint moves to k+1).
+ *   - If `endWaypointIndex === null`, segment is after all waypoints. Clicking it appends
+ *     (insert index = waypoints.length).
+ */
+function buildSegments(corners: Array<{ x: number; y: number }>, waypoints: Waypoint[]): EdgeSegment[] {
+  const segs: EdgeSegment[] = [];
+  let wpIdx = 0;
+  for (let i = 0; i < corners.length - 1; i++) {
+    const p1 = corners[i]!;
+    const p2 = corners[i + 1]!;
+    if (p1.x === p2.x && p1.y === p2.y) continue;
+    const axis: 'h' | 'v' = p1.y === p2.y ? 'h' : 'v';
+    const nextWp = waypoints[wpIdx];
+    const endsAtWaypoint = nextWp !== undefined && p2.x === nextWp.x && p2.y === nextWp.y;
+    segs.push({
+      x1: p1.x,
+      y1: p1.y,
+      x2: p2.x,
+      y2: p2.y,
+      axis,
+      endWaypointIndex: endsAtWaypoint ? wpIdx : null,
+    });
+    if (endsAtWaypoint) wpIdx++;
+  }
+  return segs;
 }
 
 function pushGroup(
@@ -172,5 +337,3 @@ function portPoint(b: Bbox, side: Side, ratio: number, overrideY?: number, overr
     case 'bottom': return { x: overrideX ?? b.x + b.w * r, y: b.y + b.h };
   }
 }
-
-// buildManhattanPath is now inlined in routeRefs because chooseSides forces H-V-H only.

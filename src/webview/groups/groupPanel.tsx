@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'preact/hooks';
 import type { TableGroup } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
-import { schedulePersist } from '../drag/dragController';
+import { schedulePersist } from '../persistence';
 import { ColorPopup, popupAnchorFor } from '../render/colorPopup';
 import {
   IconChevronDown,

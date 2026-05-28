@@ -10,17 +10,18 @@ Permitir `Ctrl+Z` / `Ctrl+Shift+Z` (también `Ctrl+Y`) sobre cambios de **posici
 
 - Drag de una tabla suelta (`MoveTable`).
 - Drag batch vía marquee selection (`BatchMove`, mismo `MoveCommand` con múltiples entries).
+- Edición de waypoints de arista (`WaypointCommand` con ops: `move`, `add`, `remove`, `clear`).
 - Atajos teclado `Ctrl/Cmd+Z` (undo), `Ctrl+Shift+Z` y `Ctrl+Y` (redo).
 - Dos botones en `actionsPanel` con estado disabled cuando los stacks están vacíos.
 
 **Excluye explícitamente (v2+):**
 
 - Undo de cambios en `groups` (collapse, hidden, color).
-- Undo de `tableColors`, `hiddenTables`, `edgeOffsets`.
+- Undo de `tableColors`, `hiddenTables`.
 - Undo de viewport (pan, zoom). Convención: navegación no es edición.
 - Undo de `Reset Layout` y `Prune Orphans` (operaciones masivas que requieren memento).
 - Persistencia del historial entre sesiones (history vive en memoria del webview; reload o cierre = limpio).
-- Coalescing temporal de drags consecutivos sobre la misma tabla.
+- Coalescing temporal de drags consecutivos sobre la misma tabla/waypoint.
 - Restaurar selection junto con posiciones.
 - Auto-pan al undo de tabla off-viewport.
 
@@ -47,6 +48,17 @@ interface MoveCommand {
   label: string;          // "Move public.users" | "Move 4 tables"
   timestamp: number;
 }
+
+interface WaypointCommand {
+  kind: 'waypoint';
+  refId: string;
+  from: Waypoint[];       // snapshot pre-operación
+  to:   Waypoint[];       // snapshot post-operación
+  label: string;          // "Move waypoint" | "Add waypoint" | "Remove waypoint" | "Reset edge waypoints"
+  timestamp: number;
+}
+
+type EditCommand = MoveCommand | WaypointCommand;
 ```
 
 `from`/`to` son snapshots al momento de push — undo→edit→redo es determinista (redo aplica el target original, no el state actual).
@@ -54,10 +66,12 @@ interface MoveCommand {
 Slice en el store:
 
 ```ts
-past: MoveCommand[];        // tail = más reciente
-future: MoveCommand[];      // tail = más recientemente deshecho
+past: EditCommand[];        // tail = más reciente
+future: EditCommand[];      // tail = más recientemente deshecho
 historyCapacity: number;    // = 200
 ```
+
+Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor`, `ToggleHidden`) sin cambiar la API de push/undo/redo. `undo()`/`redo()` despachan por `cmd.kind` y aplican el slice correspondiente.
 
 ## Ciclo de vida
 
@@ -65,8 +79,12 @@ historyCapacity: number;    // = 200
 |---|---|
 | `pointerup` de drag con desplazamiento neto > 0 | Push `MoveCommand` a `past`; `future` limpio. Si `past.length > capacity`, FIFO drop del head. |
 | `pointerup` de drag sin desplazamiento (click sostenido) | No-op. `buildMoveCommand` retorna `null`. |
-| Llamada `undo()` con `past` no vacío | Pop tail de `past` → aplica `cmd.from` vía `setPositionsBatch` → push a `future`. Llamador dispara `schedulePersist()`. |
-| Llamada `redo()` con `future` no vacío | Simétrico: pop `future`, aplica `cmd.to`, push a `past`. |
+| `pointerup` de waypoint drag con cambio neto en `waypoints[]` | Push `WaypointCommand` con `op = 'move'` (o `'remove'` si la operación colapsó a un vecino). |
+| `pointerup` de click-en-segmento (agregar) | Push `WaypointCommand` con `op = 'add'`. |
+| `dblclick` sobre círculo de waypoint | Remueve waypoint, push `WaypointCommand` con `op = 'remove'`. |
+| Context menu "Reset edge waypoints" | Limpia el array, push `WaypointCommand` con `op = 'clear'` y `to: []`. |
+| Llamada `undo()` con `past` no vacío | Pop tail. Switch por `cmd.kind`: `'move'` → restaura `positions`; `'waypoint'` → restaura `edgeLayouts[refId].waypoints`. Push cmd a `future`. Llamador dispara `schedulePersist()`. |
+| Llamada `redo()` con `future` no vacío | Simétrico. |
 | `undo()` / `redo()` con stack vacío | No-op silencioso. |
 | `setLayout` (load inicial o `layout:external-change`) | `past = [], future = []`. |
 | `setSchema` con set de nombres de tabla **distinto** al anterior | `past = [], future = []`. Previene undo a tabla que ya no existe. |

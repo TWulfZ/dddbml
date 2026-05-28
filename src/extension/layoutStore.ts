@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { EdgeLayout, Layout, GroupLayout, TableLayout } from '../shared/types';
+import type { EdgeLayout, Layout, GroupLayout, TableLayout, Waypoint } from '../shared/types';
 
 export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
   return dbmlUri.with({ path: dbmlUri.path + '.layout.json' });
@@ -53,9 +53,21 @@ function toEdges(raw: unknown): Record<string, EdgeLayout> {
     if (!v || typeof v !== 'object') continue;
     const vv = v as Record<string, unknown>;
     const e: EdgeLayout = {};
+    if (Array.isArray(vv.waypoints)) {
+      const wps: Waypoint[] = [];
+      for (const item of vv.waypoints) {
+        if (!item || typeof item !== 'object') continue;
+        const w = item as Record<string, unknown>;
+        if (typeof w.x !== 'number' || !Number.isFinite(w.x)) continue;
+        if (typeof w.y !== 'number' || !Number.isFinite(w.y)) continue;
+        wps.push({ x: Math.round(w.x), y: Math.round(w.y) });
+      }
+      if (wps.length > 0) e.waypoints = wps;
+    }
+    // Legacy fields: read for back-compat. Webview migrates to waypoints on next persist.
     if (typeof vv.dx === 'number' && Number.isFinite(vv.dx)) e.dx = Math.round(vv.dx);
     if (typeof vv.dy === 'number' && Number.isFinite(vv.dy)) e.dy = Math.round(vv.dy);
-    if (e.dx !== undefined || e.dy !== undefined) out[k] = e;
+    if (e.waypoints || e.dx !== undefined || e.dy !== undefined) out[k] = e;
   }
   return out;
 }
@@ -148,7 +160,9 @@ export function serializeLayout(layout: Layout): string {
     lines.push(`    ${JSON.stringify(k)}: {${body}}${comma}`);
   });
 
-  const edgeEntries = Object.entries(layout.edges ?? {}).filter(([, v]) => v.dx !== undefined || v.dy !== undefined);
+  const edgeEntries = Object.entries(layout.edges ?? {}).filter(([, v]) =>
+    (v.waypoints && v.waypoints.length > 0) || v.dx !== undefined || v.dy !== undefined,
+  );
   if (edgeEntries.length === 0) {
     lines.push('  },');
     lines.push('  "edges": {}');
@@ -157,11 +171,23 @@ export function serializeLayout(layout: Layout): string {
     lines.push('  "edges": {');
     edgeEntries.sort(([a], [b]) => a.localeCompare(b));
     edgeEntries.forEach(([k, v], i) => {
-      const parts: string[] = [];
-      if (v.dx !== undefined) parts.push(`"dx": ${Math.round(v.dx)}`);
-      if (v.dy !== undefined) parts.push(`"dy": ${Math.round(v.dy)}`);
       const comma = i < edgeEntries.length - 1 ? ',' : '';
-      lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
+      if (v.waypoints && v.waypoints.length > 0) {
+        // Multi-line array. Waypoints prevail over legacy dx/dy.
+        lines.push(`    ${JSON.stringify(k)}: {`);
+        lines.push('      "waypoints": [');
+        v.waypoints.forEach((w, j) => {
+          const wc = j < v.waypoints!.length - 1 ? ',' : '';
+          lines.push(`        { "x": ${Math.round(w.x)}, "y": ${Math.round(w.y)} }${wc}`);
+        });
+        lines.push('      ]');
+        lines.push(`    }${comma}`);
+      } else {
+        const parts: string[] = [];
+        if (v.dx !== undefined) parts.push(`"dx": ${Math.round(v.dx)}`);
+        if (v.dy !== undefined) parts.push(`"dy": ${Math.round(v.dy)}`);
+        lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
+      }
     });
     lines.push('  }');
   }

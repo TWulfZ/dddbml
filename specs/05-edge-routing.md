@@ -47,6 +47,50 @@ Dado `a = portPoint(src, sourceSide, sourceRatio)` y `b = portPoint(tgt, targetS
 
 Clamp a `[0.05, 0.95]` para evitar que el port toque la esquina (artefactos visuales).
 
+## Ruteo con waypoints
+
+Cuando un edge tiene `EdgeLayout.waypoints = [w0, w1, …, wN-1]` (coords world-space), el router rutea por esos puntos en lugar del H-V-H simple. Algoritmo:
+
+```
+Input:
+  a = source port (world)
+  b = target port (world)
+  W = [w0, w1, …, wN-1]
+
+  P := [a]; cur := a; lastAxis := 'h'  // forced horizontal exit
+  for w in W:
+    if lastAxis == 'h':
+      if w.x != cur.x: P.push({x:w.x, y:cur.y}); lastAxis := 'h'
+      if w.y != cur.y: P.push({x:w.x, y:w.y});   lastAxis := 'v'
+    else:
+      if w.y != cur.y: P.push({x:cur.x, y:w.y}); lastAxis := 'v'
+      if w.x != cur.x: P.push({x:w.x,  y:w.y});  lastAxis := 'h'
+    cur := w
+
+  // tramo final hacia b (debe entrar horizontal por la fila de columna)
+  if lastAxis == 'h':
+    midX = round((cur.x + b.x) / 2)
+    P.push({x:midX, y:cur.y}); P.push({x:midX, y:b.y}); P.push({x:b.x, y:b.y})
+  else:
+    P.push({x:cur.x, y:b.y}); P.push({x:b.x, y:b.y})
+
+  collapseColinear(P)
+```
+
+Garantías:
+
+- Con `W = []`, la salida es pixel-idéntica al H-V-H original (back-compat total).
+- Cada segmento es horizontal o vertical (alternancia estricta).
+- Corners colineales (tres puntos sobre el mismo eje) se colapsan en un solo segmento — los waypoints sobreviven porque rompen el eje alternado.
+
+### Insertar waypoint en una arista
+
+UX (DBDiagram-style): hover sobre cualquier segmento muestra un círculo fantasma proyectado al pixel más cercano sobre ese segmento. Click + drag inserta el waypoint en el índice correcto (entre vecinos existentes según el segmento clickeado) y arrastra a la posición final en el mismo evento de puntero.
+
+### Migración legacy `dx`/`dy`
+
+El router prefiere `waypoints` sobre `dx`. Si `waypoints` está vacío y `dx` está presente, el midX original se desplaza por `dx` (comportamiento legado). El primer waypoint que el usuario agrega sobrescribe esta lógica y el siguiente persist suelta `dx`/`dy`.
+
 ## Limitaciones conocidas v1
 
 1. **No evita tablas en el camino**. Si hay una tabla entre source y target, el edge la atraviesa. Algoritmo A* con obstacle avoidance llega en v2.

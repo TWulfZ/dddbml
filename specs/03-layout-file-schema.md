@@ -48,6 +48,30 @@ Razón de naming visible en lugar de carpeta oculta: usuario explicitó querer v
 | `groups.*.collapsed` | boolean | `false` | Si `true`, renderiza como nodo caja único. |
 | `groups.*.hidden` | boolean | `false` | Si `true`, tablas del grupo no se renderizan. |
 | `groups.*.color` | string | opcional | CSS color hex. Si ausente, se usa color derivado del nombre (hash estable). |
+| `edges` | object | `{}` | Keys = ref id (`<srcTable>::<srcCols>\|<tgtTable>::<tgtCols>`). |
+| `edges.*.waypoints` | array | opcional | Lista ordenada de puntos `{ x, y }` en coords absolutas world-space por los que pasa la línea (ruteo Manhattan multi-segmento, ver spec 05). |
+| `edges.*.dx` | integer | opcional | **Legacy v1.** Offset del midX para H-V-H simple. Soft-migrate a `waypoints` en el siguiente persist. |
+| `edges.*.dy` | integer | opcional | **Legacy v1.** Ver `dx`. |
+
+### Ejemplo de `edges` con waypoints
+
+```json
+"edges": {
+  "public.orders::user_id|public.users::id": {
+    "waypoints": [
+      { "x": 320, "y": 180 },
+      { "x": 320, "y": 420 }
+    ]
+  }
+}
+```
+
+Reglas:
+
+- Cada waypoint en su propia línea, claves alfabéticas (`x` antes que `y`), enteros.
+- Si `waypoints` está presente y no vacío, `dx`/`dy` se omiten (los waypoints son la fuente de verdad).
+- Si `waypoints` está vacío o ausente y `dx`/`dy` están presentes, se preservan tal cual (legacy).
+- Entrada `edges[id]` se omite por completo si no hay `waypoints`, `dx`, ni `dy`.
 
 ## Reglas de serialización Git-friendly
 

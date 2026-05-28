@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
@@ -27,8 +28,13 @@ export default defineConfig({
         inlineDynamicImports: true,
       },
     },
-    sourcemap: true,
+    sourcemap: false,
     target: 'es2022',
     minify: false,
+  },
+  test: {
+    // Tests live across src/{webview,extension,shared}; webview-only root would skip extension specs.
+    dir: resolve(__dirname, 'src'),
+    include: ['**/*.test.ts'],
   },
 });

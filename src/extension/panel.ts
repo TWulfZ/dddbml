@@ -377,6 +377,7 @@ export class DiagramPanel {
       `style-src ${webview.cspSource} 'unsafe-inline'`,
       `script-src 'nonce-${nonce}'`,
       `font-src ${webview.cspSource}`,
+      `connect-src ${webview.cspSource}`,
     ].join('; ');
 
     return /* html */ `<!DOCTYPE html>

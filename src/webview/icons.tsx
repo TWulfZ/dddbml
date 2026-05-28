@@ -113,3 +113,13 @@ export const IconFilter = (p?: IconProps) => wrap(
   'M2 3h12v1.5L9.5 9v4L6.5 11V9L2 4.5V3zm1.2 1 4.3 4.3v2.3l1 .7V8.3L12.8 4H3.2z',
   p,
 );
+
+export const IconUndo = (p?: IconProps) => wrap(
+  'M2 7.5 6 3.5V6h5a4 4 0 0 1 0 8H7v-1.2h4a2.8 2.8 0 0 0 0-5.6H6v2.5L2 7.5z',
+  p,
+);
+
+export const IconRedo = (p?: IconProps) => wrap(
+  'M14 7.5 10 3.5V6H5a4 4 0 0 0 0 8h4v-1.2H5a2.8 2.8 0 0 1 0-5.6h5v2.5l4-2.2z',
+  p,
+);

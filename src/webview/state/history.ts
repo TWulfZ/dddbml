@@ -1,4 +1,4 @@
-import type { QualifiedName } from '../../shared/types';
+import type { QualifiedName, Waypoint } from '../../shared/types';
 
 /**
  * Action history entry for a table move (single or batch).
@@ -13,6 +13,23 @@ export interface MoveCommand {
   label: string;
   timestamp: number;
 }
+
+/**
+ * Action history entry for edge waypoint mutations (add, move, remove, clear).
+ *
+ * Same snapshot semantics as `MoveCommand`: `from`/`to` are the full waypoints
+ * array before and after the operation, so undo/redo are pure replays.
+ */
+export interface WaypointCommand {
+  kind: 'waypoint';
+  refId: string;
+  from: Waypoint[];
+  to: Waypoint[];
+  label: string;
+  timestamp: number;
+}
+
+export type EditCommand = MoveCommand | WaypointCommand;
 
 /**
  * Build a MoveCommand from a drag's origins map and the post-drag positions.
@@ -51,4 +68,40 @@ export function buildMoveCommand(
     label,
     timestamp: Date.now(),
   };
+}
+
+export type WaypointOp = 'move' | 'add' | 'remove' | 'clear';
+
+/**
+ * Build a WaypointCommand. Returns null when from and to are identical
+ * (no-op, e.g. drag with zero displacement).
+ */
+export function buildWaypointCommand(
+  refId: string,
+  from: Waypoint[],
+  to: Waypoint[],
+  op: WaypointOp,
+): WaypointCommand | null {
+  if (waypointsEqual(from, to)) return null;
+  const label =
+    op === 'move' ? 'Move waypoint'
+      : op === 'add' ? 'Add waypoint'
+        : op === 'remove' ? 'Remove waypoint'
+          : 'Reset edge waypoints';
+  return {
+    kind: 'waypoint',
+    refId,
+    from: from.map((w) => ({ x: w.x, y: w.y })),
+    to: to.map((w) => ({ x: w.x, y: w.y })),
+    label,
+    timestamp: Date.now(),
+  };
+}
+
+function waypointsEqual(a: Waypoint[], b: Waypoint[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]!.x !== b[i]!.x || a[i]!.y !== b[i]!.y) return false;
+  }
+  return true;
 }

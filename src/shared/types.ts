@@ -76,8 +76,17 @@ export interface ViewportLayout {
   zoom: number;
 }
 
+export interface Waypoint {
+  x: number;
+  y: number;
+}
+
 export interface EdgeLayout {
+  /** User-placed waypoints in absolute world coords. Empty/undefined = auto H-V-H routing. */
+  waypoints?: Waypoint[];
+  /** @deprecated v1 — single H-V-H midX offset. Migrated to a single waypoint on first persist. */
   dx?: number;
+  /** @deprecated v1 — see `dx`. */
   dy?: number;
 }
 

@@ -1,12 +1,13 @@
 import { store, toTableLayoutRecord } from './state/store';
 import { postToHost } from './vscode';
+import type { EdgeLayout } from '../shared/types';
 
 /**
  * Debounced layout:persist post to the extension host.
  *
- * Owned here (not in dragController) so that any mutation source — drag,
- * edge drag, undo/redo, future history actions — can trigger the same write
- * pipeline without creating import cycles through the store.
+ * Owned here (not in dragController) so that any mutation source — table drag, waypoint
+ * edits, undo/redo, future history actions — can trigger the same write pipeline without
+ * creating import cycles through the store.
  */
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -17,8 +18,18 @@ export function schedulePersist(): void {
   persistTimer = setTimeout(() => {
     persistTimer = null;
     const state = store.getState();
-    const edges: Record<string, { dx?: number; dy?: number }> = {};
-    for (const [id, v] of state.edgeOffsets) edges[id] = { ...v };
+    const edges: Record<string, EdgeLayout> = {};
+    for (const [id, v] of state.edgeLayouts) {
+      const e: EdgeLayout = {};
+      if (v.waypoints && v.waypoints.length > 0) {
+        // Soft-migrate: drop legacy dx/dy once waypoints take precedence.
+        e.waypoints = v.waypoints.map((w) => ({ x: Math.round(w.x), y: Math.round(w.y) }));
+      } else {
+        if (v.dx !== undefined) e.dx = v.dx;
+        if (v.dy !== undefined) e.dy = v.dy;
+      }
+      if (e.waypoints || e.dx !== undefined || e.dy !== undefined) edges[id] = e;
+    }
     postToHost({
       type: 'layout:persist',
       payload: {
