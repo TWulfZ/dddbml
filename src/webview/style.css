@@ -570,6 +570,11 @@
     opacity: 0.5;
     cursor: default;
   }
+  .ddd-context-menu__separator {
+    border: none;
+    border-top: 1px solid var(--ddd-border-subtle);
+    margin: var(--ddd-space-2) 0;
+  }
 
   /* ----- Color popup ----- */
   .ddd-color-popup {
@@ -758,23 +763,58 @@
     align-items: center;
     z-index: 5;
   }
-  .ddd-actions-panel__handle {
+  .ddd-actions-panel__footer {
+    display: flex;
+    align-items: stretch;
     background: var(--ddd-surface-raised);
     border: 1px solid var(--ddd-border);
     border-bottom: none;
-    color: var(--ddd-fg-muted);
-    cursor: pointer;
-    padding: var(--ddd-space-1) var(--ddd-space-7);
     border-top-left-radius: var(--ddd-radius-md);
     border-top-right-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-sm);
+    overflow: hidden;
+  }
+  .ddd-actions-panel.is-open .ddd-actions-panel__footer {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    border-top: none;
+    box-shadow: none;
+  }
+  .ddd-actions-panel__handle {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    padding: var(--ddd-space-2) var(--ddd-space-6);
+    background: transparent;
+    border: none;
+    border-left: 1px solid var(--ddd-border);
+    color: var(--ddd-fg-muted);
+    cursor: pointer;
     transition: color var(--ddd-duration-instant), background var(--ddd-duration-instant);
   }
   .ddd-actions-panel__handle:hover {
     color: var(--ddd-fg);
     background: var(--ddd-surface-hover);
+  }
+  .ddd-hist-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    padding: var(--ddd-space-2) 0;
+    background: transparent;
+    border: none;
+    color: var(--ddd-fg-muted);
+    cursor: pointer;
+    transition: background var(--ddd-duration-instant), color var(--ddd-duration-instant);
+  }
+  .ddd-hist-btn:hover:not(:disabled) {
+    background: var(--ddd-surface-hover);
+    color: var(--ddd-fg);
+  }
+  .ddd-hist-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
   }
   .ddd-actions-panel__body {
     background: var(--ddd-surface-raised);
@@ -786,11 +826,6 @@
     display: flex;
     gap: var(--ddd-space-3);
     box-shadow: var(--ddd-shadow-md);
-  }
-  .ddd-actions-panel.is-open .ddd-actions-panel__handle {
-    border-radius: 0;
-    border-top: none;
-    border-bottom: none;
   }
   .ddd-actions-btn {
     display: inline-flex;

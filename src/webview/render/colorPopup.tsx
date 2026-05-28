@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 import { BC_PALETTE_SIZE, bcVar } from '../groups/bcPalette';
 
 interface ColorPopupProps {
@@ -55,7 +56,7 @@ export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPop
     };
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       class="ddd-color-popup"
       ref={popupRef}
@@ -91,7 +92,7 @@ export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPop
         ) : null}
       </div>
     </div>
-  );
+  , document.body);
 }
 
 /**

@@ -7,6 +7,8 @@ import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
 import { store, useAppStore } from '../state/store';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
+import { ContextMenu, clampMenuAnchor } from './contextMenu';
+import type { ContextMenuItem } from './contextMenu';
 import { IconKey, IconNote, IconSettings } from '../icons';
 import { withAlpha } from '../groups/bcPalette';
 
@@ -23,6 +25,8 @@ interface TableNodeProps {
 export function TableNode({ table, x, y, lod, selected, color, fkColumns }: TableNodeProps) {
   const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+
   const onPointerDown = (e: PointerEvent) => {
     startDrag(e, table.name, e.currentTarget as HTMLElement);
   };
@@ -30,46 +34,69 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
     e.stopPropagation();
     postToHost({ type: 'command:reveal', payload: { tableName: table.name } });
   };
+  const onContextMenu = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu(clampMenuAnchor(e.clientX, e.clientY, 200, 100));
+  };
+
+  const ctxItems: ContextMenuItem[] = [
+    { label: 'Export…', onClick: () => store.getState().setExportPromptOpen(true) },
+    { label: '', onClick: () => {}, separator: true },
+    { label: 'Copy table name', onClick: () => { void navigator.clipboard.writeText(table.tableName); } },
+  ];
+
+  const ctxMenuEl = ctxMenu ? (
+    <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems} onClose={() => setCtxMenu(null)} />
+  ) : null;
 
   const selClass = selected ? ' is-selected' : '';
-  const headerStyle = color
+  const headerStyle: Record<string, string> = color
     ? { background: withAlpha(color, 0.22), borderTopColor: color }
     : {};
 
   if (lod === 'rect') {
     return (
-      <div
-        class={`ddd-table ddd-table--rect${selClass}`}
-        data-id={table.name}
-        onPointerDown={onPointerDown}
-        onDblClick={onDblClick}
-        title={table.note ? `${table.name}\n\n${table.note}` : table.name}
-        style={{
-          position: 'absolute',
-          transform: `translate3d(${x}px, ${y}px, 0)`,
-          width: `${size.width}px`,
-          height: `${size.height}px`,
-          background: color ?? 'var(--ddd-accent)',
-        }}
-      />
+      <>
+        <div
+          class={`ddd-table ddd-table--rect${selClass}`}
+          data-id={table.name}
+          onPointerDown={onPointerDown}
+          onDblClick={onDblClick}
+          onContextMenu={onContextMenu}
+          title={table.note ? `${table.name}\n\n${table.note}` : table.name}
+          style={{
+            position: 'absolute',
+            transform: `translate3d(${x}px, ${y}px, 0)`,
+            width: `${size.width}px`,
+            height: `${size.height}px`,
+            background: color ?? 'var(--ddd-accent)',
+          }}
+        />
+        {ctxMenuEl}
+      </>
     );
   }
 
   if (lod === 'header') {
     return (
-      <div
-        class={`ddd-table ddd-table--header-only${selClass}`}
-        data-id={table.name}
-        onPointerDown={onPointerDown}
-        onDblClick={onDblClick}
-        style={{
-          position: 'absolute',
-          transform: `translate3d(${x}px, ${y}px, 0)`,
-          borderTopColor: color ?? undefined,
-        }}
-      >
-        <TableHeader table={table} headerStyle={headerStyle} />
-      </div>
+      <>
+        <div
+          class={`ddd-table ddd-table--header-only${selClass}`}
+          data-id={table.name}
+          onPointerDown={onPointerDown}
+          onDblClick={onDblClick}
+          onContextMenu={onContextMenu}
+          style={{
+            position: 'absolute',
+            transform: `translate3d(${x}px, ${y}px, 0)`,
+            borderTopColor: color ?? undefined,
+          }}
+        >
+          <TableHeader table={table} headerStyle={headerStyle} />
+        </div>
+        {ctxMenuEl}
+      </>
     );
   }
 
@@ -78,24 +105,28 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
     : table.columns;
 
   return (
-    <div
-      class={`ddd-table${selClass}`}
-      data-id={table.name}
-      onPointerDown={onPointerDown}
-      onDblClick={onDblClick}
-      style={{
-        position: 'absolute',
-        transform: `translate3d(${x}px, ${y}px, 0)`,
-        borderTopColor: color ?? undefined,
-      }}
-    >
-      <TableHeader table={table} configurable headerStyle={headerStyle} />
-      <ul class="ddd-table__cols">
-        {visibleCols.map((c) => (
-          <ColumnRow key={c.name} col={c} isFk={fkColumns?.has(c.name) ?? false} />
-        ))}
-      </ul>
-    </div>
+    <>
+      <div
+        class={`ddd-table${selClass}`}
+        data-id={table.name}
+        onPointerDown={onPointerDown}
+        onDblClick={onDblClick}
+        onContextMenu={onContextMenu}
+        style={{
+          position: 'absolute',
+          transform: `translate3d(${x}px, ${y}px, 0)`,
+          borderTopColor: color ?? undefined,
+        }}
+      >
+        <TableHeader table={table} configurable headerStyle={headerStyle} />
+        <ul class="ddd-table__cols">
+          {visibleCols.map((c) => (
+            <ColumnRow key={c.name} col={c} isFk={fkColumns?.has(c.name) ?? false} />
+          ))}
+        </ul>
+      </div>
+      {ctxMenuEl}
+    </>
   );
 }
 
@@ -215,4 +246,3 @@ function TableNoteIcon({ note, name }: { note: string; name: string }) {
     </span>
   );
 }
-

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'preact/hooks';
 import type { TableGroup } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
-import { ColorPopup, popupAnchorFor } from '../render/colorPopup';
+import { ColorPopup } from '../render/colorPopup';
 import { bcColorFor } from './bcPalette';
 import {
   IconChevronDown,
@@ -142,9 +142,14 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: Group
   };
   const onGearClick = (e: MouseEvent) => {
     e.stopPropagation();
-    const rowEl = (e.currentTarget as HTMLElement).closest('.ddd-group-row') as HTMLElement | null;
-    const anchorRect = rowEl?.getBoundingClientRect() ?? (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setPopup(popupAnchorFor(anchorRect));
+    const panelEl = (e.currentTarget as HTMLElement).closest('.ddd-group-panel') as HTMLElement | null;
+    const gearEl = e.currentTarget as HTMLElement;
+    const panel = (panelEl ?? gearEl).getBoundingClientRect();
+    const gear = gearEl.getBoundingClientRect();
+    const popupW = 240, popupH = 220;
+    const x = Math.max(8, panel.left - popupW - 4);
+    const y = Math.min(Math.max(8, gear.top), window.innerHeight - popupH - 8);
+    setPopup({ x, y });
   };
 
   const memberTables = filter

@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { createPortal } from 'preact/compat';
 
 export interface ContextMenuItem {
   label: string;
   onClick: () => void;
   danger?: boolean;
   disabled?: boolean;
+  separator?: boolean;
 }
 
 export interface ContextMenuProps {
@@ -45,7 +47,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     };
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       class="ddd-context-menu"
       ref={ref}
@@ -54,18 +56,22 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       onClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
     >
-      {items.map((item, i) => (
-        <button
-          key={i}
-          class={`ddd-context-menu__item${item.danger ? ' is-danger' : ''}`}
-          disabled={item.disabled}
-          onClick={() => { if (!item.disabled) { item.onClick(); onClose(); } }}
-        >
-          {item.label}
-        </button>
-      ))}
+      {items.map((item, i) =>
+        item.separator ? (
+          <hr key={i} class="ddd-context-menu__separator" />
+        ) : (
+          <button
+            key={i}
+            class={`ddd-context-menu__item${item.danger ? ' is-danger' : ''}`}
+            disabled={item.disabled}
+            onClick={() => { if (!item.disabled) { item.onClick(); onClose(); } }}
+          >
+            {item.label}
+          </button>
+        )
+      )}
     </div>
-  );
+  , document.body);
 }
 
 /**

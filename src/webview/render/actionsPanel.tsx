@@ -4,9 +4,8 @@ import { schedulePersist } from '../persistence';
 import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconRedo, IconSettings, IconUndo } from '../icons';
 
 /**
- * Floating bottom-center actions panel. Collapses to a single chevron handle.
- * Hosts view-toggles that are ephemeral (not persisted), plus modal triggers
- * (Export, Settings).
+ * Floating bottom-center actions panel. Footer row (undo/redo + chevron) is always visible.
+ * Remaining actions (filter, export, settings) expand above when open.
  */
 export function ActionsPanel() {
   const [open, setOpen] = useState(false);
@@ -27,33 +26,33 @@ export function ActionsPanel() {
 
   return (
     <div class={`ddd-actions-panel ${open ? 'is-open' : 'is-closed'}`}>
-      <button
-        class="ddd-actions-panel__handle"
-        onClick={() => setOpen(!open)}
-        title={open ? 'Hide actions' : 'Show actions'}
-      >
-        {open ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
-      </button>
+      <div class="ddd-actions-panel__footer">
+        <button
+          class="ddd-hist-btn"
+          disabled={pastLen === 0}
+          onClick={undo}
+          title="Undo (Ctrl+Z)"
+        >
+          <IconUndo size={13} />
+        </button>
+        <button
+          class="ddd-hist-btn"
+          disabled={futureLen === 0}
+          onClick={redo}
+          title="Redo (Ctrl+Shift+Z)"
+        >
+          <IconRedo size={13} />
+        </button>
+        <button
+          class="ddd-actions-panel__handle"
+          onClick={() => setOpen(!open)}
+          title={open ? 'Hide actions' : 'Show actions'}
+        >
+          {open ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
+        </button>
+      </div>
       {open ? (
         <div class="ddd-actions-panel__body">
-          <button
-            class="ddd-actions-btn"
-            disabled={pastLen === 0}
-            onClick={undo}
-            title="Undo (Ctrl+Z)"
-          >
-            <IconUndo size={12} />
-            <span>Undo</span>
-          </button>
-          <button
-            class="ddd-actions-btn"
-            disabled={futureLen === 0}
-            onClick={redo}
-            title="Redo (Ctrl+Shift+Z)"
-          >
-            <IconRedo size={12} />
-            <span>Redo</span>
-          </button>
           <button
             class={`ddd-actions-btn ${showOnlyPkFk ? 'is-active' : ''}`}
             onClick={() => store.getState().toggleShowOnlyPkFk()}

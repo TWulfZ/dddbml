@@ -116,12 +116,13 @@ Edge case: si llega `layout:external-change` por edición externa real (git pull
 
 ### Botones en `actionsPanel`
 
-Dos botones nuevos al inicio del `__body` del panel:
+Undo y Redo viven en `ddd-actions-panel__footer`, un strip siempre visible **fuera** del cuerpo colapsable. El footer contiene:
 
-- **Undo** — `IconUndo`, `disabled` cuando `past.length === 0`, tooltip `Undo (Ctrl+Z)`.
-- **Redo** — `IconRedo`, `disabled` cuando `future.length === 0`, tooltip `Redo (Ctrl+Shift+Z)`.
+- **Undo** — `ddd-hist-btn` + `IconUndo`, `disabled` cuando `past.length === 0`, tooltip `Undo (Ctrl+Z)`.
+- **Redo** — `ddd-hist-btn` + `IconRedo`, `disabled` cuando `future.length === 0`, tooltip `Redo (Ctrl+Shift+Z)`.
+- **Handle chevron** — separado a la derecha con `border-left`, expande/colapsa el `__body` con filter/export/settings.
 
-Ambos invocan `store.undo()` / `store.redo()` seguido de `schedulePersist()`.
+Los botones son siempre visibles independientemente de si el panel está abierto. Ambos invocan `store.undo()` / `store.redo()` seguido de `schedulePersist()`.
 
 ### Atajos teclado
 
