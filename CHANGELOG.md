@@ -4,6 +4,79 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-05-27
+
+### Added
+
+#### Export to TypeORM
+- New **Export** button in the actions panel opens a modal to generate TypeORM entities from the full schema or a selection of tables.
+- Registry+strategy architecture: adding Prisma, SQL DDL, or Mermaid requires one new module and one line of registration — no changes to dispatch or modal code.
+- PostgreSQL dialect: full DBML→TypeScript type mapping (`int`, `bigint`, `varchar(N)`, `uuid`, `boolean`, `timestamp`/`timestamptz`, `numeric(P,S)`, `json`/`jsonb`, `bytea`, and more); unknown types fall back to `string` with a warning.
+- Relation decorators generated from DBML `Ref`: `@OneToOne`, `@OneToMany`, `@ManyToOne`, `@ManyToMany` with `@JoinColumn`/`@JoinTable` on the owning side.
+- Composite foreign keys emitted as `@JoinColumn([{ name: 'a' }, { name: 'b' }])`.
+- Scope `Selected`: tables outside the selection emit their FK column as a plain property; a warning identifies each cut relation.
+- English singularization with known irregulars (`children→Child`, `people→Person`, `addresses→Address`, etc.).
+- Export options: SQL dialect, singularize class names, include `typeorm` import line, emit `nullable` explicitly.
+- Result opens as an untitled VSCode document; the user decides where to save it.
+- Command palette entry `dddbml: Export Schema…` delegates to the active webview modal.
+
+#### Settings
+- All formerly hardcoded viewport and render constants are now configurable in VSCode Settings UI and `settings.json` under the `dddbml.*` namespace.
+- `dddbml.zoomStep`, `dddbml.zoomMin`, `dddbml.zoomMax` — zoom behaviour.
+- `dddbml.lod.mediumThreshold`, `dddbml.lod.lowThreshold` — LOD breakpoints.
+- `dddbml.export.defaultFormat`, `dddbml.export.typeorm.*` — export defaults.
+- Changes propagate to the webview immediately via `settings:loaded` without a reload.
+- Settings panel inside the webview (gear icon in the actions panel) with numeric inputs, toggles, selects, and a "Reset to defaults" button.
+
+#### Edge waypoints
+- Any edge segment can now carry user-defined waypoints: hover a segment to reveal a ghost circle, click-drag to insert a waypoint at that position.
+- Double-click a waypoint circle to remove it; context-menu "Reset edge waypoints" clears all waypoints on an edge.
+- Waypoints are stored in `EdgeLayout.waypoints[]` in the sidecar JSON and survive reloads.
+- Routing with waypoints uses strict horizontal/vertical alternation; collinear points are collapsed.
+- Full backward compatibility: an edge with no waypoints produces a path identical to the original H-V-H algorithm. The legacy `dx` midpoint offset is still honoured until the user adds a waypoint.
+
+#### Undo / Redo
+- `Ctrl+Z` / `Cmd+Z` undoes the last diagram edit; `Ctrl+Shift+Z` and `Ctrl+Y` redo.
+- **Move commands**: single-table drag and multi-table marquee drag each produce one undoable command. A drag with zero net displacement is a no-op and adds nothing to the stack.
+- **Waypoint commands**: add, move, remove, and clear operations on edge waypoints are individually undoable.
+- Stack capacity: 200 entries; oldest entries drop FIFO when the cap is exceeded.
+- Undo / Redo buttons in the actions panel; both are disabled while their respective stack is empty.
+- The history stack is cleared when the layout is reloaded from disk or when the set of table names changes (prevents undo-to-a-deleted-table). Schema edits that only modify columns preserve the stack.
+- Undo and redo trigger a debounced layout persist so the sidecar stays in sync.
+
+#### Design system
+- CSS rewritten with `@layer reset, tokens, base, surfaces, components, state, utilities`; layer order enforces specificity without `!important`.
+- Complete design token set: spacing (4 pt scale, `--ddd-space-0..8`), border radii, typography scale, dark-tuned drop shadows, and motion tokens with three durations and three easings.
+- Three density modes — `compact`, `cozy` (default), `comfortable` — toggled via `data-density` on the root element and persisted as `dddbml.ui.density`. Table width, row height, padding, header height, and font size all respond.
+- `densityMetrics()` TypeScript mirror in `src/webview/layout/density.ts` keeps `estimateSize()` in sync with the CSS values.
+- Bounded Context colour palette: 12 curated colours (`--ddd-bc-{1..12}-surface/border`) that are colour-blind safer and tuned for dark VSCode themes, replacing the previous `hsl(hash, 55%, 60%)` approach.
+- `bcIndex(name)` deterministic hash assigns a stable palette slot to each group name across reloads.
+- Semantic tokens (`--ddd-surface-*`, `--ddd-fg-*`, `--ddd-border-*`, `--ddd-accent`, `--ddd-edge-*`) map to `--vscode-*` variables with literal fallbacks; the diagram reacts to theme changes without a reload.
+- `prefers-reduced-motion: reduce` sets all animation durations to `0ms`.
+- All magic pixel and hex values removed from component CSS; every value reads from a token.
+
+### Changed
+
+- Export TypeORM and Settings configuration keys (`dddbml.export.typeorm.dialect` enum) added to `package.json#contributes.configuration`.
+- `EdgeLayout` in the sidecar schema gains an optional `waypoints` array; existing files without it are read as empty-waypoint edges (no migration needed).
+- Group and table colours now default to the BC palette slot derived from the group name; existing explicit hex values in the sidecar are preserved as-is.
+- LOD `lowThreshold` and `mediumThreshold` are now read from settings rather than hardcoded constants.
+
+### Deferred to future releases
+
+- TypeORM: DBML `enum` types → `@Column({ type: 'enum', enum: … })`.
+- TypeORM: DBML `indexes` → `@Index([…])` decorator.
+- TypeORM dialects: MySQL, SQLite, MSSQL.
+- Edge: arrowhead markers to distinguish cardinality (`1:*` vs `*:*`).
+- Edge: self-loop path (currently degenerates visually).
+- Edge: rounded elbows (`stroke-linejoin: round`).
+- Minimap, go-to-table search, edge highlight on table hover.
+- A*-based edge routing that avoids crossing tables.
+- Export to Prisma, Mermaid, SQL DDL, PNG, SVG.
+- Light and High-Contrast theme support for the design system.
+
+---
+
 ## [0.1.0] — 2026-04-16
 
 Initial release.
