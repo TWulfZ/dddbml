@@ -108,7 +108,7 @@ Scope congelado. Construcción sobre v1.0; todos los ítems a continuación est�
 ## No-goals permanentes
 
 - **Editor visual de DBML** (arrastra tabla desde palette → se escribe DBML): anti-goal porque compite con la idea de "source of truth es el texto".
-- **Sync con DBs reales**: fuera de scope; Prisma/dbdiagram/etc hacen esto mejor.
+- **Sync con DBs reales**: fuera de scope; Prisma/ORM tools hacen esto mejor.
 - **Cloud/SaaS**: la extensión es local-first por diseño.
 
 ## Cadencia

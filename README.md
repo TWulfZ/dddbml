@@ -45,7 +45,7 @@ Open any `.dbml` file, then run **`dddbml: Open Diagram`** from the command pale
 ### Relationship lines that follow your columns
 
 - Each FK line exits from the source column's row and enters at the target column's row — not the middle of the table.
-- Paths are **Manhattan-routed** horizontally (source side → vertical jog → target side), matching dbdiagram.io's style.
+- Paths are **Manhattan-routed** horizontally (source side → vertical jog → target side).
 - Cardinality endpoints: crow's-foot for many (`*`), perpendicular bar for one (`1`).
 - **Drag the middle segment** of any edge to reroute it exactly where you want it — the offset persists in the layout file.
 
@@ -248,7 +248,7 @@ No React, no React Flow. The renderer is ~1 KLOC of custom code because we need 
 Extensions on the VSCode Marketplace that also render DBML but don't persist per-table positions or support DDD workflows:
 
 - `matt-meyers.vscode-dbml` — syntax highlighting only; complementary, not a competitor.
-- `bocovo.dbml-erd-visualizer`, `PeakTech.dbml-erd-viewer`, `nicolas-liger.dbml-viewer`, `rizkykurniawan.dbml-previewer`, `dbdiagram.dbdiagram-vscode` — rendered diagrams but without Git-friendly layout persistence, group collapse, or viewport culling at scale.
+- `bocovo.dbml-erd-visualizer`, `PeakTech.dbml-erd-viewer`, `nicolas-liger.dbml-viewer`, `rizkykurniawan.dbml-previewer` — rendered diagrams but without Git-friendly layout persistence, group collapse, or viewport culling at scale.
 
 `dddbml` specifically fills those gaps.
 

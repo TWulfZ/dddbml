@@ -13,7 +13,7 @@ interface GroupContainerProps {
 
 /**
  * Visual container behind the member tables of a non-collapsed, non-hidden group.
- * Mirrors dbdiagram's group rendering: dashed border rect with a colored label on top.
+ * Standard ERD group rendering: dashed border rect with a colored label on top.
  *
  * Interaction:
  *   - Body is pointer-events: none so pan / wheel pass through to the viewport

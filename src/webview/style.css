@@ -501,7 +501,7 @@
     stroke: var(--ddd-accent);
     stroke-opacity: 0.18;
   }
-  /* Midpoint drag grips — the only handle that creates/moves a bend (dbdiagram parity). */
+  /* Midpoint drag grips — the only handle that creates/moves a bend (segment drag). */
   .ddd-edges circle.ddd-edge-grip {
     fill: var(--ddd-surface-raised);
     stroke: var(--ddd-edge-selected);
@@ -559,7 +559,7 @@
     fill: var(--ddd-edge-selected);
   }
 
-  /* Floating edge toolbar (dbdiagram "Reset line"): portal to body, fixed at the edge midpoint. */
+  /* Floating edge toolbar (Reset line): portal to body, fixed at the edge midpoint. */
   .ddd-edge-toolbar {
     position: fixed;
     z-index: 30;

@@ -306,7 +306,7 @@ function buildSegments(corners: Array<{ x: number; y: number }>, waypoints: Wayp
 /**
  * Translate a dragged segment along its normal and return the new waypoint list.
  *
- * dbdiagram-style "segment dragging": a segment only moves perpendicular to itself, so the
+ * Orthogonal segment dragging: a segment only moves perpendicular to itself, so the
  * path can never gain a diagonal or a staircase "pico". Editing maps to whole-segment moves —
  * a segment bounded by stored waypoint(s) shifts those waypoints' relevant coordinate; a bare
  * bridge/stub segment inserts the minimal waypoint(s) to anchor the new bend. The router
@@ -396,7 +396,7 @@ function orientationOfSide(side: Side): 'h' | 'v' {
 }
 
 function chooseSides(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {
-  // dbdiagram-style: always exit/enter horizontally. Column-aligned ports only make sense horizontally,
+  // Always exit/enter horizontally. Column-aligned ports only make sense horizontally,
   // so forcing left/right for every edge keeps routing predictable and aligned with column rows.
   const srcC = centerOf(src);
   const tgtC = centerOf(tgt);

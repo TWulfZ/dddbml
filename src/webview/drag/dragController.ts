@@ -93,7 +93,7 @@ function snapshotWaypoints(refId: string): Waypoint[] {
 }
 
 /**
- * Drag an edge segment along its normal (dbdiagram-style segment dragging). The drag always
+ * Drag an edge segment along its normal (orthogonal segment dragging). The drag always
  * recomputes from the ORIGINAL route snapshot + cumulative delta, so it is idempotent and the
  * segment index never drifts as waypoints are inserted mid-drag. Spikes are impossible because
  * `computeSegmentDrag` only ever moves whole segments and re-simplifies colinear vertices.

@@ -3,7 +3,7 @@
 ## Propósito
 
 Rutear cada `Ref` del esquema como una **polilínea ortogonal (Manhattan)** limpia,
-editable por el usuario, predecible y estilo **dbdiagram**. El usuario debe poder
+editable por el usuario, predecible y con ruteo ortogonal estándar. El usuario debe poder
 doblar una arista (segmentar) **sin poder generar "picos"** (jogs/staircase) ni
 diagonales, y tidiar una arista a un click ("Reset line").
 
@@ -17,7 +17,7 @@ Estado del problema (capturas `2026-05-27`): el modelo v1 deja **colocar
 waypoints libres en cualquier coord world**. Al mover una tabla los puertos
 siguen a la tabla (se recomputan) pero los waypoints quedan **fijos** — y el
 ruteo entre ellos produce escaleras/picos irregulares. El usuario investigó
-dbdiagram y confirmó la semántica deseada:
+ERD tools estándar y confirmó la semántica deseada:
 
 - **Los waypoints NO siguen a la tabla.** Sólo el primer/último tramo (stub) se
   re-conecta al puerto flotante. Esto es correcto y deseado — no hay que anclar
@@ -35,7 +35,7 @@ segmentos completos.
 
 ## Decisiones (resueltas con el usuario)
 
-1. **Modelo de edición: sólo segment-drag por el punto medio (estilo dbdiagram).**
+1. **Modelo de edición: sólo segment-drag por el punto medio (arrastre de segmento estándar).**
    Se eliminó el arrastre de puntos libres. Cada segmento (largo ≥ `MIN_GRIP_LEN`)
    muestra un *grip* en su punto medio cuando la arista está seleccionada; sólo
    ese grip arrastra, en su normal (`computeSegmentDrag`), insertando offsets
@@ -65,7 +65,7 @@ segmentos completos.
 
 Para cada ref, dado bbox source y target:
 
-**Elegir lados** (`chooseSides`): estilo dbdiagram, siempre horizontal —
+**Elegir lados** (`chooseSides`): siempre horizontal —
 `dx = tgtCenter.x - srcCenter.x`; `dx >= 0` ⇒ source=right, target=left; si no,
 source=left, target=right. (Override manual: ver §4.)
 
@@ -83,7 +83,7 @@ waypoints de usuario. Migración legacy `dx`/`dy` conservada (ver código).
 > se cumple. El bug no es éste — es que la *edición* puede crear waypoints en
 > posiciones que generan escaleras de micro-segmentos.
 
-### 2. Puertos flotantes + waypoints fijados (semántica dbdiagram)
+### 2. Puertos flotantes + waypoints fijados (semántica de ports flotantes)
 
 - Puertos se recomputan cada render desde el bbox actual (ya ocurre) → **siguen
   a la tabla**.
@@ -137,7 +137,7 @@ más allá del centro del campo conmuta el lado y persiste.
 - Nuevo estado de selección de arista: `selectedEdgeId: string | null` en el
   store (+ acción `setSelectedEdge`). Click sobre la arista la selecciona;
   resalta y muestra toolbar flotante cerca del midpoint.
-- Toolbar (estilo dbdiagram "Reset line"): **↻ Reset line** (resetea waypoints +
+- Toolbar: **↻ Reset line** (resetea waypoints +
   flip de esa arista vía `resetEdgeWaypoints`) y **⚙ opciones** → abre
   `ColorPopup` reusando `popupAnchorFor`, escribe `EdgeLayout.color`.
 - Reemplaza el `ContextMenu` por click derecho de waypoint en `edgeLayer.tsx`
