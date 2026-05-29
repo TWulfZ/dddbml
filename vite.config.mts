@@ -1,5 +1,6 @@
 /// <reference types="vitest" />
 import { defineConfig, type Plugin } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
 import { copyFileSync } from 'fs';
 
@@ -21,7 +22,7 @@ function copyCodicons(): Plugin {
 
 export default defineConfig({
   root: resolve(__dirname, 'src/webview'),
-  plugins: [copyCodicons()],
+  plugins: [tailwindcss(), copyCodicons()],
   resolve: {
     alias: {
       react: 'preact/compat',

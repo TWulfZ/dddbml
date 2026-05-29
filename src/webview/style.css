@@ -7,7 +7,17 @@
  * All component rules read from tokens. No raw hex, no magic px.
  * =========================================================================== */
 
-@layer reset, tokens, base, surfaces, components, state, utilities;
+@layer theme, reset, tokens, base, surfaces, components, state, utilities;
+
+/* ----------------------------------------------------------------------------
+ * Tailwind v4 — incremental trial (see specs/12-design-system.md).
+ * Import theme + utilities ONLY; preflight is intentionally omitted so it does
+ * not clobber `@layer reset`/`base` or the inherited --vscode-* base styling.
+ * Utilities reference existing --ddd-* / --vscode-* vars via arbitrary values,
+ * so --ddd-* stays the single source of truth.
+ * -------------------------------------------------------------------------- */
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
 
 /* ============================================================================
  * @layer reset
@@ -563,21 +573,6 @@
     border-radius: var(--ddd-radius-md);
     box-shadow: var(--ddd-shadow-md);
   }
-.ddd-edge-toolbar__btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border: none;
-    border-radius: var(--ddd-radius-sm);
-    background: transparent;
-    color: var(--ddd-fg);
-    cursor: pointer;
-  }
-  .ddd-edge-toolbar__btn:hover {
-    background: var(--ddd-surface-selected);
-  }
 
   /* ----- Tooltip ----- */
   .ddd-tooltip {
@@ -784,23 +779,6 @@
     z-index: 5;
     box-shadow: var(--ddd-shadow-sm);
   }
-  .ddd-zoom__btn {
-    min-width: 28px;
-    height: 24px;
-    padding: 0 var(--ddd-space-3);
-    background: transparent;
-    color: var(--ddd-fg);
-    border: none;
-    border-radius: var(--ddd-radius-sm);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: var(--ddd-text-base);
-    line-height: 1;
-    transition: background var(--ddd-duration-instant);
-  }
-  .ddd-zoom__btn:hover {
-    background: var(--ddd-surface-hover);
-  }
   .ddd-zoom__pct {
     position: relative;
     display: inline-flex;
@@ -881,26 +859,6 @@
     color: var(--ddd-fg);
     background: var(--ddd-surface-hover);
   }
-  .ddd-hist-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    padding: var(--ddd-space-2) 0;
-    background: transparent;
-    border: none;
-    color: var(--ddd-fg-muted);
-    cursor: pointer;
-    transition: background var(--ddd-duration-instant), color var(--ddd-duration-instant);
-  }
-  .ddd-hist-btn:hover:not(:disabled) {
-    background: var(--ddd-surface-hover);
-    color: var(--ddd-fg);
-  }
-  .ddd-hist-btn:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
   .ddd-actions-panel__body {
     background: var(--ddd-surface-raised);
     border: 1px solid var(--ddd-border);
@@ -911,25 +869,6 @@
     display: flex;
     gap: var(--ddd-space-3);
     box-shadow: var(--ddd-shadow-md);
-  }
-  .ddd-actions-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--ddd-space-3);
-    padding: var(--ddd-space-2) var(--ddd-space-5);
-    background: transparent;
-    border: 1px solid var(--ddd-border);
-    color: var(--ddd-fg);
-    border-radius: var(--ddd-radius-sm);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: var(--ddd-text-base);
-    transition: background var(--ddd-duration-instant),
-                color var(--ddd-duration-instant),
-                border-color var(--ddd-duration-instant);
-  }
-  .ddd-actions-btn:hover {
-    background: var(--ddd-surface-hover);
   }
 
   /* ----- Group panel ----- */
@@ -1081,24 +1020,6 @@
     font-size: var(--ddd-text-sm);
     padding: 0 var(--ddd-space-2);
     font-variant-numeric: tabular-nums;
-  }
-
-  .ddd-group-btn {
-    width: 22px;
-    height: 20px;
-    padding: 0;
-    background: transparent;
-    color: var(--ddd-fg-muted);
-    border: 1px solid transparent;
-    border-radius: var(--ddd-radius-sm);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: var(--ddd-text-sm);
-    transition: color var(--ddd-duration-instant), border-color var(--ddd-duration-instant);
-  }
-  .ddd-group-btn:hover {
-    border-color: var(--ddd-border);
-    color: var(--ddd-fg);
   }
 
   /* ----- Group container (non-collapsed) ----- */
@@ -1301,63 +1222,6 @@
     background: var(--ddd-surface-hover);
   }
 
-  /* ----- Buttons ----- */
-  .ddd-btn {
-    background: transparent;
-    border: 1px solid var(--ddd-border);
-    color: var(--ddd-fg);
-    border-radius: var(--ddd-radius-sm);
-    padding: var(--ddd-space-2) var(--ddd-space-5);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--ddd-text-base);
-    transition: background var(--ddd-duration-instant),
-                border-color var(--ddd-duration-instant),
-                transform var(--ddd-duration-instant);
-  }
-  .ddd-btn:hover {
-    background: var(--ddd-surface-hover);
-    border-color: var(--ddd-fg-muted);
-  }
-  .ddd-btn:active {
-    transform: scale(0.97);
-  }
-  .ddd-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .ddd-btn--primary {
-    background: var(--ddd-accent);
-    border-color: var(--ddd-accent);
-    color: var(--ddd-fg-on-accent);
-    font-weight: var(--ddd-weight-medium);
-  }
-  .ddd-btn--primary:hover {
-    background: var(--ddd-accent-hover);
-    border-color: var(--ddd-accent-hover);
-    filter: brightness(1.05);
-  }
-
-  .ddd-icon-btn {
-    width: 24px;
-    height: 22px;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    color: var(--ddd-fg);
-    border: 1px solid transparent;
-    border-radius: var(--ddd-radius-sm);
-    cursor: pointer;
-    transition: background var(--ddd-duration-instant),
-                border-color var(--ddd-duration-instant),
-                color var(--ddd-duration-instant);
-  }
-  .ddd-icon-btn:hover {
-    border-color: var(--ddd-border);
-    background: var(--ddd-surface-hover);
-  }
 }
 
 /* ============================================================================
@@ -1398,32 +1262,6 @@
     cursor: grabbing !important;
   }
 
-  /* ----- Toggle buttons ----- */
-  .ddd-actions-btn.is-active {
-    background: var(--ddd-accent);
-    color: var(--ddd-fg-on-accent);
-    border-color: var(--ddd-accent);
-  }
-  .ddd-actions-btn.is-active:hover {
-    background: var(--ddd-accent-hover);
-    border-color: var(--ddd-accent-hover);
-  }
-  .ddd-hist-btn.is-active {
-    color: var(--ddd-accent);
-    background: var(--ddd-surface-selected);
-  }
-  .ddd-icon-btn.is-on {
-    color: var(--ddd-accent);
-  }
-  .ddd-icon-btn.is-off {
-    opacity: 0.55;
-  }
-  .ddd-group-btn.is-on {
-    color: var(--ddd-accent);
-  }
-  .ddd-group-btn.is-off {
-    opacity: 0.5;
-  }
   .ddd-radio.is-disabled {
     opacity: 0.5;
     cursor: not-allowed;

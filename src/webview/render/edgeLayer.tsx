@@ -8,6 +8,7 @@ import { store, useAppStore } from '../state/store';
 import { startSegmentDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle } from '../drag/dragController';
 import type { EdgeStyle } from '../state/history';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
+import { Button } from '../ui/Button';
 import { IconReset, IconSettings } from '../icons';
 
 interface GroupSize {
@@ -265,15 +266,15 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
               style={{ left: `${toolbarPos.x}px`, top: `${toolbarPos.y}px` }}
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <button
-                class="ddd-edge-toolbar__btn"
+              <Button
+                variant="toolbar"
                 title="Reset line"
                 onClick={() => resetEdgeWaypoints(selectedRoute.id)}
               >
                 <IconReset size={13} />
-              </button>
-              <button
-                class="ddd-edge-toolbar__btn"
+              </Button>
+              <Button
+                variant="toolbar"
                 title="Edge color"
                 onClick={(e) => {
                   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -282,7 +283,7 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
                 }}
               >
                 <IconSettings size={13} />
-              </button>
+              </Button>
             </div>,
             document.body,
           )

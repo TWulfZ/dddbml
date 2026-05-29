@@ -2,6 +2,7 @@ import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
+import { Button } from '../ui/Button';
 import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconMagnet, IconRedo, IconSettings, IconUndo } from '../icons';
 
 /**
@@ -29,29 +30,30 @@ export function ActionsPanel() {
   return (
     <div class={`ddd-actions-panel ${open ? 'is-open' : 'is-closed'}`}>
       <div class="ddd-actions-panel__footer">
-        <button
-          class="ddd-hist-btn"
+        <Button
+          variant="history"
           disabled={pastLen === 0}
           onClick={undo}
           title="Undo (Ctrl+Z)"
         >
           <IconUndo size={13} />
-        </button>
-        <button
-          class="ddd-hist-btn"
+        </Button>
+        <Button
+          variant="history"
           disabled={futureLen === 0}
           onClick={redo}
           title="Redo (Ctrl+Shift+Z)"
         >
           <IconRedo size={13} />
-        </button>
-        <button
-          class={`ddd-hist-btn ${snapToGrid ? 'is-active' : ''}`}
+        </Button>
+        <Button
+          variant="history"
+          active={snapToGrid}
           onClick={() => postToHost({ type: 'settings:update', payload: { 'ui.snapToGrid': !snapToGrid } })}
           title={snapToGrid ? 'Magnet on — snap to grid' : 'Magnet off — free move'}
         >
           <IconMagnet size={13} />
-        </button>
+        </Button>
         <button
           class="ddd-actions-panel__handle"
           onClick={() => setOpen(!open)}
@@ -62,30 +64,31 @@ export function ActionsPanel() {
       </div>
       {open ? (
         <div class="ddd-actions-panel__body">
-          <button
-            class={`ddd-actions-btn ${showOnlyPkFk ? 'is-active' : ''}`}
+          <Button
+            variant="action"
+            active={showOnlyPkFk}
             onClick={() => store.getState().toggleShowOnlyPkFk()}
             title="Toggle PK/FK-only column view"
           >
             <IconFilter size={12} />
             <span>{showOnlyPkFk ? 'Show all columns' : 'PK/FK only'}</span>
-          </button>
-          <button
-            class="ddd-actions-btn"
+          </Button>
+          <Button
+            variant="action"
             onClick={() => store.getState().setExportPromptOpen(true)}
             title="Export schema to TypeORM (or other formats)"
           >
             <IconGoToFile size={12} />
             <span>Export…</span>
-          </button>
-          <button
-            class="ddd-actions-btn"
+          </Button>
+          <Button
+            variant="action"
             onClick={() => store.getState().setSettingsPanelOpen(true)}
             title="Open settings"
           >
             <IconSettings size={12} />
             <span>Settings</span>
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>

@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { fitToContent, zoomAtCenter } from './viewport';
+import { Button } from '../ui/Button';
 import { IconFitScreen, IconMinus, IconPlus } from '../icons';
 
 export function ZoomButtons() {
@@ -10,16 +11,16 @@ export function ZoomButtons() {
 
   return (
     <div class="ddd-zoom">
-      <button class="ddd-zoom__btn" title="Zoom out (Ctrl+-)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(1 / zoomStep, el); }}>
+      <Button variant="zoom" title="Zoom out (Ctrl+-)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(1 / zoomStep, el); }}>
         <IconMinus size={13} />
-      </button>
+      </Button>
       <ZoomInput zoom={viewport.zoom} />
-      <button class="ddd-zoom__btn" title="Zoom in (Ctrl+=)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(zoomStep, el); }}>
+      <Button variant="zoom" title="Zoom in (Ctrl+=)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(zoomStep, el); }}>
         <IconPlus size={13} />
-      </button>
-      <button class="ddd-zoom__btn" title="Fit to content (Ctrl+1)" onClick={() => { const el = getEl(); if (el) fitToContent(el); }}>
+      </Button>
+      <Button variant="zoom" title="Fit to content (Ctrl+1)" onClick={() => { const el = getEl(); if (el) fitToContent(el); }}>
         <IconFitScreen size={13} />
-      </button>
+      </Button>
     </div>
   );
 }

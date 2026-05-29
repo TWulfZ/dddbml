@@ -12,14 +12,20 @@ VSCode sigue siendo dueño del tema (colores base, contraste de focus, hover). E
 2. **Cascada por capas** (`@layer reset, tokens, base, surfaces, components, state, utilities`) que permita extender o sobreescribir sin pelear con la especificidad.
 3. **Tres modos de densidad** (`compact | cozy | comfortable`) seleccionables vía `data-density` en la raíz; persistidos como setting de VSCode `dddbml.ui.density`.
 4. **Paleta Bounded Context** curada de 12 colores, color-blind safe y tuneada para modo oscuro, sustituye al `hsl(hash, 55%, 60%)` actual.
-5. **Cero churn de JSX**: todas las clases `ddd-*` existentes se preservan; solo cambian sus reglas y se añaden modificadores/variables.
+5. **Churn de JSX acotado**: las clases `ddd-*` existentes se preservan a nivel CSS. *Actualizado*: se introduce una capa de **primitivos Preact** en `src/webview/ui/` que encapsula esas clases tras componentes tipados (`<Button>`); los call sites migran su markup pero el lenguaje visual no cambia — ver [Capa de componentes](#capa-de-componentes--primitivos-preact).
 6. **Reduced motion**: `prefers-reduced-motion: reduce` neutraliza las animaciones de UI.
 7. **Spec-first**: este documento es la fuente de verdad. Cualquier cambio futuro a colores, tamaños o sombras se documenta aquí antes de tocar el CSS.
 
 ## Non-goals
 
 - Light theme y High-Contrast themes (deferred — la mayoría de usuarios DDD usan tema oscuro; ver Roadmap).
-- Tailwind o un framework de utilidades (rompería la coherencia con `--vscode-*`).
+- ~~Tailwind o un framework de utilidades (rompería la coherencia con `--vscode-*`)~~ →
+  **REVISADO** (ver [Integración Tailwind v4](#integración-tailwind-v4--trial-incremental)).
+  La objeción técnica original resultó parcialmente desactualizada: el CSP del panel ya
+  permite estilos (`style-src … 'unsafe-inline'`) y Tailwind v4 enlaza variables de tema
+  en vivo vía `@theme inline`. Se adopta Tailwind v4 de forma **incremental y reversible**;
+  `--ddd-*` sigue siendo la fuente de verdad semántica y las utilidades solo referencian
+  esos tokens (valores arbitrarios), no los reemplazan.
 - Per-file theming (mismo `.dbml` no debe tener diseño distinto por carpeta).
 - Stereotypes DDD (aggregate-root border, value-object dashed, etc.) — segundo round.
 - Splitting de `style.css` en archivos por componente — la arquitectura `@layer` cubre la separación lógica sin un build extra.
@@ -299,6 +305,95 @@ Capturar antes/después en `docs/screenshots/` para README:
 Este spec debe actualizarse en el mismo PR que cualquier cambio futuro a tokens, paleta BC, o densidad — siguiendo la regla del README.
 
 ---
+
+## Capa de componentes — primitivos Preact
+
+Antes existían **7 familias de clases de botón** (`.ddd-btn`/`--primary`, `.ddd-icon-btn`,
+`.ddd-actions-btn`, `.ddd-hist-btn`, `.ddd-group-btn`, `.ddd-zoom__btn`,
+`.ddd-edge-toolbar__btn`) y cada call site elegía a mano el string de clase + uniones ad-hoc
+de estado (`${hidden ? 'is-off' : ''}`). Esto no permitía expresar una variante (p. ej.
+`ghost`, sin borde) como prop reutilizable.
+
+Solución: una capa de primitivos en `src/webview/ui/`, siguiendo el **patrón shadcn**
+(config de variantes co-localizada en el componente, exportada como `buttonVariants`):
+
+- `Button.tsx` — único primitivo de botón, basado en `JSX.IntrinsicElements['button']` (hereda
+  todos los atributos nativos: `onClick`, `title`, `disabled`, `aria-*`; `type` por defecto
+  `"button"`). La config de variantes vive **dentro del componente** vía `cva()`
+  (class-variance-authority), exportada como `buttonVariants`. API: `variant` ×
+  `size: sm | md | icon` + props de toggle `active` / `off`. Las **7 variantes mapean 1:1 a las
+  7 familias legacy**: `ghost`→`.ddd-icon-btn`, `secondary`→`.ddd-btn`,
+  `primary`→`.ddd-btn--primary`, `action`→`.ddd-actions-btn`, `history`→`.ddd-hist-btn`,
+  `zoom`→`.ddd-zoom__btn`, `toolbar`→`.ddd-edge-toolbar__btn`. `size="icon"` = cuadrado
+  solo-ícono (lo usa `ghost`). Son utilidades Tailwind de valor arbitrario sobre `--ddd-*` /
+  `--vscode-*`. **Punto de reversión:** para volver a CSS plano se cambia cada string de variante
+  por su clase `.ddd-*` legacy — la API de `<Button>` no cambia.
+- **Estados de toggle sin conflicto:** `active`/`off` son variantes booleanas (= legacy
+  `.is-on`/`.is-active`/`.is-off`). Para las variantes que togglean (`ghost`/`action`/`history`)
+  los colores bg/text/border en reposo viven en `compoundVariants` keyed por `active` — así idle
+  y active **nunca** fijan la misma propiedad a la vez. Esto evita overrides dependientes del
+  orden (Tailwind no tiene control de especificidad) **sin** necesitar `tailwind-merge`.
+- `cn.ts` — helper de clases (shadcn `cn`), aquí = solo `clsx` (sin `tailwind-merge`).
+  **Decisión:** se evaluó `tailwind-merge` (lo usa shadcn para deduplicar utilidades en
+  conflicto) pero añadía **~15.8 KB gzip** al bundle — desproporcionado (el CSS a mano son
+  6.9 KB) y solo para deduplicar strings. Al autorear las variantes libres de conflicto, `clsx`
+  basta. Deps añadidas: `class-variance-authority` + `clsx` (~3 KB raw); **no** `tailwind-merge`.
+
+**Estado de migración:** los 6 call sites están migrados a `<Button>` (`groupPanel`,
+`actionsPanel`, `zoomButtons`, `exportModal`, `settingsPanel`, `edgeLayer`). Se dejan como
+markup nativo los controles que **no** son de la familia botón: `.ddd-group-chevron`,
+`.ddd-group-panel__handle`, `.ddd-actions-panel__handle` (estructurales, uso único) y
+`.ddd-radio-group__option` (es un radiogroup, no un botón). Las **7 familias `.ddd-*-btn`
+legacy fueron retiradas** de `style.css` (confirmado el look por el owner) — incluida
+`.ddd-group-btn`, que ya estaba huérfana. El trial Tailwind queda **adoptado**; revertir a
+CSS plano ya no es un swap de strings sino un `git revert` de este cambio.
+
+Contrato de rendimiento: los primitivos emiten clases **estáticas**; el estado visual por nodo
+(selección/hover/LOD a 5000 tablas) sigue en `data-*` + variables CSS + una sola clase estática,
+nunca alternando muchas clases por frame. La capa de culling/LOD y el presupuesto no se tocan.
+
+## Integración Tailwind v4 — trial incremental
+
+Adopción **experimental y reversible** (decisión del owner): se validó sobre `groupPanel.tsx`
+primero (confirmado idéntico) y luego se migraron los 6 call sites. Si en algún momento no
+convence, se revierte cambiando los strings de variante en `buttonVariants` (`Button.tsx`) por
+las clases `.ddd-*` legacy — sin perder el componente `<Button>` ni tocar los call sites.
+
+Setup (verificado, build OK):
+
+- `@tailwindcss/vite` en `vite.config.mts` (el config se renombró de `.ts` a `.mts` porque el
+  plugin es ESM-only y el proyecto es CommonJS).
+- En `style.css`, **solo** se importan las capas `theme` + `utilities` (preflight **omitido** a
+  propósito: pisaría `@layer reset`/`base` y la herencia de `--vscode-*`):
+  ```css
+  @layer theme, reset, tokens, base, surfaces, components, state, utilities;
+  @import 'tailwindcss/theme.css' layer(theme);
+  @import 'tailwindcss/utilities.css' layer(utilities);
+  ```
+- Las utilidades usan **valores arbitrarios** sobre los tokens existentes
+  (`bg-[var(--ddd-surface-hover)]`, `text-[var(--ddd-fg)]`, `w-[24px]`…). No se registra un
+  `@theme` de colores ni se reemplaza `--ddd-*`: Tailwind solo referencia la capa semántica.
+- Inyección CSS: `main.tsx` hace `import styleSource from './style.css?inline'` e inyecta un
+  `<style>`. **Verificado** que `@tailwindcss/vite` transforma ese import `?inline` (las
+  utilidades y los marcadores `--tw-*` aparecen en `dist/webview/webview.js`). Por eso **no** se
+  necesitó el fallback de emitir CSS como asset + `<link asWebviewUri>` (el CSP ya lo permitiría
+  si hiciera falta). Costo de bundle observado: +13 KB sin minify (247 → 260 KB; gzip 57.9 KB).
+
+## Preguntas abiertas (Open Questions)
+
+1. ~~Validación visual + decisión continuar/revertir~~ **RESUELTO**: el owner confirmó el look,
+   se migraron los 6 call sites, se adoptó el patrón shadcn (`cva` co-localizado) y se retiraron
+   las 7 familias `.ddd-*-btn` legacy. Tailwind v4 queda adoptado para la capa de botones.
+2. ~~¿`clsx` vs `cx()` local? ¿CVA?~~ **RESUELTO**: se adoptó el patrón shadcn → `cva` +
+   `clsx` (config co-localizada en `Button.tsx`). Se **descartó `tailwind-merge`** por peso
+   (~15.8 KB gzip) autorando las variantes libres de conflicto. Se eliminó el test de strings
+   `variants.test.ts` (verificaba que el config se repite a sí mismo — bajo valor; lo cubren el
+   typecheck de las uniones + el build + la verificación visual).
+3. **¿Activar `minify` en el build del webview?** Hoy `minify: false` (260 KB). Es la mayor
+   reducción de tamaño disponible y es ortogonal a esta decisión. *No bloqueante.*
+4. **Light / High-Contrast**: sigue diferido. La auditoría de fallbacks `--vscode-*` (mapear
+   `surface-hover/active/selected`, `--ddd-success`, `--ddd-fg-on-accent`) se hace de forma
+   perezosa al tocar cada superficie; la paleta BC y las sombras permanecen literales.
 
 ## Roadmap (deferred)
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
+import { Button } from '../ui/Button';
 import { IconClose } from '../icons';
 import type { ExporterMeta, ExporterOptionField } from '../../shared/exporters/types';
 
@@ -48,7 +49,7 @@ export function ExportModal() {
         <div class="ddd-modal" onClick={(e) => e.stopPropagation()}>
           <div class="ddd-modal__head">
             <span class="ddd-modal__title">Export Schema</span>
-            <button class="ddd-icon-btn" onClick={close} title="Close"><IconClose size={12} /></button>
+            <Button variant="ghost" size="icon" onClick={close} title="Close"><IconClose size={12} /></Button>
           </div>
           <div class="ddd-modal__body">
             <p>No exporters registered. This is a bug — please file an issue.</p>
@@ -83,7 +84,7 @@ export function ExportModal() {
       <div class="ddd-modal" onClick={(e) => e.stopPropagation()}>
         <div class="ddd-modal__head">
           <span class="ddd-modal__title">Export Schema</span>
-          <button class="ddd-icon-btn" onClick={close} title="Close"><IconClose size={12} /></button>
+          <Button variant="ghost" size="icon" onClick={close} title="Close"><IconClose size={12} /></Button>
         </div>
 
         <div class="ddd-modal__body">
@@ -137,12 +138,12 @@ export function ExportModal() {
         </div>
 
         <div class="ddd-modal__foot">
-          <button class="ddd-btn" onClick={close}>Cancel</button>
-          <button
-            class="ddd-btn ddd-btn--primary"
+          <Button variant="secondary" onClick={close}>Cancel</Button>
+          <Button
+            variant="primary"
             onClick={submit}
             disabled={scope === 'selected' && scopeSelectedDisabled}
-          >Export</button>
+          >Export</Button>
         </div>
       </div>
     </div>

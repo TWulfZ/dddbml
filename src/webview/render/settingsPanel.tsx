@@ -1,5 +1,6 @@
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
+import { Button } from '../ui/Button';
 import { IconClose } from '../icons';
 import type { FlatSettingsPatch, UiDensity } from '../../shared/types';
 
@@ -20,7 +21,7 @@ export function SettingsPanel() {
       <div class="ddd-modal ddd-modal--wide" onClick={(e) => e.stopPropagation()}>
         <div class="ddd-modal__head">
           <span class="ddd-modal__title">Settings</span>
-          <button class="ddd-icon-btn" onClick={close} title="Close"><IconClose size={12} /></button>
+          <Button variant="ghost" size="icon" onClick={close} title="Close"><IconClose size={12} /></Button>
         </div>
 
         <div class="ddd-modal__body">

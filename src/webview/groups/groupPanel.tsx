@@ -3,6 +3,7 @@ import type { TableGroup } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { ColorPopup } from '../render/colorPopup';
+import { Button } from '../ui/Button';
 import { bcColorFor } from './bcPalette';
 import {
   IconChevronDown,
@@ -67,15 +68,15 @@ export function GroupPanel() {
       <div class="ddd-group-panel__head">
         <span class="ddd-group-panel__title">Diagram Views</span>
         <div class="ddd-group-panel__actions">
-          <button class="ddd-icon-btn" onClick={toggleAllHidden} title={anyVisible ? 'Hide all' : 'Show all'}>
+          <Button variant="ghost" size="icon" onClick={toggleAllHidden} title={anyVisible ? 'Hide all' : 'Show all'}>
             {anyVisible ? <IconEye size={13} /> : <IconEyeClosed size={13} />}
-          </button>
-          <button class="ddd-icon-btn" onClick={toggleAllCollapsed} title={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
+          </Button>
+          <Button variant="ghost" size="icon" onClick={toggleAllCollapsed} title={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
             {anyExpanded ? <IconCollapseAll size={13} /> : <IconExpandAll size={13} />}
-          </button>
-          <button class="ddd-icon-btn" onClick={() => setOpen(false)} title="Close">
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => setOpen(false)} title="Close">
             <IconClose size={12} />
-          </button>
+          </Button>
         </div>
       </div>
       <label class="ddd-search">
@@ -167,21 +168,26 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: Group
         <span class="ddd-group-swatch" style={{ background: color }} title={color} />
         <span class="ddd-group-name" title={`${group.tables.length} tables`}>{group.name}</span>
         <span class="ddd-group-count">{group.tables.length}</span>
-        <button
-          class={`ddd-icon-btn ${hidden ? 'is-off' : ''}`}
+        <Button
+          variant="ghost"
+          size="icon"
+          off={hidden}
           onClick={toggleHidden}
           title={hidden ? 'Show group' : 'Hide group'}
-        >{hidden ? <IconEyeClosed size={12} /> : <IconEye size={12} />}</button>
-        <button
-          class={`ddd-icon-btn ${collapsed ? 'is-on' : ''}`}
+        >{hidden ? <IconEyeClosed size={12} /> : <IconEye size={12} />}</Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          active={collapsed}
           onClick={toggleCollapsed}
           title={collapsed ? 'Expand group' : 'Collapse group'}
-        >{collapsed ? <IconExpandAll size={12} /> : <IconCollapseAll size={12} />}</button>
-        <button
-          class="ddd-icon-btn"
+        >{collapsed ? <IconExpandAll size={12} /> : <IconCollapseAll size={12} />}</Button>
+        <Button
+          variant="ghost"
+          size="icon"
           onClick={onGearClick}
           title="Configure"
-        ><IconSettings size={12} /></button>
+        ><IconSettings size={12} /></Button>
       </li>
       {popup ? (
         <ColorPopup
@@ -215,11 +221,13 @@ function TableRow({ tableName, hidden }: { tableName: string; hidden: boolean })
   return (
     <li class="ddd-table-row">
       <span class="ddd-table-row__name" title={tableName}>{shortName}</span>
-      <button
-        class={`ddd-icon-btn ${hidden ? 'is-off' : ''}`}
+      <Button
+        variant="ghost"
+        size="icon"
+        off={hidden}
         onClick={toggle}
         title={hidden ? 'Show table' : 'Hide table'}
-      >{hidden ? <IconEyeClosed size={11} /> : <IconEye size={11} />}</button>
+      >{hidden ? <IconEyeClosed size={11} /> : <IconEye size={11} />}</Button>
     </li>
   );
 }
