@@ -4,6 +4,7 @@ import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { ColorPopup } from '../render/colorPopup';
 import { Button } from '../ui/Button';
+import { Search } from '../ui/Search';
 import { bcColorFor } from './bcPalette';
 import {
   IconChevronDown,
@@ -13,7 +14,6 @@ import {
   IconExpandAll,
   IconEye,
   IconEyeClosed,
-  IconSearch,
   IconSettings,
 } from '../icons';
 
@@ -79,16 +79,7 @@ export function GroupPanel() {
           </Button>
         </div>
       </div>
-      <label class="ddd-search">
-        <span class="ddd-search__icon"><IconSearch size={12} /></span>
-        <input
-          class="ddd-search__input"
-          type="text"
-          placeholder="Search table or group"
-          value={query}
-          onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
-        />
-      </label>
+      <Search value={query} onInput={setQuery} placeholder="Search table or group" />
       <ul class="ddd-group-list">
         {filtered.length === 0 ? (
           <li class="ddd-group-empty">No matches for "{query}"</li>

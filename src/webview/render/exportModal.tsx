@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { Button } from '../ui/Button';
-import { IconClose } from '../icons';
+import { Modal } from '../ui/Modal';
+import { SelectField, TextField, Checkbox } from '../ui/Field';
 import type { ExporterMeta, ExporterOptionField } from '../../shared/exporters/types';
 
 type Scope = 'all' | 'selected';
@@ -42,33 +43,11 @@ export function ExportModal() {
     setOptions(next);
   }, [currentExporter, settingsTypeorm]);
 
-  if (!open) return null;
-  if (exporters.length === 0) {
-    return (
-      <div class="ddd-modal-overlay" onClick={close}>
-        <div class="ddd-modal" onClick={(e) => e.stopPropagation()}>
-          <div class="ddd-modal__head">
-            <span class="ddd-modal__title">Export Schema</span>
-            <Button variant="ghost" size="icon" onClick={close} title="Close"><IconClose size={12} /></Button>
-          </div>
-          <div class="ddd-modal__body">
-            <p>No exporters registered. This is a bug — please file an issue.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const submit = () => {
     if (!currentExporter) return;
     postToHost({
       type: 'command:export',
-      payload: {
-        formatId: currentExporter.id,
-        scope,
-        selection: [...selection],
-        options,
-      },
+      payload: { formatId: currentExporter.id, scope, selection: [...selection], options },
     });
   };
 
@@ -78,41 +57,42 @@ export function ExportModal() {
 
   const selectedCount = selection.size;
   const scopeSelectedDisabled = selectedCount === 0;
+  const hasExporters = exporters.length > 0;
 
   return (
-    <div class="ddd-modal-overlay" onClick={close}>
-      <div class="ddd-modal" onClick={(e) => e.stopPropagation()}>
-        <div class="ddd-modal__head">
-          <span class="ddd-modal__title">Export Schema</span>
-          <Button variant="ghost" size="icon" onClick={close} title="Close"><IconClose size={12} /></Button>
-        </div>
-
-        <div class="ddd-modal__body">
-          <label class="ddd-field">
-            <span class="ddd-field__label">Format</span>
-            <select
-              class="ddd-field__control"
-              value={formatId}
-              onChange={(e) => setFormatId((e.currentTarget as HTMLSelectElement).value)}
-            >
-              {exporters.map((e) => (
-                <option key={e.id} value={e.id}>{e.label}</option>
-              ))}
-            </select>
-            {currentExporter?.description ? (
-              <small class="ddd-field__hint">{currentExporter.description}</small>
-            ) : null}
-          </label>
+    <Modal
+      open={open}
+      onClose={close}
+      title="Export Schema"
+      footer={
+        hasExporters ? (
+          <>
+            <Button variant="secondary" onClick={close}>Cancel</Button>
+            <Button
+              variant="primary"
+              onClick={submit}
+              disabled={scope === 'selected' && scopeSelectedDisabled}
+            >Export</Button>
+          </>
+        ) : undefined
+      }
+    >
+      {!hasExporters ? (
+        <p>No exporters registered. This is a bug — please file an issue.</p>
+      ) : (
+        <>
+          <SelectField
+            label="Format"
+            hint={currentExporter?.description}
+            value={formatId}
+            options={exporters.map((e) => ({ value: e.id, label: e.label }))}
+            onChange={setFormatId}
+          />
 
           <fieldset class="ddd-field">
             <legend class="ddd-field__label">Scope</legend>
             <label class="ddd-radio">
-              <input
-                type="radio"
-                name="scope"
-                checked={scope === 'all'}
-                onChange={() => setScope('all')}
-              />
+              <input type="radio" name="scope" checked={scope === 'all'} onChange={() => setScope('all')} />
               <span>All tables <small class="ddd-field__hint">({tableCount})</small></span>
             </label>
             <label class={`ddd-radio ${scopeSelectedDisabled ? 'is-disabled' : ''}`}>
@@ -128,25 +108,11 @@ export function ExportModal() {
           </fieldset>
 
           {currentExporter?.optionsSchema.map((field) => (
-            <FieldEditor
-              key={field.id}
-              field={field}
-              value={options[field.id]}
-              onChange={(v) => setOption(field.id, v)}
-            />
+            <FieldEditor key={field.id} field={field} value={options[field.id]} onChange={(v) => setOption(field.id, v)} />
           ))}
-        </div>
-
-        <div class="ddd-modal__foot">
-          <Button variant="secondary" onClick={close}>Cancel</Button>
-          <Button
-            variant="primary"
-            onClick={submit}
-            disabled={scope === 'selected' && scopeSelectedDisabled}
-          >Export</Button>
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </Modal>
   );
 }
 
@@ -162,50 +128,26 @@ interface FieldEditorProps {
 
 function FieldEditor({ field, value, onChange }: FieldEditorProps) {
   if (field.type === 'boolean') {
-    return (
-      <label class="ddd-field ddd-field--inline">
-        <input
-          type="checkbox"
-          checked={value === true}
-          onChange={(e) => onChange((e.currentTarget as HTMLInputElement).checked)}
-        />
-        <span>
-          <span class="ddd-field__label">{field.label}</span>
-          {field.description ? <small class="ddd-field__hint">{field.description}</small> : null}
-        </span>
-      </label>
-    );
+    return <Checkbox label={field.label} hint={field.description} value={value === true} onCommit={onChange} />;
   }
-
   if (field.type === 'enum') {
     return (
-      <label class="ddd-field">
-        <span class="ddd-field__label">{field.label}</span>
-        <select
-          class="ddd-field__control"
-          value={typeof value === 'string' ? value : field.default}
-          onChange={(e) => onChange((e.currentTarget as HTMLSelectElement).value)}
-        >
-          {field.choices.map((c) => (
-            <option key={c.value} value={c.value}>{c.label}</option>
-          ))}
-        </select>
-        {field.description ? <small class="ddd-field__hint">{field.description}</small> : null}
-      </label>
+      <SelectField
+        label={field.label}
+        hint={field.description}
+        value={typeof value === 'string' ? value : field.default}
+        options={field.choices.map((c) => ({ value: c.value, label: c.label }))}
+        onChange={onChange}
+      />
     );
   }
-
   return (
-    <label class="ddd-field">
-      <span class="ddd-field__label">{field.label}</span>
-      <input
-        class="ddd-field__control"
-        type="text"
-        value={typeof value === 'string' ? value : field.default}
-        onInput={(e) => onChange((e.currentTarget as HTMLInputElement).value)}
-      />
-      {field.description ? <small class="ddd-field__hint">{field.description}</small> : null}
-    </label>
+    <TextField
+      label={field.label}
+      hint={field.description}
+      value={typeof value === 'string' ? value : field.default}
+      onCommit={onChange}
+    />
   );
 }
 

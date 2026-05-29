@@ -348,6 +348,41 @@ legacy fueron retiradas** de `style.css` (confirmado el look por el owner) — i
 `.ddd-group-btn`, que ya estaba huérfana. El trial Tailwind queda **adoptado**; revertir a
 CSS plano ya no es un swap de strings sino un `git revert` de este cambio.
 
+### Primitivos adicionales (Modal, formularios, búsqueda)
+
+Más allá de `<Button>`, `ui/` añade primitivos para superficies con **duplicación
+real** (≥2 call sites):
+
+- **`Modal.tsx`** — `<dialog>` nativo. `open` dispara `showModal()`/`close()` vía
+  ref+effect; gratis: trampa de foco, **Esc para cerrar**, top-layer (escapa
+  z-index/overflow) y scrim `::backdrop` (reemplaza el div `.ddd-modal-overlay`).
+  API: `<Modal open onClose title wide footer>`. Migrados: `exportModal`,
+  `settingsPanel`.
+- **`Field.tsx`** — familia de formulario: `Field` (wrapper label+hint+control) +
+  `TextField` / `NumberField` / `SelectField` / `Checkbox`. Reemplaza los `Row*`
+  (settingsPanel) y `FieldEditor` (exportModal) que cada archivo reimplementaba.
+- **`RadioGroup.tsx`** — control segmentado (`.ddd-radio-group`), genérico
+  `<T extends string>`. Migrado: densidad en settingsPanel.
+- **`Search.tsx`** — input con ícono (`.ddd-search`). Migrado: groupPanel.
+
+Se dejan nativos: los radios clásicos de *Scope* en exportModal (`.ddd-radio` con
+contadores + disabled, uso único) y los controles estructurales ya citados.
+
+### Estrategia de estilo (dos tiers, ambos leen `--ddd-*`)
+
+- **Micro-componentes simples y stateful** (Button) → **utilidades Tailwind** vía
+  `cva`; su CSS legacy se retira.
+- **Primitivos estructurales/animados** (Modal, Field, RadioGroup, Search) →
+  **envuelven las clases `.ddd-*` existentes** del `@layer` (vía `cn`). Su CSS
+  (animaciones `@keyframes`, `::backdrop`, `focus-within`, anchos `min()/calc()`,
+  layout) **se queda** — convertirlo a utilidades sería verboso, frágil y sin
+  valor; `.ddd-field*` / `.ddd-radio*` / `.ddd-search*` / `.ddd-modal*` son la
+  implementación de estos primitivos, no se retiran.
+
+Regla: utilidades cuando son más limpias; envuelve la clase cuando el CSS es
+pesado en layout/animación. En ambos casos el componente tipado es la API y
+`--ddd-*` la fuente de verdad.
+
 Contrato de rendimiento: los primitivos emiten clases **estáticas**; el estado visual por nodo
 (selección/hover/LOD a 5000 tablas) sigue en `data-*` + variables CSS + una sola clase estática,
 nunca alternando muchas clases por frame. La capa de culling/LOD y el presupuesto no se tocan.

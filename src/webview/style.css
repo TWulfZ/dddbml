@@ -1082,27 +1082,31 @@
   }
 
   /* ----- Modal ----- */
-  .ddd-modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(2px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-    animation: ddd-fade-in var(--ddd-duration-fast) var(--ddd-ease-out);
-  }
+  /* Native <dialog>: the UA centers it in the top layer when shown via
+     showModal(); the scrim is its ::backdrop. (Was a .ddd-modal-overlay div.) */
   .ddd-modal {
+    padding: 0;
+    margin: auto;
     background: var(--ddd-surface-canvas);
+    color: var(--ddd-fg);
     border: 1px solid var(--ddd-border);
     border-radius: var(--ddd-radius-lg);
     width: min(440px, calc(100vw - 32px));
     max-height: calc(100vh - 64px);
+    box-shadow: var(--ddd-shadow-lg);
+  }
+  .ddd-modal[open] {
     display: flex;
     flex-direction: column;
-    box-shadow: var(--ddd-shadow-lg);
     animation: ddd-modal-in var(--ddd-duration-medium) var(--ddd-ease-out);
+  }
+  .ddd-modal:not([open]) {
+    display: none;
+  }
+  .ddd-modal::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    animation: ddd-fade-in var(--ddd-duration-fast) var(--ddd-ease-out);
   }
   .ddd-modal--wide {
     width: min(560px, calc(100vw - 32px));
