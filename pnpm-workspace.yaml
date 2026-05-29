@@ -1,0 +1,8 @@
+# esbuild: keep its postinstall OFF — under pnpm the install "optimization" that
+# swaps bin/esbuild (a JS shim) for the native binary breaks pnpm's node-based
+# .bin shim. The JS shim works fine (it execs the prebuilt @esbuild/* binary).
+# keytar / vsce-sign are only needed by `vsce package`; leave off for dev.
+allowBuilds:
+  '@vscode/vsce-sign': false
+  esbuild: false
+  keytar: false
