@@ -325,9 +325,12 @@ Solución: una capa de primitivos en `src/webview/ui/`, siguiendo el **patrón s
   7 familias legacy**: `ghost`→`.ddd-icon-btn`, `secondary`→`.ddd-btn`,
   `primary`→`.ddd-btn--primary`, `action`→`.ddd-actions-btn`, `history`→`.ddd-hist-btn`,
   `zoom`→`.ddd-zoom__btn`, `toolbar`→`.ddd-edge-toolbar__btn`. `size="icon"` = cuadrado
-  solo-ícono (lo usa `ghost`). Son utilidades Tailwind de valor arbitrario sobre `--ddd-*` /
-  `--vscode-*`. **Punto de reversión:** para volver a CSS plano se cambia cada string de variante
-  por su clase `.ddd-*` legacy — la API de `<Button>` no cambia.
+  solo-ícono. Hay además una variante **nueva sin equivalente legacy**: `subtle` = botón
+  solo-ícono **sin borde** (a diferencia de `ghost`, que muestra borde en hover; `subtle` solo
+  cambia el fondo en hover). La usa el panel DiagramView (`groupPanel`). Son utilidades Tailwind
+  de valor arbitrario sobre `--ddd-*` / `--vscode-*`. **Punto de reversión:** para volver a CSS
+  plano se cambia cada string de variante por su clase `.ddd-*` legacy — la API de `<Button>` no
+  cambia.
 - **Estados de toggle sin conflicto:** `active`/`off` son variantes booleanas (= legacy
   `.is-on`/`.is-active`/`.is-off`). Para las variantes que togglean (`ghost`/`action`/`history`)
   los colores bg/text/border en reposo viven en `compoundVariants` keyed por `active` — así idle

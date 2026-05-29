@@ -13,6 +13,7 @@ import { cn } from './cn';
  *   primary   → .ddd-btn--primary      action    → .ddd-actions-btn
  *   history   → .ddd-hist-btn          zoom      → .ddd-zoom__btn
  *   toolbar   → .ddd-edge-toolbar__btn
+ *   subtle    → (new) borderless icon button; only the hover bg changes
  *
  * `active` / `off` are boolean toggle variants (= legacy .is-on/.is-active /
  * .is-off). For toggle-able variants (ghost/action/history) the resting bg/text/
@@ -32,6 +33,10 @@ const buttonVariants = cva(
         ghost:
           'rounded-[var(--ddd-radius-sm)] border border-transparent bg-transparent ' +
           'hover:bg-[var(--ddd-surface-hover)] hover:border-[color:var(--ddd-border)] disabled:opacity-50 disabled:cursor-not-allowed',
+        // like ghost but fully borderless (no hover border) — only the bg changes
+        subtle:
+          'rounded-[var(--ddd-radius-sm)] border-none bg-transparent ' +
+          'hover:bg-[var(--ddd-surface-hover)] disabled:opacity-50 disabled:cursor-not-allowed',
         action:
           'rounded-[var(--ddd-radius-sm)] border gap-[var(--ddd-space-3)] px-[var(--ddd-space-5)] py-[var(--ddd-space-2)] ' +
           'text-[length:var(--ddd-text-base)]',
@@ -66,6 +71,8 @@ const buttonVariants = cva(
       // ghost (= .ddd-icon-btn .is-on): only the text color toggles
       { variant: 'ghost', active: false, class: 'text-[color:var(--ddd-fg)]' },
       { variant: 'ghost', active: true, class: 'text-[color:var(--ddd-accent)]' },
+      { variant: 'subtle', active: false, class: 'text-[color:var(--ddd-fg)]' },
+      { variant: 'subtle', active: true, class: 'text-[color:var(--ddd-accent)]' },
       // action (= .ddd-actions-btn .is-active): full accent fill when active
       {
         variant: 'action',

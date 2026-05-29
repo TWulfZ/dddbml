@@ -68,13 +68,13 @@ export function GroupPanel() {
       <div class="ddd-group-panel__head">
         <span class="ddd-group-panel__title">Diagram Views</span>
         <div class="ddd-group-panel__actions">
-          <Button variant="ghost" size="icon" onClick={toggleAllHidden} title={anyVisible ? 'Hide all' : 'Show all'}>
+          <Button variant="subtle" size="icon" onClick={toggleAllHidden} title={anyVisible ? 'Hide all' : 'Show all'}>
             {anyVisible ? <IconEye size={13} /> : <IconEyeClosed size={13} />}
           </Button>
-          <Button variant="ghost" size="icon" onClick={toggleAllCollapsed} title={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
+          <Button variant="subtle" size="icon" onClick={toggleAllCollapsed} title={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
             {anyExpanded ? <IconCollapseAll size={13} /> : <IconExpandAll size={13} />}
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => setOpen(false)} title="Close">
+          <Button variant="subtle" size="icon" onClick={() => setOpen(false)} title="Close">
             <IconClose size={12} />
           </Button>
         </div>
@@ -160,21 +160,21 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: Group
         <span class="ddd-group-name" title={`${group.tables.length} tables`}>{group.name}</span>
         <span class="ddd-group-count">{group.tables.length}</span>
         <Button
-          variant="ghost"
+          variant="subtle"
           size="icon"
           off={hidden}
           onClick={toggleHidden}
           title={hidden ? 'Show group' : 'Hide group'}
         >{hidden ? <IconEyeClosed size={12} /> : <IconEye size={12} />}</Button>
         <Button
-          variant="ghost"
+          variant="subtle"
           size="icon"
           active={collapsed}
           onClick={toggleCollapsed}
           title={collapsed ? 'Expand group' : 'Collapse group'}
         >{collapsed ? <IconExpandAll size={12} /> : <IconCollapseAll size={12} />}</Button>
         <Button
-          variant="ghost"
+          variant="subtle"
           size="icon"
           onClick={onGearClick}
           title="Configure"
@@ -213,7 +213,7 @@ function TableRow({ tableName, hidden }: { tableName: string; hidden: boolean })
     <li class="ddd-table-row">
       <span class="ddd-table-row__name" title={tableName}>{shortName}</span>
       <Button
-        variant="ghost"
+        variant="subtle"
         size="icon"
         off={hidden}
         onClick={toggle}
