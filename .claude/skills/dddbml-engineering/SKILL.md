@@ -92,7 +92,7 @@ Find what you're touching, read that spec, navigate those files via codegraph.
 | Exporters (TypeORM / dialects) | `specs/09-exporters.md` | `src/extension/exporters/**`, `src/shared/exporters/types.ts` |
 | Settings | `specs/10-settings.md` | `src/extension/settings.ts`, `src/webview/render/settingsPanel.tsx`, `package.json` → `contributes.configuration` |
 | Undo / redo / action history | `specs/11-action-history.md` | `src/webview/state/{history,store}.ts` |
-| Design system / CSS / density / UI primitives | `specs/12-design-system.md` | `src/webview/style.css`, `src/webview/ui/{Button,cn}.tsx`, `src/webview/layout/density.ts`, `src/webview/groups/bcPalette.ts` |
+| Design system / CSS / density / UI primitives | `specs/12-design-system.md` | `src/webview/style.css`, `src/webview/ui/` (`Button`, `Modal`, `Field`, `RadioGroup`, `Search`, `cn`), `src/webview/layout/density.ts`, `src/webview/groups/bcPalette.ts` |
 | Host↔webview protocol / lifecycle | `specs/01-architecture.md` | `src/extension/{extension,panel}.ts`, `src/webview/{main,vscode}.ts`, `src/shared/types.ts` |
 
 `specs/00-overview.md` (goals, anti-goals, success criteria) and
@@ -172,11 +172,16 @@ Verified seams in the code. Extending them keeps the diff small and consistent.
   | history | zoom | toolbar`) × `size` (`sm | md | icon`) + `active`/`off` toggle
   props; native attrs pass through. The 7 variants already map the former 7
   `.ddd-*-btn` families — don't add a new button class.
-- **A new UI primitive** (Input, Toggle, Modal…) → follow the shadcn pattern in
-  `ui/Button.tsx`: a co-located `cva()` config exported as `xVariants`, utilities
-  over `--ddd-*`, `cn` (= `clsx`, `ui/cn.ts`) to join, conflict-free
-  `compoundVariants` for stateful looks. Prefer native elements (e.g. `<dialog>`
-  for modals) over a portal/headless library.
+- **A UI primitive** — first check `ui/`: `Modal` (native `<dialog>`), `Field`
+  /`TextField`/`NumberField`/`SelectField`/`Checkbox`, `RadioGroup`, `Search`
+  already exist; reuse them. For a **new** one, pick the tier (both read `--ddd-*`):
+  - *Simple stateful micro-component* (like `Button`) → co-located `cva()` config
+    exported as `xVariants` + Tailwind utilities + `cn`; conflict-free
+    `compoundVariants` for toggle states.
+  - *Structural/animated* (like `Modal`/`Field`) → a typed component that **wraps
+    the existing `.ddd-*` `@layer` classes** via `cn`. Don't re-derive
+    `@keyframes`/`::backdrop`/`focus-within`/`min()`-layout CSS as utilities.
+  Prefer native elements — `<dialog>` for modals (the `Modal` primitive does this).
 
 ## Using the `ui-ux-pro-max` skill here (efficiently, not generically)
 
