@@ -56,10 +56,11 @@ segmentos completos.
      fantasmas). Crear exige cruzar `CREATE_THRESHOLD_PX = 8px`. El ¼ talla a la izquierda, el ¾ a la
      derecha (subdivisión local, no centrada).
    - **Profundizar / borrar:** el dip-run de un notch es una sección editable normal → su vértice
-     central lo **desliza** (`slideSegment`, profundiza/aplana). Volver al nivel del pin ⇒ el notch se
-     aplana y **desaparece** (`cleanCorners`, smart-delete). Doble-click en el dip-run ⇒ `deleteNotch`
-     (quita las 4 esquinas). `isDipRun` lo detecta vía `isDip` (¿los pins a ambos lados al mismo
-     nivel, distinto del run?).
+     central lo **desliza** (`slideSegment`, profundiza/aplana). Arrastrarlo a **menos de
+     `NOTCH_MERGE_SNAP` (10 u world)** del nivel del pin ⇒ snap al pin y el notch se **disuelve**
+     (`cleanCorners`, smart-delete con tolerancia — no requiere precisión). Doble-click en el dip-run
+     ⇒ `deleteNotch` (quita las 4 esquinas). `isDipRun` lo detecta vía `isDip` (¿los pins a ambos
+     lados al mismo nivel, distinto del run?).
    - **1-DOF perpendicular** (h→↑↓, v→←→) con **cursor de redimensionar** por eje (`ns-resize` ↕
      horizontal, `ew-resize` ↔ vertical). **No hay handles en las esquinas** (vueltas redondeadas).
    - **Materialización:** al editar, las esquinas actuales se vuelven waypoints explícitos
@@ -170,7 +171,8 @@ un notch local — sin mover el resto.
   vértice central inician `startSegmentSlide` → `slideSegment` (1-DOF perpendicular, inmediato). La
   sección entera se mueve a un nivel paralelo; vecino perpendicular ⇒ la esquina se desplaza, vecino
   paralelo (stub/brazo colineal) ⇒ se inserta un codo (el ancla del puerto no se mueve). Deslizar un
-  dip-run lo **profundiza**; volver al nivel del pin ⇒ el notch se aplana (`cleanCorners`).
+  dip-run lo **profundiza**; arrastrarlo a < `NOTCH_MERGE_SNAP` (10 u) del nivel del pin ⇒ snap y el
+  notch se **disuelve** (`cleanCorners`, tolerancia de re-unión).
 - **Crear notch (fantasma ¼/¾):** `startNotchDrag(quarter)` → `notchAtQuarter` → `localNotchCorners`:
   2 pins al nivel original (a `¼ ∓ ⅛`) + 2 esquinas hundidas; resto plano. Gate `CREATE_THRESHOLD_PX
   = 8px`. ¼ ⇒ notch a la izquierda, ¾ ⇒ a la derecha. Al soltar, queda como vértice real.

@@ -410,6 +410,13 @@ function cleanCorners(pts: Array<{ x: number; y: number }>): Array<{ x: number; 
 const NOTCH_HALF_FRACTION = 1 / 8;
 
 /**
+ * Notch re-merge tolerance (world units). When a notch's dip-run is dragged back toward its pins,
+ * it snaps flat once within this distance of the pin level, so the notch dissolves without needing
+ * pixel-perfect aim. Raise for a friendlier (larger) merge zone, lower for finer control.
+ */
+const NOTCH_MERGE_SNAP = 10;
+
+/**
  * The 4 corners of a LOCAL symmetric notch carved around `quarter` (0.25 / 0.75) of run `p1 → p2`,
  * dipped by `d` perpendicular. The two pins sit at `quarter ∓ 1/8` (still at the run's level); the
  * dipped bottom spans between them, the rest of the run stays flat (short lead-in, long tail). This
@@ -478,7 +485,14 @@ export function slideSegment(
   if (!p1 || !p2) return fallback();
   const axis: 'h' | 'v' = runAxis(p1, p2);
   const lvl = axis === 'h' ? p1.y : p1.x;
-  const newLvl = axis === 'h' ? snap(p1.y + dyWorld) : snap(p1.x + dxWorld);
+  let newLvl = axis === 'h' ? snap(p1.y + dyWorld) : snap(p1.x + dxWorld);
+  // Notch re-merge: when this run IS a notch's dip-run, snap to the pin level once within
+  // NOTCH_MERGE_SNAP so dragging it most of the way back dissolves the notch (cleanCorners) without
+  // pixel-perfect aim. The pins (corners[j-1]/corners[j+2]) share one level by construction.
+  if (isDip(C, j, axis)) {
+    const pinLvl = axis === 'h' ? C[j - 1]!.y : C[j - 1]!.x;
+    if (Math.abs(newLvl - pinLvl) <= NOTCH_MERGE_SNAP) newLvl = pinLvl;
+  }
   if (newLvl === lvl) return C.slice(1, -1);
 
   const atLevel = (pt: { x: number; y: number }): { x: number; y: number } =>

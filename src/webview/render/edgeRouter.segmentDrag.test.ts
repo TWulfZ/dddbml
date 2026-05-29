@@ -152,4 +152,20 @@ describe('notch deepen / delete', () => {
     const r = notched();
     expect(deleteNotch(r, dipIndex(r))).toEqual([{ x: 300, y: 50 }, { x: 300, y: 250 }]);
   });
+
+  it('dragging the dip-run WITHIN the merge tolerance of the pin level dissolves the notch', () => {
+    const r = notched(); // dip at y=90, pins at y=50 → 40 deep
+    // Drag up by 32 → y=58, only 8 from the pin level (≤ NOTCH_MERGE_SNAP=10) → snaps flat, dissolves.
+    const w = slideSegment(r, dipIndex(r), 0, -32);
+    expect(w).toEqual([{ x: 300, y: 50 }, { x: 300, y: 250 }]);
+  });
+
+  it('dragging the dip-run just OUTSIDE the tolerance keeps the notch (moves, no dissolve)', () => {
+    const r = notched();
+    // Drag up by 28 → y=62, 12 from the pin level (> 10) → no snap; the notch stays, just shallower.
+    const w = slideSegment(r, dipIndex(r), 0, -28);
+    expect(w.filter((p) => p.y === 62)).toHaveLength(2); // dip moved to y=62
+    expect(w.some((p) => p.y === 50)).toBe(true); // pins still there → notch intact
+    expect(w.length).toBeGreaterThan(2);
+  });
 });

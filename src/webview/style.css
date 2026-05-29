@@ -119,12 +119,18 @@
     /* Ghost (¼/¾) knob radius — grows on hover (no colour change). Tune both freely. */
     --ddd-edge-ghost-r: 4;
     --ddd-edge-ghost-r-hover: 5;
-    /* Marching-dot flow. `width` = dot diameter, `duration` = one loop (lower = faster). These are
-       safe as tokens (var() works in normal properties). The dot LENGTH + GAP and the loop offset
-       live as LITERALS in `.ddd-edge-flow` / `@keyframes ddd-edge-flow` — a CSS var inside a
-       stroke-dashoffset keyframe does not animate in Chromium — so tune spacing there. */
-    --ddd-edge-flow-width: 3;
-    --ddd-edge-flow-duration: 1.4s;
+    /* Marching-dot flow (all var()-safe — they live in normal properties, not the keyframe):
+       • --ddd-edge-flow-width = dot DIAMETER. With `stroke-dasharray: 0 …` + round caps, each dash is
+         a perfect circle of this diameter — so changing it stays ROUND (never a rectangle) and never
+         affects spacing. Bigger dots = raise this only. (+30% = ×1.3, i.e. 3 → 3.9.)
+       • --ddd-edge-flow-gap = dot SPACING (centre-to-centre) = the dash period.
+       • --ddd-edge-flow-duration = one loop (lower = faster).
+       Spacing caveat: the @keyframes offset MUST equal -(--ddd-edge-flow-gap). It can't read the var
+       (Chromium freezes a stroke-dashoffset keyframe that contains var/calc), so it's a hand-synced
+       literal — if you change the gap, change that number too (see @keyframes ddd-edge-flow). */
+    --ddd-edge-flow-width: 4;
+    --ddd-edge-flow-gap: 42;
+    --ddd-edge-flow-duration: 1.2s;
     /* Bloom (glow). Flow = pronounced; selected line = subtle. */
     --ddd-edge-bloom-flow: drop-shadow(0 0 3px var(--ddd-edge-selected)) drop-shadow(0 0 7px var(--ddd-edge-selected));
     --ddd-edge-bloom-selected: drop-shadow(0 0 2px var(--ddd-edge-selected));
@@ -578,9 +584,9 @@
   .ddd-edges path.ddd-edge-flow {
     fill: none;
     stroke: var(--ddd-edge-selected);
-    stroke-width: var(--ddd-edge-flow-width);
-    stroke-linecap: round;
-    stroke-dasharray: 1.5 40.5; /* dot, gap (period 42). Keep the SUM == the keyframe offset (-42). */
+    stroke-width: var(--ddd-edge-flow-width);      /* = dot diameter */
+    stroke-linecap: round;                         /* round caps turn each 0-length dash into a circle */
+    stroke-dasharray: 0 var(--ddd-edge-flow-gap);  /* 0 = a round dot; gap = spacing = dash period */
     animation: ddd-edge-flow var(--ddd-edge-flow-duration) linear infinite;
     filter: var(--ddd-edge-bloom-flow);
     pointer-events: none;
@@ -1383,12 +1389,12 @@
 
 /* Marching dots along an edge — negative offset + the path drawn M source…L target makes the dots
    travel in the relation's direction (source -> target). The offset is a LITERAL equal to one dash
-   period (dot + gap = 1.5 + 40.5 = 42), so the wrap is seamless (offset 0 and -42 render identically)
-   — no jump. IMPORTANT: a CSS var()/calc() here does NOT animate — Chromium freezes a
-   stroke-dashoffset keyframe that contains var/calc — so this MUST stay a literal. If you change the
-   dasharray, keep this equal to its sum (dot + gap). */
+   period — which, since the dash is 0, is just --ddd-edge-flow-gap — so the wrap is seamless (offset
+   0 and -gap render identically), no jump. IMPORTANT: a CSS var()/calc() here does NOT animate
+   (Chromium freezes a stroke-dashoffset keyframe that contains var/calc), so this MUST stay a literal
+   equal to -(--ddd-edge-flow-gap). Change the gap token → change this number too. */
 @keyframes ddd-edge-flow {
-  to { stroke-dashoffset: -42; }
+  to { stroke-dashoffset: -42; } /* == -(--ddd-edge-flow-gap) */
 }
 
 @media (prefers-reduced-motion: reduce) {

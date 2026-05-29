@@ -146,7 +146,8 @@ Bajo `@media (prefers-reduced-motion: reduce)`, las tres `duration-{fast,medium,
 | `--ddd-edge-selected` | `--vscode-focusBorder` | edge selected |
 | `--ddd-edge-handle` | `--ddd-fg-muted` | borde sutil del handle de segmento (slide) |
 | `--ddd-edge-ghost-r` / `-hover` | `4` / `7` | radio del nodo fantasma ¼/¾ y su crecimiento en hover (sin cambio de color) |
-| `--ddd-edge-flow-width` | `3` | diámetro del punto del flujo (marching dots) |
+| `--ddd-edge-flow-width` | `3.9` | diámetro del punto del flujo; con `stroke-dasharray: 0 gap` + cap redondo, cada punto es un círculo de este diámetro → subirlo agranda sin volverse rectángulo ni tocar el espaciado (+30% = ×1.3) |
+| `--ddd-edge-flow-gap` | `42` | espaciado centro-a-centro del flujo = período del dash; el offset del `@keyframes` debe = `-gap` (literal, el keyframe no admite `var`) |
 | `--ddd-edge-flow-duration` | `1.4s` | duración de un loop (menor = más rápido) |
 | `--ddd-edge-bloom-flow` / `-selected` | drop-shadow ×2 / ×1 | glow del flujo (pronunciado) y de la línea seleccionada (sutil) |
 
