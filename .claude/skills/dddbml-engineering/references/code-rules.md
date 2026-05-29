@@ -62,10 +62,15 @@ reviewable diffs. Preserve all of them:
 - 2-space indent, LF endings, trailing newline.
 - Atomic write: temp file + rename (a crash mid-write never corrupts the file).
 
-## Design tokens
+## Design tokens & styling
 
-No raw hex or magic px in components. Use `--ddd-*` tokens, the BC palette via
-`bcColorFor`, and density tokens. See `references/patterns.md` § 4.
+No raw hex or magic px in components. Styling is **Tailwind v4 arbitrary-value
+utilities that reference the tokens** — `bg-[var(--ddd-surface-hover)]`,
+`text-[color:var(--ddd-fg)]`, `w-[24px]` — never hardcoded values. `--ddd-*` is
+the single source of truth (Tailwind references it, doesn't replace it); the BC
+palette goes through `bcColorFor`, density through `--ddd-table-*`. For buttons,
+use the `<Button>` primitive (`src/webview/ui/Button.tsx`), not a raw class.
+Preflight is intentionally off. See `references/patterns.md` § 4.
 
 ## Comments
 
