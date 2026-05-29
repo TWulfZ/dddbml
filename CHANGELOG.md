@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] — 2026-05-29
+
+Major rework of interactive edge editing and edge visuals (`specs/05-edge-routing.md`, `specs/12-design-system.md`).
+
+### Changed
+
+#### Edge editing — two-tier control model
+- Editing a selected edge is now split into two tiers, replacing the v0.2.0 "hover a segment → ghost circle → drag to insert a waypoint" flow.
+- **Slide** — each editable run shows a real handle at its centre; drag it (or grab the run anywhere) to move the whole run perpendicular (1-DOF: horizontal ↕, vertical ↔). Sliding an end-arm inserts a jog so the rigid port stub never moves.
+- **Notch** — hovering a run reveals a ghost handle at the ¼ and ¾ positions (only the one nearest the cursor is shown); dragging it perpendicular carves a *local symmetric notch* — a new vertex — while the rest of the run stays flat (¼ carves the left side, ¾ the right).
+- Waypoints are now the literal orthogonal corners of the route; the previous collinear-collapse canonicalization is gone, so local bends are preserved. Editing one run never disturbs the rest (the route's corners are materialized first).
+- Every turn is a render-only rounded fillet — a corner is never a draggable node.
+
+### Added
+
+#### Edge editing
+- **Notch re-merge tolerance**: drag a notch's dipped run back to within ~10 world units of its original level and it snaps flat, dissolving the notch — no pixel-perfect aim needed. Double-clicking a notch also removes it.
+- Ghost handles grow on their own hover and show an axis-aware resize cursor (`ns-resize` / `ew-resize`); the centre (slide) handle stays visible while the edge is selected.
+
+#### Edge visuals
+- The marching-dot **flow** animation now renders on both hover **and** selection (previously hover only), with a pronounced bloom; the selected line carries its own subtle bloom.
+- Flow dots are true circles (`stroke-dasharray: 0 gap` + round caps) and the loop is seamless — no jump at the wrap.
+- New design tokens: `--ddd-edge-ghost-r` / `-hover`, `--ddd-edge-flow-width` / `-gap` / `-duration`, `--ddd-edge-bloom-flow` / `-selected`.
+
+### Notes
+- Sidecar format unchanged: `EdgeLayout.waypoints[]` still stores the route corners and existing layouts load without migration (edges without waypoints are unchanged); the new model reinterprets stored waypoints as literal corners.
+
+---
+
 ## [0.2.0] — 2026-05-27
 
 ### Added
