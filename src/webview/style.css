@@ -116,6 +116,18 @@
     --ddd-edge-hover: var(--vscode-charts-foreground, #e8e8e8);
     --ddd-edge-selected: var(--ddd-accent);
     --ddd-edge-handle: var(--ddd-fg-muted); /* subtle border of the segment-midpoint drag handle */
+    /* Ghost (¼/¾) knob radius — grows on hover (no colour change). Tune both freely. */
+    --ddd-edge-ghost-r: 4;
+    --ddd-edge-ghost-r-hover: 5;
+    /* Marching-dot flow. `width` = dot diameter, `duration` = one loop (lower = faster). These are
+       safe as tokens (var() works in normal properties). The dot LENGTH + GAP and the loop offset
+       live as LITERALS in `.ddd-edge-flow` / `@keyframes ddd-edge-flow` — a CSS var inside a
+       stroke-dashoffset keyframe does not animate in Chromium — so tune spacing there. */
+    --ddd-edge-flow-width: 3;
+    --ddd-edge-flow-duration: 1.4s;
+    /* Bloom (glow). Flow = pronounced; selected line = subtle. */
+    --ddd-edge-bloom-flow: drop-shadow(0 0 3px var(--ddd-edge-selected)) drop-shadow(0 0 7px var(--ddd-edge-selected));
+    --ddd-edge-bloom-selected: drop-shadow(0 0 2px var(--ddd-edge-selected));
 
     /* ----- Bounded-context palette (12 colors, color-blind safer, dark-tuned) ----- */
     --ddd-bc-1-surface: #1e3a5f;   --ddd-bc-1-border: #5b9be8;
@@ -487,11 +499,12 @@
   }
   .ddd-edges path.ddd-edge:hover {
     stroke: var(--ddd-edge-hover);
-    stroke-width: 2;
+    stroke-width: 1.6;
   }
   .ddd-edges path.ddd-edge.is-selected {
     stroke: var(--ddd-edge-selected);
-    stroke-width: 2.2;
+    stroke-width: 1.6; /* same thickness — the selection cue is the subtle bloom, not a thicker line */
+    filter: var(--ddd-edge-bloom-selected);
   }
   .ddd-edges line.ddd-edge-segment-handle {
     stroke: transparent;
@@ -523,21 +536,24 @@
   .ddd-edges circle.ddd-edge-handle.is-v { cursor: ew-resize; }
   .ddd-edges circle.ddd-edge-handle.is-hot,
   .ddd-edges circle.ddd-edge-handle:hover {
-    fill: var(--ddd-edge-selected);
+    stroke-width: 1.8;
     stroke: var(--ddd-edge-selected);
     opacity: 1;
   }
   .ddd-edges circle.ddd-edge-ghost {
+    r: var(--ddd-edge-ghost-r);
     fill: var(--ddd-surface-raised);
     stroke: var(--ddd-edge-handle);
     stroke-width: 1.5;
     opacity: 0.85;
     pointer-events: auto;
+    transition: r var(--ddd-duration-fast) var(--ddd-ease-out), opacity var(--ddd-duration-fast);
   }
   .ddd-edges circle.ddd-edge-ghost.is-h { cursor: ns-resize; }
   .ddd-edges circle.ddd-edge-ghost.is-v { cursor: ew-resize; }
+  /* Hovering the ghost knob ONLY grows it (no colour change) so you know which node you're pointing at. */
   .ddd-edges circle.ddd-edge-ghost:hover {
-    stroke: var(--ddd-edge-selected);
+    r: var(--ddd-edge-ghost-r-hover);
     opacity: 1;
   }
   /* Interactive handle overlay: above tables so handles stay grabbable over a table. */
@@ -556,14 +572,17 @@
     stroke: var(--ddd-edge);
     stroke-width: 1.5;
   }
-  /* Flowing dots along the relation (source -> target), shown on hover/selected. */
+  /* Flowing dots along the relation (source -> target), shown on hover/selected. The loop offset
+     (keyframe) and the duration both derive from the dash period (dot+gap), so it never jumps at the
+     wrap and the perceived speed is constant — tune via the --ddd-edge-flow-* tokens. Pronounced bloom. */
   .ddd-edges path.ddd-edge-flow {
     fill: none;
     stroke: var(--ddd-edge-selected);
-    stroke-width: 2;
+    stroke-width: var(--ddd-edge-flow-width);
     stroke-linecap: round;
-    stroke-dasharray: 1.5 10.5; /* round dots; 12u period matches the keyframe dashoffset */
-    animation: ddd-edge-flow 0.9s linear infinite;
+    stroke-dasharray: 1.5 40.5; /* dot, gap (period 42). Keep the SUM == the keyframe offset (-42). */
+    animation: ddd-edge-flow var(--ddd-edge-flow-duration) linear infinite;
+    filter: var(--ddd-edge-bloom-flow);
     pointer-events: none;
   }
   /* Endpoint handles flip the port side (left <-> right) when dragged across the table. */
@@ -1362,10 +1381,14 @@
   }
 }
 
-/* Marching dots along an edge — negative offset + the path drawn M source…L target makes the
-   dots travel in the relation's direction (source -> target). */
+/* Marching dots along an edge — negative offset + the path drawn M source…L target makes the dots
+   travel in the relation's direction (source -> target). The offset is a LITERAL equal to one dash
+   period (dot + gap = 1.5 + 40.5 = 42), so the wrap is seamless (offset 0 and -42 render identically)
+   — no jump. IMPORTANT: a CSS var()/calc() here does NOT animate — Chromium freezes a
+   stroke-dashoffset keyframe that contains var/calc — so this MUST stay a literal. If you change the
+   dasharray, keep this equal to its sum (dot + gap). */
 @keyframes ddd-edge-flow {
-  to { stroke-dashoffset: -12; }
+  to { stroke-dashoffset: -42; }
 }
 
 @media (prefers-reduced-motion: reduce) {

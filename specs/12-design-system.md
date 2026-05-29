@@ -145,6 +145,10 @@ Bajo `@media (prefers-reduced-motion: reduce)`, las tres `duration-{fast,medium,
 | `--ddd-edge-hover` | `--vscode-charts-foreground` | edge highlight |
 | `--ddd-edge-selected` | `--vscode-focusBorder` | edge selected |
 | `--ddd-edge-handle` | `--ddd-fg-muted` | borde sutil del handle de segmento (slide) |
+| `--ddd-edge-ghost-r` / `-hover` | `4` / `7` | radio del nodo fantasma ¼/¾ y su crecimiento en hover (sin cambio de color) |
+| `--ddd-edge-flow-width` | `3` | diámetro del punto del flujo (marching dots) |
+| `--ddd-edge-flow-duration` | `1.4s` | duración de un loop (menor = más rápido) |
+| `--ddd-edge-bloom-flow` / `-selected` | drop-shadow ×2 / ×1 | glow del flujo (pronunciado) y de la línea seleccionada (sutil) |
 
 ---
 

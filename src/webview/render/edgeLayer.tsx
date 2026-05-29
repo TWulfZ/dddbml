@@ -47,6 +47,8 @@ interface ColorPopupState {
 interface HoverState {
   refId: string;
   segIndex: number;
+  /** Quarter handle nearest the cursor on the hovered run: 0.25 (first half) or 0.75 (second half). */
+  near: number;
 }
 
 export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox }: EdgeLayerProps) {
@@ -152,6 +154,29 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
   const clearHover = (refId: string, segIndex: number) =>
     setHover((h) => (h && h.refId === refId && h.segIndex === segIndex ? null : h));
 
+  // While hovering a run, pick the ¼ or ¾ ghost nearest the cursor (only that one is shown). Projects
+  // the pointer onto the run in screen space → first/second half. Re-renders only when the half flips.
+  const updateHover = (r: EdgeRoute, segIndex: number, e: { clientX: number; clientY: number }) => {
+    const s = r.segments[segIndex];
+    let near = 0.25;
+    if (s) {
+      const a = worldToScreen(s.x1, s.y1);
+      const b = worldToScreen(s.x2, s.y2);
+      if (a && b) {
+        const vx = b.x - a.x;
+        const vy = b.y - a.y;
+        const l2 = vx * vx + vy * vy;
+        const t = l2 > 0 ? ((e.clientX - a.x) * vx + (e.clientY - a.y) * vy) / l2 : 0;
+        near = t < 0.5 ? 0.25 : 0.75;
+      }
+    }
+    setHover((h) =>
+      h && h.refId === r.id && h.segIndex === segIndex && h.near === near
+        ? h
+        : { refId: r.id, segIndex, near },
+    );
+  };
+
   const selectedRoute = selectedEdgeId ? routes.find((r) => r.id === selectedEdgeId) ?? null : null;
   // Screen anchor: click position + constant offset. Adjust TOOLBAR_OFFSET_X/Y at top of file.
   const toolbarPos = selectedRoute && clickPos
@@ -217,11 +242,13 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
           const color = edgeLayouts.get(r.id)?.color;
           return (
             <g key={r.id} style={color ? { color } : undefined}>
-              {selected || hover?.refId === r.id ? (
-                <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} />
-              ) : null}
+              {/* Selected highlight first, then the marching-dot flow ON TOP so it stays visible while
+                  selected (the opaque highlight used to cover it). Flow shows on hover and selected. */}
               {selected ? (
                 <path d={r.d} class="ddd-edge is-selected" style={color ? { stroke: color } : undefined} />
+              ) : null}
+              {selected || hover?.refId === r.id ? (
+                <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} />
               ) : null}
               {r.segments.map((s, i) => {
                 const len = Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1);
@@ -233,18 +260,19 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
                 // 1-DOF perpendicular with an axis-aware resize cursor. Double-click a notch's
                 // dip-run → delete it. Rigid stubs / tiny legs get nothing; corners stay rounded.
                 const editable = selected && !s.rigid && len >= MIN_HANDLE_LEN;
-                const showGhosts = editable && len >= MIN_GHOST_LEN && hot;
+                const showGhost = editable && len >= MIN_GHOST_LEN && hot;
                 const axisClass = s.axis === 'h' ? 'is-h' : 'is-v';
                 const at = (f: number) => ({ x: s.x1 + (s.x2 - s.x1) * f, y: s.y1 + (s.y2 - s.y1) * f });
                 const mid = at(0.5);
-                const q1 = at(0.25);
-                const q3 = at(0.75);
+                // Show only the ghost nearest the cursor (¼ for the first half, ¾ for the second).
+                const nearF = hover?.near ?? 0.25;
+                const ghost = at(nearF);
                 return (
                   // pointerenter/leave on the <g> treat the handles as part of the segment, so
                   // moving from the line onto a handle doesn't drop the hover (no flicker).
                   <g
                     key={`seg-${i}`}
-                    onPointerEnter={() => setHover({ refId: r.id, segIndex: i })}
+                    onPointerEnter={(e) => updateHover(r, i, e as unknown as PointerEvent)}
                     onPointerLeave={() => clearHover(r.id, i)}
                   >
                     <line
@@ -254,6 +282,7 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
                       x2={s.x2}
                       y2={s.y2}
                       stroke-width={SEGMENT_HOVER_THICKNESS}
+                      onPointerMove={(e) => { if (editable) updateHover(r, i, e as unknown as PointerEvent); }}
                       onPointerDown={(e) => {
                         e.stopPropagation();
                         if (editable) {
@@ -276,23 +305,14 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
                         onDblClick={(e) => onSegmentDblClick(r, i, e as unknown as PointerEvent)}
                       />
                     ) : null}
-                    {showGhosts ? (
-                      <>
-                        <circle
-                          class={`ddd-edge-ghost ${axisClass}`}
-                          cx={q1.x}
-                          cy={q1.y}
-                          r={4}
-                          onPointerDown={(e) => onGhostDown(r, i, 0.25, e as unknown as PointerEvent)}
-                        />
-                        <circle
-                          class={`ddd-edge-ghost ${axisClass}`}
-                          cx={q3.x}
-                          cy={q3.y}
-                          r={4}
-                          onPointerDown={(e) => onGhostDown(r, i, 0.75, e as unknown as PointerEvent)}
-                        />
-                      </>
+                    {showGhost ? (
+                      <circle
+                        class={`ddd-edge-ghost ${axisClass}`}
+                        cx={ghost.x}
+                        cy={ghost.y}
+                        r={4}
+                        onPointerDown={(e) => onGhostDown(r, i, nearF, e as unknown as PointerEvent)}
+                      />
                     ) : null}
                   </g>
                 );
