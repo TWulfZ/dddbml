@@ -2,10 +2,10 @@ import { useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import type { QualifiedName, Ref, Schema } from '../../shared/types';
 import { columnCenterY, estimateSize } from '../layout/autoLayout';
-import { routeRefs, type EdgeRoute } from './edgeRouter';
+import { routeRefs, isDipRun, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
 import { store, useAppStore } from '../state/store';
-import { startSegmentDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle } from '../drag/dragController';
+import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch } from '../drag/dragController';
 import type { EdgeStyle } from '../state/history';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
 import { Button } from '../ui/Button';
@@ -29,8 +29,10 @@ interface EdgeLayerProps {
 
 const GROUP_PREFIX = '__group__:';
 const SEGMENT_HOVER_THICKNESS = 14;
-/** Segments shorter than this (world units) get no drag grip — avoids grips on tiny legs. */
-const MIN_GRIP_LEN = 24;
+/** Runs shorter than this (world units) get no centre (slide) handle — avoids handles on tiny legs. */
+const MIN_HANDLE_LEN = 16;
+/** Runs shorter than this get no ¼/¾ ghost handles — too short to fit 3 knobs without overlap. */
+const MIN_GHOST_LEN = 40;
 /** Toolbar offset from the click point (screen px). Tweak to taste. */
 const TOOLBAR_OFFSET_X = 10;
 const TOOLBAR_OFFSET_Y = -40;
@@ -114,11 +116,28 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
     return b ? b.x + b.w / 2 : null;
   };
 
-  const onSegmentPointerDown = (r: EdgeRoute, segIndex: number, e: PointerEvent) => {
+  // Centre handle / run grab → SLIDE the whole run perpendicular (real blue vertex).
+  const onSegmentSlideDown = (r: EdgeRoute, segIndex: number, e: PointerEvent) => {
     if (e.button !== 0) return;
     setClickPos({ x: e.clientX, y: e.clientY });
     store.getState().setSelectedEdge(r.id);
-    startSegmentDrag(r, segIndex, e, e.currentTarget as SVGElement);
+    startSegmentSlide(r, segIndex, e, e.currentTarget as SVGElement);
+  };
+
+  // Ghost handle at ¼ / ¾ → CREATE a local symmetric notch (ghost becomes a real vertex on release).
+  const onGhostDown = (r: EdgeRoute, segIndex: number, quarter: number, e: PointerEvent) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    setClickPos({ x: e.clientX, y: e.clientY });
+    store.getState().setSelectedEdge(r.id);
+    startNotchDrag(r, segIndex, quarter, e, e.currentTarget as SVGElement);
+  };
+
+  const onSegmentDblClick = (r: EdgeRoute, segIndex: number, e: PointerEvent) => {
+    // Double-click a notch's dip-run to delete the whole notch (restore the flat run).
+    if (!isDipRun(r, segIndex)) return;
+    e.stopPropagation();
+    deleteEdgeNotch(r, segIndex);
   };
 
   const onEndpointPointerDown = (r: EdgeRoute, end: 'source' | 'target', e: PointerEvent) => {
@@ -198,46 +217,91 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
           const color = edgeLayouts.get(r.id)?.color;
           return (
             <g key={r.id} style={color ? { color } : undefined}>
+              {selected || hover?.refId === r.id ? (
+                <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} />
+              ) : null}
               {selected ? (
                 <path d={r.d} class="ddd-edge is-selected" style={color ? { stroke: color } : undefined} />
               ) : null}
               {r.segments.map((s, i) => {
                 const len = Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1);
-                const showGhost = hover?.refId === r.id && hover.segIndex === i && len >= MIN_GRIP_LEN;
+                const hot = hover?.refId === r.id && hover.segIndex === i;
+                // Two-tier control (dbdiagram): each editable run carries a REAL blue vertex at its
+                // CENTRE — drag it (or grab the run anywhere) to SLIDE the whole run perpendicular —
+                // plus two GHOST grey knobs at ¼ / ¾ that appear on hover; dragging a ghost carves a
+                // local symmetric notch (a NEW vertex) and the rest of the run stays flat. Drag is
+                // 1-DOF perpendicular with an axis-aware resize cursor. Double-click a notch's
+                // dip-run → delete it. Rigid stubs / tiny legs get nothing; corners stay rounded.
+                const editable = selected && !s.rigid && len >= MIN_HANDLE_LEN;
+                const showGhosts = editable && len >= MIN_GHOST_LEN && hot;
+                const axisClass = s.axis === 'h' ? 'is-h' : 'is-v';
+                const at = (f: number) => ({ x: s.x1 + (s.x2 - s.x1) * f, y: s.y1 + (s.y2 - s.y1) * f });
+                const mid = at(0.5);
+                const q1 = at(0.25);
+                const q3 = at(0.75);
                 return (
-                  // pointerenter/leave on the <g> treat the grip as part of the segment, so
-                  // moving from the line onto the ghost grip doesn't drop the hover (no flicker).
+                  // pointerenter/leave on the <g> treat the handles as part of the segment, so
+                  // moving from the line onto a handle doesn't drop the hover (no flicker).
                   <g
                     key={`seg-${i}`}
                     onPointerEnter={() => setHover({ refId: r.id, segIndex: i })}
                     onPointerLeave={() => clearHover(r.id, i)}
                   >
                     <line
-                      class="ddd-edge-segment-handle"
+                      class={`ddd-edge-segment-handle${editable ? ` ${axisClass}` : ''}`}
                       x1={s.x1}
                       y1={s.y1}
                       x2={s.x2}
                       y2={s.y2}
                       stroke-width={SEGMENT_HOVER_THICKNESS}
-                      onPointerDown={(e) => { e.stopPropagation(); setClickPos({ x: e.clientX, y: e.clientY }); store.getState().setSelectedEdge(r.id); }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        if (editable) {
+                          // Grab anywhere on the run → slide it perpendicular (selects + drags).
+                          onSegmentSlideDown(r, i, e as unknown as PointerEvent);
+                        } else {
+                          setClickPos({ x: e.clientX, y: e.clientY });
+                          store.getState().setSelectedEdge(r.id);
+                        }
+                      }}
+                      onDblClick={(e) => onSegmentDblClick(r, i, e as unknown as PointerEvent)}
                     />
-                    {showGhost ? (
+                    {editable ? (
                       <circle
-                        class={`ddd-edge-grip is-ghost ${s.axis === 'h' ? 'is-h' : 'is-v'}`}
-                        cx={(s.x1 + s.x2) / 2}
-                        cy={(s.y1 + s.y2) / 2}
-                        r={5}
-                        onPointerDown={(e) => onSegmentPointerDown(r, i, e as unknown as PointerEvent)}
+                        class={`ddd-edge-handle ${axisClass}${hot ? ' is-hot' : ''}`}
+                        cx={mid.x}
+                        cy={mid.y}
+                        r={hot ? 6 : 5}
+                        onPointerDown={(e) => onSegmentSlideDown(r, i, e as unknown as PointerEvent)}
+                        onDblClick={(e) => onSegmentDblClick(r, i, e as unknown as PointerEvent)}
                       />
+                    ) : null}
+                    {showGhosts ? (
+                      <>
+                        <circle
+                          class={`ddd-edge-ghost ${axisClass}`}
+                          cx={q1.x}
+                          cy={q1.y}
+                          r={4}
+                          onPointerDown={(e) => onGhostDown(r, i, 0.25, e as unknown as PointerEvent)}
+                        />
+                        <circle
+                          class={`ddd-edge-ghost ${axisClass}`}
+                          cx={q3.x}
+                          cy={q3.y}
+                          r={4}
+                          onPointerDown={(e) => onGhostDown(r, i, 0.75, e as unknown as PointerEvent)}
+                        />
+                      </>
                     ) : null}
                   </g>
                 );
               })}
               {selected ? (
                 <>
-                  {r.waypoints.map((w, i) => (
-                    <circle key={`wp-${i}`} class="ddd-edge-vertex" cx={w.x} cy={w.y} r={4} />
-                  ))}
+                  {/* No handles on corners: bends are rounded turns (roundedPathString), and editing
+                      is done via the segment-midpoint handles above. Only the 2 endpoints get a
+                      handle (port-side flip). */}
                   <circle
                     class="ddd-edge-endpoint"
                     cx={r.source.x}

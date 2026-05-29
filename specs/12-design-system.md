@@ -144,6 +144,7 @@ Bajo `@media (prefers-reduced-motion: reduce)`, las tres `duration-{fast,medium,
 | `--ddd-edge` | `--vscode-charts-blue` | relación FK |
 | `--ddd-edge-hover` | `--vscode-charts-foreground` | edge highlight |
 | `--ddd-edge-selected` | `--vscode-focusBorder` | edge selected |
+| `--ddd-edge-handle` | `--ddd-fg-muted` | borde sutil del handle de segmento (slide) |
 
 ---
 

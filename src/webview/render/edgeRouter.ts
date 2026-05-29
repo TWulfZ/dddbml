@@ -3,6 +3,17 @@ import type { Bbox } from './spatialIndex';
 
 export type Side = 'left' | 'right' | 'top' | 'bottom';
 
+/**
+ * Length (world units) of the RIGID stub that always leaves each table. The pieces
+ * `source → sourceStub` and `targetStub → target` are immutable: never draggable, never
+ * subdivided, never collapsed. They keep the connection point coherent (the `1` / crow's-foot
+ * marker never sits flush against the table). All user editing happens strictly between the
+ * two stub ends. When tables are closer than `2*MIN_STUB` horizontally the stub length is clamped
+ * to half the port distance so the two stubs meet instead of crossing (no backtracking spike);
+ * a very-close same-row edge then has no editable middle (just a straight rigid connector).
+ */
+const MIN_STUB = 24;
+
 export interface EdgeSegment {
   x1: number;
   y1: number;
@@ -11,6 +22,8 @@ export interface EdgeSegment {
   axis: 'h' | 'v';
   /** Index of the waypoint that ends this segment, or `null` for the final leg into the target. */
   endWaypointIndex: number | null;
+  /** Rigid stub (first/last segment): immutable, not draggable/subdividable. */
+  rigid: boolean;
 }
 
 export interface EdgeRoute {
@@ -23,6 +36,13 @@ export interface EdgeRoute {
   /** Resolved port coordinates (world space), useful for hit-testing / highlighting. */
   source: { x: number; y: number };
   target: { x: number; y: number };
+  /**
+   * Fixed ends of the RIGID stubs. The editable polyline (and all waypoint editing) lives between
+   * `sourceStub` and `targetStub`; `source → sourceStub` and `targetStub → target` are immutable.
+   * Segment editing uses these as the fixed endpoints (not `source`/`target`).
+   */
+  sourceStub: { x: number; y: number };
+  targetStub: { x: number; y: number };
 }
 
 /** Optional per-endpoint port override — used to align edges with the PK/FK column row. */
@@ -144,8 +164,8 @@ export function routeRefs(
     const waypoints = layout?.waypoints && layout.waypoints.length > 0 ? layout.waypoints : [];
     const legacyDx = waypoints.length === 0 && layout?.dx !== undefined ? layout.dx : 0;
 
-    const { corners } = buildPath(a, b, waypoints, legacyDx);
-    const d_str = pathString(corners);
+    const { corners, aStub, bStub } = buildPath(a, b, waypoints, legacyDx, d.sourceSide, d.targetSide);
+    const d_str = roundedPathString(corners, CORNER_RADIUS);
     const segments = buildSegments(corners, waypoints);
 
     out.push({
@@ -155,119 +175,139 @@ export function routeRefs(
       segments,
       source: a,
       target: b,
+      sourceStub: aStub,
+      targetStub: bStub,
     });
   }
   return out;
 }
 
 /**
- * Build the corner points of an orthogonal polyline from `a` to `b`, passing through user waypoints.
+ * Build the corner points of the orthogonal polyline from `a` to `b`, through the user's LITERAL
+ * corner waypoints. Wrapped in two RIGID stubs (`a → aStub`, `bStub → b`, fixed `MIN_STUB`,
+ * direction from `sourceSide`/`targetSide`) — immutable, always present, never collapsed.
  *
- * Both `a` and `b` are horizontal ports (chooseSides forces left/right). The polyline starts
- * with a horizontal segment exiting `a` and ends with a horizontal segment entering `b`.
- * Axes alternate at each waypoint.
+ * No waypoints ⇒ the editable middle is the default centered H-V-H. Otherwise the waypoints ARE the
+ * route's corners, connected directly (a single elbow inserted only for a stray non-axis-aligned
+ * pair, as back-compat for v1 free waypoints). Nothing is collapsed/canonicalized, so local notches
+ * (a dip whose pins are colinear with the run) survive — the whole point of the editing model.
  *
- * When `waypoints` is empty, falls back to the original H-V-H with optional `legacyDx` offset.
- *
- * Returns the corner list plus a parallel `isWaypoint` mask indicating which corners are
- * user-placed (must be preserved by `collapseColinear`).
+ * Returns the full corner list (`[a, ...editable..., b]`) plus the fixed stub ends.
  */
 function buildPath(
   a: { x: number; y: number },
   b: { x: number; y: number },
   waypoints: Waypoint[],
   legacyDx: number,
-): { corners: Array<{ x: number; y: number }>; isWaypoint: boolean[] } {
-  const P: Array<{ x: number; y: number }> = [{ x: a.x, y: a.y }];
-  const wp: boolean[] = [false];
-  let cur = { x: a.x, y: a.y };
-  let lastAxis: 'h' | 'v' = 'h';
+  sourceSide: Side,
+  targetSide: Side,
+): { corners: Array<{ x: number; y: number }>; aStub: { x: number; y: number }; bStub: { x: number; y: number } } {
+  const dirA = sourceSide === 'left' ? -1 : 1;
+  const dirB = targetSide === 'left' ? -1 : 1;
+  // Clamp stub length to half the horizontal port distance so the two stubs can never cross when
+  // tables are closer than 2*MIN_STUB (crossing would invert the editable span).
+  const stubLen = Math.min(MIN_STUB, Math.floor(Math.abs(b.x - a.x) / 2));
+  const aStub = { x: a.x + dirA * stubLen, y: a.y };
+  const bStub = { x: b.x + dirB * stubLen, y: b.y };
 
-  const pushCorner = (p: { x: number; y: number }, isUserWaypoint: boolean) => {
-    P.push(p);
-    wp.push(isUserWaypoint);
-  };
+  const editable = waypoints.length === 0
+    ? defaultEditableCorners(aStub, bStub, legacyDx)
+    : cornersThrough(aStub, bStub, waypoints);
+  const corners = [{ x: a.x, y: a.y }, ...editable, { x: b.x, y: b.y }];
+  return { corners, aStub, bStub };
+}
 
-  for (const w of waypoints) {
-    if (lastAxis === 'h') {
-      if (w.x !== cur.x) {
-        pushCorner({ x: w.x, y: cur.y }, false);
-        lastAxis = 'h';
-      }
-      // Always push the waypoint itself so it survives colinearity collapsing.
-      pushCorner({ x: w.x, y: w.y }, true);
-      if (w.y !== cur.y) lastAxis = 'v';
-    } else {
-      if (w.y !== cur.y) {
-        pushCorner({ x: cur.x, y: w.y }, false);
-        lastAxis = 'v';
-      }
-      pushCorner({ x: w.x, y: w.y }, true);
-      if (w.x !== cur.x) lastAxis = 'h';
-    }
-    cur = { x: w.x, y: w.y };
-  }
-
-  if (waypoints.length === 0) {
-    // Default H-V-H: centered trunk (+ legacy dx). `cur` is still the source port here.
-    const midX = Math.round((cur.x + b.x) / 2 + legacyDx);
-    if (midX !== cur.x) pushCorner({ x: midX, y: cur.y }, false);
-    if (b.y !== cur.y) pushCorner({ x: midX, y: b.y }, false);
-    pushCorner({ x: b.x, y: b.y }, false);
-  } else {
-    // Edited path: route the last vertex STRAIGHT into the port — vertical to b's row at
-    // cur.x, then horizontal into the port. No midX bridge, so the path can never double
-    // back into a spike; every leg flows one direction toward the target.
-    if (b.y !== cur.y) pushCorner({ x: cur.x, y: b.y }, false);
-    pushCorner({ x: b.x, y: b.y }, false);
-  }
-
-  return collapseColinear(P, wp);
+/** Default editable corners between the stub ends: straight when same-row, else centered H-V-H. */
+function defaultEditableCorners(
+  aStub: { x: number; y: number },
+  bStub: { x: number; y: number },
+  legacyDx: number,
+): Array<{ x: number; y: number }> {
+  // Same row ⇒ a straight connector (no redundant midpoint corner).
+  if (bStub.y === aStub.y) return [{ x: aStub.x, y: aStub.y }, { x: bStub.x, y: bStub.y }];
+  // Offset ⇒ H-V-H with a centered trunk (+ optional legacy dx).
+  const midX = Math.round((aStub.x + bStub.x) / 2 + legacyDx);
+  return [
+    { x: aStub.x, y: aStub.y },
+    { x: midX, y: aStub.y },
+    { x: midX, y: bStub.y },
+    { x: bStub.x, y: bStub.y },
+  ];
 }
 
 /**
- * Remove redundant corners while preserving every user waypoint.
- *
- * Two conditions collapse a corner:
- *   1. Exact duplicate of the previous point (`prev.x === cur.x && prev.y === cur.y`).
- *   2. Three colinear points (prev → cur → next share x OR share y) AND `cur` is not a user waypoint.
- *
- * User waypoints (`isWaypoint[i] === true`) always survive — they may be visually mid-segment
- * but the user placed them, and dragging them later must work even if currently colinear.
+ * Connect the stub ends through the user's literal corners with straight orthogonal segments.
+ * Consecutive corners are expected axis-aligned (the editing ops guarantee it); a single
+ * horizontal-first elbow is inserted only for a stray non-aligned pair (back-compat with v1 free
+ * waypoints). No collapsing — every user corner (incl. a notch's pins) survives.
  */
-function collapseColinear(
-  points: Array<{ x: number; y: number }>,
-  isWaypoint: boolean[],
-): { corners: Array<{ x: number; y: number }>; isWaypoint: boolean[] } {
-  if (points.length <= 2) return { corners: points, isWaypoint };
-  const outPoints: Array<{ x: number; y: number }> = [points[0]!];
-  const outWp: boolean[] = [isWaypoint[0]!];
-  for (let i = 1; i < points.length - 1; i++) {
-    const prev = outPoints[outPoints.length - 1]!;
-    const cur = points[i]!;
-    const next = points[i + 1]!;
-    const samePoint = prev.x === cur.x && prev.y === cur.y;
-    const colinear =
-      (prev.x === cur.x && cur.x === next.x) || (prev.y === cur.y && cur.y === next.y);
-    const isUserWp = isWaypoint[i]!;
-    if (samePoint && !isUserWp) continue;
-    if (colinear && !isUserWp) continue;
-    outPoints.push(cur);
-    outWp.push(isUserWp);
-  }
-  const last = points[points.length - 1]!;
-  const tail = outPoints[outPoints.length - 1]!;
-  if (last.x !== tail.x || last.y !== tail.y) {
-    outPoints.push(last);
-    outWp.push(isWaypoint[points.length - 1]!);
-  }
-  return { corners: outPoints, isWaypoint: outWp };
+function cornersThrough(
+  aStub: { x: number; y: number },
+  bStub: { x: number; y: number },
+  waypoints: Waypoint[],
+): Array<{ x: number; y: number }> {
+  const out: Array<{ x: number; y: number }> = [{ x: aStub.x, y: aStub.y }];
+  let cur = { x: aStub.x, y: aStub.y };
+  const connect = (p: { x: number; y: number }) => {
+    if (p.x !== cur.x && p.y !== cur.y) out.push({ x: p.x, y: cur.y }); // safety elbow
+    out.push({ x: p.x, y: p.y });
+    cur = { x: p.x, y: p.y };
+  };
+  for (const w of waypoints) connect({ x: w.x, y: w.y });
+  connect({ x: bStub.x, y: bStub.y });
+  return out;
 }
 
-function pathString(points: Array<{ x: number; y: number }>): string {
-  if (points.length === 0) return '';
-  let s = `M${points[0]!.x},${points[0]!.y}`;
-  for (let i = 1; i < points.length; i++) s += ` L${points[i]!.x},${points[i]!.y}`;
+/** Corner-rounding radius (world units) for the rendered path; clamped per-corner below. */
+const CORNER_RADIUS = 8;
+
+/**
+ * Build the SVG path with ROUNDED corners. Each interior corner is replaced by a fillet: a line
+ * to `radius` before the corner, then a quadratic Bézier whose control point IS the corner vertex,
+ * ending `radius` after the corner. `radius` is clamped to half of each adjacent segment so fillets
+ * never overlap or overshoot (e.g. the rigid `MIN_STUB` legs). Colinear/coincident points emit a
+ * plain line (no fillet). Corner rounding is render-only smoothing — a turn is NEVER a node/circle;
+ * editable handles live on segments, not corners. (React Flow getBend / JointJS rounded / mxGraph arcSize.)
+ */
+export function roundedPathString(points: Array<{ x: number; y: number }>, radius: number): string {
+  // Drop coincident points (e.g. stubs that met) so segment lengths / unit vectors are well-defined.
+  const pts: Array<{ x: number; y: number }> = [];
+  for (const p of points) {
+    const last = pts[pts.length - 1];
+    if (!last || last.x !== p.x || last.y !== p.y) pts.push(p);
+  }
+  if (pts.length === 0) return '';
+  if (pts.length <= 2) {
+    let s = `M${pts[0]!.x},${pts[0]!.y}`;
+    for (let i = 1; i < pts.length; i++) s += ` L${pts[i]!.x},${pts[i]!.y}`;
+    return s;
+  }
+  let s = `M${pts[0]!.x},${pts[0]!.y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1]!;
+    const cur = pts[i]!;
+    const next = pts[i + 1]!;
+    const colinear =
+      (prev.x === cur.x && cur.x === next.x) || (prev.y === cur.y && cur.y === next.y);
+    if (colinear) {
+      s += ` L${cur.x},${cur.y}`;
+      continue;
+    }
+    const dPrev = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+    const dNext = Math.hypot(next.x - cur.x, next.y - cur.y);
+    const rr = Math.min(radius, dPrev / 2, dNext / 2);
+    const enter = {
+      x: Math.round(cur.x + ((prev.x - cur.x) / dPrev) * rr),
+      y: Math.round(cur.y + ((prev.y - cur.y) / dPrev) * rr),
+    };
+    const exit = {
+      x: Math.round(cur.x + ((next.x - cur.x) / dNext) * rr),
+      y: Math.round(cur.y + ((next.y - cur.y) / dNext) * rr),
+    };
+    s += ` L${enter.x},${enter.y} Q${cur.x},${cur.y} ${exit.x},${exit.y}`;
+  }
+  const last = pts[pts.length - 1]!;
+  s += ` L${last.x},${last.y}`;
   return s;
 }
 
@@ -297,25 +337,130 @@ function buildSegments(corners: Array<{ x: number; y: number }>, waypoints: Wayp
       y2: p2.y,
       axis,
       endWaypointIndex: endsAtWaypoint ? wpIdx : null,
+      rigid: false,
     });
     if (endsAtWaypoint) wpIdx++;
+  }
+  // First and last segments are the rigid stubs (corners are always [a, aStub, …, bStub, b],
+  // and a→aStub / bStub→b are non-zero), so they bound the editable middle. Mark them immutable.
+  if (segs.length > 0) {
+    segs[0]!.rigid = true;
+    segs[segs.length - 1]!.rigid = true;
   }
   return segs;
 }
 
 /**
- * Translate a dragged segment along its normal and return the new waypoint list.
- *
- * Orthogonal segment dragging: a segment only moves perpendicular to itself, so the
- * path can never gain a diagonal or a staircase "pico". Editing maps to whole-segment moves —
- * a segment bounded by stored waypoint(s) shifts those waypoints' relevant coordinate; a bare
- * bridge/stub segment inserts the minimal waypoint(s) to anchor the new bend. The router
- * re-bridges the other axis to the (table-following) ports, so the result is port-independent.
- *
- * Always call with the ORIGINAL route snapshot + cumulative delta (not the live route) so
- * repeated pointermove calls are idempotent and segment indices never drift mid-drag.
+ * Materialize the editable corners of a route (`aStub … bStub`) from its rendered segments. After
+ * any edit the route becomes fully explicit (every corner is a stored waypoint), so editing one run
+ * never disturbs the rest. `corners[0]` is `aStub`, `corners[last]` is `bStub`.
  */
-export function computeSegmentDrag(
+function editableCornersOf(route: EdgeRoute): Array<{ x: number; y: number }> {
+  const edit = route.segments.filter((s) => !s.rigid);
+  if (edit.length === 0) return [];
+  return [{ x: edit[0]!.x1, y: edit[0]!.y1 }, ...edit.map((s) => ({ x: s.x2, y: s.y2 }))];
+}
+
+/**
+ * A run `corners[j] → corners[j+1]` is the BOTTOM of an existing symmetric notch when the two
+ * corners just outside it (its pins) sit at one shared perpendicular level different from the run's
+ * — i.e. the line dips into the run and rises back out to the same level on both sides.
+ */
+function isDip(corners: Array<{ x: number; y: number }>, j: number, axis: 'h' | 'v'): boolean {
+  const a = corners[j - 1];
+  const b = corners[j + 2];
+  if (!a || !b) return false;
+  return axis === 'h' ? a.y === b.y && a.y !== corners[j]!.y : a.x === b.x && a.x !== corners[j]!.x;
+}
+
+/** Axis of an axis-aligned run `p → q`. */
+function runAxis(p: { x: number; y: number }, q: { x: number; y: number }): 'h' | 'v' {
+  return p.y === q.y ? 'h' : 'v';
+}
+
+/**
+ * Drop coincident and strictly-colinear interior corners; the endpoints are preserved. This is a
+ * SAFE canonicalization — removing a point colinear with its two neighbours never changes the
+ * rendered line (three colinear points draw identically). No corner of a symmetric notch is
+ * colinear with both neighbours, so a real notch is never destroyed; but a notch slid back to its
+ * pin level (its dip corners become colinear with the pins) collapses away, and a slid arm's
+ * redundant points drop. Used after a SLIDE, never during a CREATE.
+ */
+function cleanCorners(pts: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+  const dedup: Array<{ x: number; y: number }> = [];
+  for (const p of pts) {
+    const last = dedup[dedup.length - 1];
+    if (!last || last.x !== p.x || last.y !== p.y) dedup.push({ x: p.x, y: p.y });
+  }
+  if (dedup.length <= 2) return dedup;
+  const out: Array<{ x: number; y: number }> = [dedup[0]!];
+  for (let i = 1; i < dedup.length - 1; i++) {
+    const prev = out[out.length - 1]!;
+    const cur = dedup[i]!;
+    const next = dedup[i + 1]!;
+    const colinear =
+      (prev.x === cur.x && cur.x === next.x) || (prev.y === cur.y && cur.y === next.y);
+    if (!colinear) out.push(cur);
+  }
+  out.push(dedup[dedup.length - 1]!);
+  return out;
+}
+
+/** Half-width (fraction of the run) of a local notch's dipped bottom, centred on the grabbed quarter. */
+const NOTCH_HALF_FRACTION = 1 / 8;
+
+/**
+ * The 4 corners of a LOCAL symmetric notch carved around `quarter` (0.25 / 0.75) of run `p1 → p2`,
+ * dipped by `d` perpendicular. The two pins sit at `quarter ∓ 1/8` (still at the run's level); the
+ * dipped bottom spans between them, the rest of the run stays flat (short lead-in, long tail). This
+ * is the geometry behind the two GHOST handles — each quarter carves its own local notch.
+ */
+function localNotchCorners(
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  axis: 'h' | 'v',
+  d: number,
+  quarter: number,
+): Array<{ x: number; y: number }> {
+  const f1 = quarter - NOTCH_HALF_FRACTION;
+  const f2 = quarter + NOTCH_HALF_FRACTION;
+  if (axis === 'h') {
+    const y0 = p1.y;
+    const t1 = Math.round(p1.x + (p2.x - p1.x) * f1);
+    const t2 = Math.round(p1.x + (p2.x - p1.x) * f2);
+    return [{ x: t1, y: y0 }, { x: t1, y: y0 + d }, { x: t2, y: y0 + d }, { x: t2, y: y0 }];
+  }
+  const x0 = p1.x;
+  const t1 = Math.round(p1.y + (p2.y - p1.y) * f1);
+  const t2 = Math.round(p1.y + (p2.y - p1.y) * f2);
+  return [{ x: x0, y: t1 }, { x: x0 + d, y: t1 }, { x: x0 + d, y: t2 }, { x: x0, y: t2 }];
+}
+
+/** True if the run at `segIndex` is an existing notch's dip bottom (drag = deepen, not create). */
+export function isDipRun(route: EdgeRoute, segIndex: number): boolean {
+  const seg = route.segments[segIndex];
+  if (!seg || seg.rigid) return false;
+  const corners = editableCornersOf(route);
+  const j = segIndex - 1;
+  const p1 = corners[j];
+  const p2 = corners[j + 1];
+  if (!p1 || !p2) return false;
+  return isDip(corners, j, p1.y === p2.y ? 'h' : 'v');
+}
+
+/**
+ * Slide an editable run perpendicular to itself — the gesture behind each run's REAL centre handle
+ * (and behind grabbing the run anywhere). Moves the whole run to a new parallel level: a shared
+ * corner with a PERPENDICULAR neighbour just moves (the neighbour lengthens); where the neighbour is
+ * PARALLEL (a rigid stub end, or a colinear arm) a jog corner is inserted so the stub/port anchor
+ * never moves. Sliding an existing notch's dip-run deepens it; sliding it back to the pin level
+ * flattens the notch away (`cleanCorners`).
+ *
+ * 1-DOF perpendicular: a horizontal run reacts to `dyWorld` only, a vertical run to `dxWorld` only.
+ * Materializes the route's corners first so the rest of the route is untouched. Call with the
+ * ORIGINAL route + cumulative delta (idempotent; the run index never drifts mid-drag).
+ */
+export function slideSegment(
   route: EdgeRoute,
   segIndex: number,
   dxWorld: number,
@@ -323,59 +468,78 @@ export function computeSegmentDrag(
   snap: (n: number) => number = Math.round,
 ): Waypoint[] {
   const seg = route.segments[segIndex];
-  const W: Waypoint[] = route.waypoints.map((w) => ({ x: w.x, y: w.y }));
-  if (!seg) return W;
+  const fallback = (): Waypoint[] => route.waypoints.map((w) => ({ x: w.x, y: w.y }));
+  if (!seg || seg.rigid) return fallback();
 
-  const startWp = segIndex > 0 ? route.segments[segIndex - 1]!.endWaypointIndex : null;
-  const endWp = seg.endWaypointIndex;
+  const C = editableCornersOf(route); // [aStub, …, bStub]
+  const j = segIndex - 1; // the run connects C[j] → C[j+1]
+  const p1 = C[j];
+  const p2 = C[j + 1];
+  if (!p1 || !p2) return fallback();
+  const axis: 'h' | 'v' = runAxis(p1, p2);
+  const lvl = axis === 'h' ? p1.y : p1.x;
+  const newLvl = axis === 'h' ? snap(p1.y + dyWorld) : snap(p1.x + dxWorld);
+  if (newLvl === lvl) return C.slice(1, -1);
 
-  // Insertion index = number of stored waypoints that appear before this segment.
-  let insertIdx = 0;
-  for (let k = 0; k < segIndex; k++) if (route.segments[k]!.endWaypointIndex !== null) insertIdx++;
+  const atLevel = (pt: { x: number; y: number }): { x: number; y: number } =>
+    axis === 'h' ? { x: pt.x, y: newLvl } : { x: newLvl, y: pt.y };
 
-  if (seg.axis === 'v') {
-    const newX = snap(seg.x1 + dxWorld);
-    let moved = false;
-    if (startWp !== null && W[startWp]) { W[startWp]!.x = newX; moved = true; }
-    if (endWp !== null && W[endWp]) { W[endWp]!.x = newX; moved = true; }
-    // Bare vertical trunk → one vertex pins x; the router re-bridges the y to the ports.
-    if (!moved) W.splice(insertIdx, 0, { x: newX, y: snap((seg.y1 + seg.y2) / 2) });
-  } else {
-    const newY = snap(seg.y1 + dyWorld);
-    let moved = false;
-    if (startWp !== null && W[startWp]) { W[startWp]!.y = newY; moved = true; }
-    if (endWp !== null && W[endWp]) { W[endWp]!.y = newY; moved = true; }
-    // Bare horizontal segment → clean parallel offset: two vertices at the segment's own
-    // endpoints (never thirds/midpoints), so dragging the middle can't make a tiny segment.
-    if (!moved) {
-      W.splice(insertIdx, 0, { x: snap(seg.x1), y: newY }, { x: snap(seg.x2), y: newY });
-    }
-  }
-  return simplifyWaypoints(W, route.source, route.target);
+  // A stub end (j at the boundary) or a parallel (colinear) neighbour must stay; insert a jog there.
+  const leftFixed = j === 0 || runAxis(C[j - 1]!, p1) === axis;
+  const rightFixed = j + 1 === C.length - 1 || runAxis(p2, C[j + 2]!) === axis;
+  const left = leftFixed ? [{ x: p1.x, y: p1.y }, atLevel(p1)] : [atLevel(p1)];
+  const right = rightFixed ? [atLevel(p2), { x: p2.x, y: p2.y }] : [atLevel(p2)];
+
+  const result = [...C.slice(0, j), ...left, ...right, ...C.slice(j + 2)];
+  return cleanCorners(result).slice(1, -1);
 }
 
 /**
- * Drop waypoints that don't bend the polyline `[a, ...W, b]` (three colinear points or a
- * duplicate), so dragging a segment back into line removes the bend instead of leaving a
- * dead vertex. Conservative: only removes exact colinear/duplicate vertices.
+ * Carve a LOCAL symmetric notch on the run at `segIndex`, centred on `quarter` (0.25 / 0.75) — the
+ * gesture behind the two GHOST handles. Returns the route's new literal-corner waypoints: 2 pins at
+ * the run's level + 2 dropped corners at the dragged level, around the grabbed quarter; the run's
+ * ends and the rest of the route stay put.
+ *
+ * 1-DOF perpendicular (horizontal run → `dyWorld`, vertical run → `dxWorld`). Materializes the
+ * route's corners first. Call with the ORIGINAL route + cumulative delta (idempotent).
  */
-export function simplifyWaypoints(
-  W: Waypoint[],
-  a: { x: number; y: number },
-  b: { x: number; y: number },
+export function notchAtQuarter(
+  route: EdgeRoute,
+  segIndex: number,
+  quarter: number,
+  dxWorld: number,
+  dyWorld: number,
+  snap: (n: number) => number = Math.round,
 ): Waypoint[] {
-  if (W.length === 0) return W;
-  const pts = [a, ...W, b];
-  const out: Waypoint[] = [];
-  for (let i = 1; i < pts.length - 1; i++) {
-    const prev = pts[i - 1]!;
-    const cur = pts[i]!;
-    const next = pts[i + 1]!;
-    const colinear = (prev.x === cur.x && cur.x === next.x) || (prev.y === cur.y && cur.y === next.y);
-    const dup = prev.x === cur.x && prev.y === cur.y;
-    if (!colinear && !dup) out.push({ x: cur.x, y: cur.y });
-  }
-  return out;
+  const seg = route.segments[segIndex];
+  const fallback = (): Waypoint[] => route.waypoints.map((w) => ({ x: w.x, y: w.y }));
+  if (!seg || seg.rigid) return fallback();
+
+  const corners = editableCornersOf(route);
+  const j = segIndex - 1; // the run connects corners[j] → corners[j+1]
+  const p1 = corners[j];
+  const p2 = corners[j + 1];
+  if (!p1 || !p2) return fallback();
+  const axis: 'h' | 'v' = runAxis(p1, p2);
+  const d = axis === 'h' ? snap(p1.y + dyWorld) - p1.y : snap(p1.x + dxWorld) - p1.x;
+  if (d === 0) return corners.slice(1, -1);
+
+  corners.splice(j + 1, 0, ...localNotchCorners(p1, p2, axis, d, quarter));
+  return corners.slice(1, -1);
+}
+
+/** Remove the notch whose dip bottom is the run at `segIndex` (double-click to delete). No-op otherwise. */
+export function deleteNotch(route: EdgeRoute, segIndex: number): Waypoint[] {
+  const seg = route.segments[segIndex];
+  if (!seg || seg.rigid) return route.waypoints.map((w) => ({ x: w.x, y: w.y }));
+  const corners = editableCornersOf(route);
+  const j = segIndex - 1;
+  const p1 = corners[j];
+  const p2 = corners[j + 1];
+  if (!p1 || !p2) return route.waypoints.map((w) => ({ x: w.x, y: w.y }));
+  if (!isDip(corners, j, p1.y === p2.y ? 'h' : 'v')) return corners.slice(1, -1);
+  corners.splice(j - 1, 4);
+  return corners.slice(1, -1);
 }
 
 function pushGroup(

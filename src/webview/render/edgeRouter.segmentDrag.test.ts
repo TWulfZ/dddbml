@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { routeRefs, computeSegmentDrag, simplifyWaypoints, type EdgeRoute } from './edgeRouter';
+import { routeRefs, slideSegment, notchAtQuarter, isDipRun, deleteNotch, type EdgeRoute } from './edgeRouter';
 import type { EdgeLayout, Ref } from '../../shared/types';
 import type { Bbox } from './spatialIndex';
 
@@ -12,10 +12,12 @@ const mkRef = (overrides?: Partial<Ref>): Ref => ({
 
 const bbox = (x: number, y: number, w = 200, h = 100): Bbox => ({ x, y, w, h });
 
-// Two tables offset horizontally + vertically → default route is H-V-H (seg1 is the vertical trunk).
+// Offset tables → default route is H-V-H: top arm (h), trunk (v), bottom arm (h).
+// Source port right = (200,50); target port left = (400,250). Stub ends (224,50)/(376,250).
+// Editable segments: [1]=top arm (224,50)→(300,50), [2]=trunk (300,50)→(300,250), [3]=bottom arm.
 const offsetBboxOf = (n: string): Bbox | undefined => {
-  if (n === 'public.a') return bbox(0, 0); // source port right = (200, 50)
-  if (n === 'public.b') return bbox(400, 200); // target port left = (400, 250)
+  if (n === 'public.a') return bbox(0, 0);
+  if (n === 'public.b') return bbox(400, 200);
   return undefined;
 };
 
@@ -25,91 +27,129 @@ const routeWith = (layout?: EdgeLayout): EdgeRoute =>
 const allOrthogonal = (r: EdgeRoute): boolean =>
   r.segments.every((s) => s.x1 === s.x2 || s.y1 === s.y2);
 
-describe('computeSegmentDrag — segment dragging (no spikes)', () => {
-  it('dragging the vertical trunk inserts one waypoint at the new x (clean trunk)', () => {
+const firstEditable = (r: EdgeRoute, axis: 'h' | 'v') =>
+  r.segments.findIndex((s) => s.axis === axis && !s.rigid);
+
+describe('slideSegment — move a whole run perpendicular (real centre handle)', () => {
+  it('slides the vertical trunk sideways: both its corners move, nothing is added', () => {
     const r = routeWith();
-    const trunk = r.segments.findIndex((s) => s.axis === 'v');
-    expect(trunk).toBeGreaterThanOrEqual(0);
-    const wps = computeSegmentDrag(r, trunk, 40, 0);
-    expect(wps).toHaveLength(1);
-    expect(wps[0]!.x).toBe(340); // 300 (midX) + 40
-
-    // Re-route through the new waypoints: still strictly orthogonal, trunk moved to x=340.
-    const r2 = routeWith({ waypoints: wps });
-    expect(allOrthogonal(r2)).toBe(true);
-    expect(r2.d).toContain('340');
+    const trunk = firstEditable(r, 'v'); // (300,50) → (300,250)
+    expect(slideSegment(r, trunk, -40, 0)).toEqual([{ x: 260, y: 50 }, { x: 260, y: 250 }]);
   });
 
-  it('horizontal drag of the trunk leaves x untouched (1-DOF: only the normal axis moves)', () => {
+  it('a vertical run reacts to dx only (1-DOF); dy is ignored', () => {
     const r = routeWith();
-    const trunk = r.segments.findIndex((s) => s.axis === 'v');
-    const wps = computeSegmentDrag(r, trunk, 0, 80); // dy ignored for a vertical segment
-    // Vertical segment only responds to dx; dy=... still inserts at midX (no vertical displacement).
-    expect(wps[0]!.x).toBe(300);
+    const trunk = firstEditable(r, 'v');
+    expect(slideSegment(r, trunk, -40, 99)).toEqual(slideSegment(r, trunk, -40, 0));
   });
 
-  it('snaps the dragged coordinate to the grid when a snapper is supplied', () => {
+  it('sliding an arm (colinear with its rigid stub) inserts a jog so the stub anchor never moves', () => {
     const r = routeWith();
-    const trunk = r.segments.findIndex((s) => s.axis === 'v');
-    const snap = (n: number) => Math.round(n / 16) * 16;
-    const wps = computeSegmentDrag(r, trunk, 40, 0, snap);
-    expect(wps[0]!.x).toBe(336); // round(340/16)*16
-    expect(wps[0]!.x % 16).toBe(0);
+    const top = firstEditable(r, 'h'); // aStub(224,50) → (300,50)
+    // Drag the top arm UP by 30 → the stub stays at y=50, a vertical jog drops to the slid arm.
+    expect(slideSegment(r, top, 0, -30)).toEqual([{ x: 224, y: 20 }, { x: 300, y: 20 }, { x: 300, y: 250 }]);
   });
 
-  it('is idempotent from the original route + cumulative delta (no index drift)', () => {
+  it('a horizontal run reacts to dy only (1-DOF); dx is ignored', () => {
     const r = routeWith();
-    const trunk = r.segments.findIndex((s) => s.axis === 'v');
-    const a = computeSegmentDrag(r, trunk, 25, 0);
-    const b = computeSegmentDrag(r, trunk, 25, 0);
-    expect(a).toEqual(b);
+    const top = firstEditable(r, 'h');
+    expect(slideSegment(r, top, 99, -30)).toEqual(slideSegment(r, top, 0, -30));
   });
 
-  it('routes the last vertex straight into the port — no midX backtrack/spike', () => {
-    // Waypoint sits to the RIGHT of the target port (400). v1 inserted a backward midX (500)
-    // bridge here, producing the cross/spike. Now it drops at the vertex x and goes straight in.
-    const r = routeWith({ waypoints: [{ x: 600, y: 150 }] });
-    expect(allOrthogonal(r)).toBe(true);
-    expect(r.d).toContain('600,250'); // vertical drop happens at the vertex x
-    expect(r.d).not.toContain('500,'); // no centered midX bridge
+  it('sliding a rigid stub is a no-op', () => {
+    const r = routeWith();
+    expect(slideSegment(r, 0, 0, 40)).toEqual([]); // no waypoints created
   });
 
-  it('moving an existing waypoint-bounded trunk shifts that waypoint (no new vertex)', () => {
-    const r = routeWith({ waypoints: [{ x: 340, y: 150 }] });
-    const trunk = r.segments.findIndex((s) => s.axis === 'v');
-    const wps = computeSegmentDrag(r, trunk, 20, 0);
-    expect(wps).toHaveLength(1); // still one vertex, just moved
-    expect(wps[0]!.x).toBe(360);
+  it('is idempotent from the original route + cumulative delta', () => {
+    const r = routeWith();
+    const trunk = firstEditable(r, 'v');
+    expect(slideSegment(r, trunk, -40, 0)).toEqual(slideSegment(r, trunk, -40, 0));
   });
 });
 
-describe('simplifyWaypoints', () => {
-  it('drops a waypoint that is colinear with its neighbors', () => {
-    const out = simplifyWaypoints(
-      [{ x: 100, y: 50 }, { x: 200, y: 50 }],
-      { x: 0, y: 50 },
-      { x: 300, y: 50 },
-    );
-    expect(out).toEqual([]);
+describe('notchAtQuarter — carve a local symmetric notch (ghost handle)', () => {
+  it('dragging the ¼ ghost of a horizontal run down carves a notch in its left portion (ends stay)', () => {
+    const r = routeWith();
+    const top = firstEditable(r, 'h'); // aStub(224,50) → (300,50)
+    const w = notchAtQuarter(r, top, 0.25, 0, 40); // drag DOWN by 40
+    // Pins at ¼∓⅛ of [224,300] → x≈234 / 253, at y=50; dipped bottom at y=90.
+    expect(w.filter((p) => p.y === 90)).toHaveLength(2); // exactly one dipped run
+    expect(w.some((p) => p.x === 234 && p.y === 50)).toBe(true); // pin (end stays at original level)
+    expect(w.some((p) => p.x === 253 && p.y === 50)).toBe(true); // pin
+    expect(w.some((p) => p.x === 300 && p.y === 50)).toBe(true); // run end unchanged
+    expect(w.every((p) => p.x <= 300)).toBe(true); // notch is local (left), tail stays flat
+    expect(allOrthogonal(routeWith({ waypoints: w }))).toBe(true);
   });
 
-  it('keeps a waypoint that actually bends the path', () => {
-    const out = simplifyWaypoints([{ x: 100, y: 200 }], { x: 0, y: 50 }, { x: 300, y: 50 });
-    expect(out).toEqual([{ x: 100, y: 200 }]);
+  it('the ¾ ghost carves the notch in the right portion instead', () => {
+    const r = routeWith();
+    const top = firstEditable(r, 'h');
+    const q1 = notchAtQuarter(r, top, 0.25, 0, 40);
+    const q3 = notchAtQuarter(r, top, 0.75, 0, 40);
+    const dipXs = (w: { x: number; y: number }[]) => w.filter((p) => p.y === 90).map((p) => p.x).sort((a, b) => a - b);
+    // ¾ notch sits to the right of the ¼ notch.
+    expect(dipXs(q3)[0]!).toBeGreaterThan(dipXs(q1)[0]!);
+  });
+
+  it('dragging the ¼ ghost of the vertical trunk left carves a sideways notch (1-DOF, dx only)', () => {
+    const r = routeWith();
+    const trunk = firstEditable(r, 'v'); // (300,50) → (300,250)
+    const w = notchAtQuarter(r, trunk, 0.25, -40, 0); // drag LEFT by 40 → x 300→260
+    expect(w.filter((p) => p.x === 260)).toHaveLength(2); // dipped run at x=260
+    expect(w.some((p) => p.x === 300)).toBe(true); // pins stay at x=300
+    expect(notchAtQuarter(r, trunk, 0.25, -40, 99)).toEqual(w); // dy ignored for a vertical run
+    expect(allOrthogonal(routeWith({ waypoints: w }))).toBe(true);
+  });
+
+  it('a zero-depth drag adds no notch (route shape unchanged)', () => {
+    const r = routeWith();
+    const top = firstEditable(r, 'h');
+    const w = notchAtQuarter(r, top, 0.25, 0, 0); // materialized corners, no dip
+    expect(w.some((p) => p.y === 90)).toBe(false);
+    expect(routeWith({ waypoints: w }).d).toBe(r.d); // renders identically to the default
+  });
+
+  it('is idempotent from the original route + cumulative delta', () => {
+    const r = routeWith();
+    const top = firstEditable(r, 'h');
+    expect(notchAtQuarter(r, top, 0.25, 0, 40)).toEqual(notchAtQuarter(r, top, 0.25, 0, 40));
   });
 });
 
-describe('routeRefs — port side overrides', () => {
-  it('honors sourceSide/targetSide over chooseSides', () => {
-    const r = routeWith({ sourceSide: 'left', targetSide: 'right' });
-    // source forced to left edge of bbox a (x=0); target forced to right edge of bbox b (x=600).
-    expect(r.source.x).toBe(0);
-    expect(r.target.x).toBe(600);
+describe('notch deepen / delete', () => {
+  // Build a route that already has a notch on the top arm (dip at y=90).
+  const notched = (): EdgeRoute => {
+    const r0 = routeWith();
+    const top = firstEditable(r0, 'h');
+    return routeWith({ waypoints: notchAtQuarter(r0, top, 0.25, 0, 40) });
+  };
+  const dipIndex = (r: EdgeRoute) =>
+    r.segments.findIndex((s, i) => s.axis === 'h' && !s.rigid && isDipRun(r, i));
+
+  it('isDipRun is true for the notch bottom, false for a flat run / the trunk', () => {
+    const r = notched();
+    expect(dipIndex(r)).toBeGreaterThanOrEqual(0);
+    expect(isDipRun(r, firstEditable(r, 'v'))).toBe(false);
   });
 
-  it('falls back to chooseSides when no override is set', () => {
-    const r = routeWith();
-    expect(r.source.x).toBe(200); // right edge of a
-    expect(r.target.x).toBe(400); // left edge of b
+  it('sliding the dip-run deeper moves only the dipped corners (pins stay)', () => {
+    const r = notched();
+    const w = slideSegment(r, dipIndex(r), 0, 30); // 90 → 120
+    expect(w.filter((p) => p.y === 120)).toHaveLength(2); // deepened
+    expect(w.some((p) => p.x === 234 && p.y === 50)).toBe(true); // pin unchanged
+    expect(w.some((p) => p.y === 90)).toBe(false); // old depth gone
+  });
+
+  it('sliding the dip-run back to the pin level flattens the whole notch away (smart-delete)', () => {
+    const r = notched();
+    const w = slideSegment(r, dipIndex(r), 0, -40); // 90 → 50 (pin level)
+    expect(w.some((p) => p.y === 90)).toBe(false);
+    expect(w).toEqual([{ x: 300, y: 50 }, { x: 300, y: 250 }]); // only the trunk corners remain
+  });
+
+  it('deleteNotch removes the 4 notch corners', () => {
+    const r = notched();
+    expect(deleteNotch(r, dipIndex(r))).toEqual([{ x: 300, y: 50 }, { x: 300, y: 250 }]);
   });
 });

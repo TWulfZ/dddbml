@@ -3,9 +3,10 @@
 ## Propósito
 
 Rutear cada `Ref` del esquema como una **polilínea ortogonal (Manhattan)** limpia,
-editable por el usuario, predecible y con ruteo ortogonal estándar. El usuario debe poder
-doblar una arista (segmentar) **sin poder generar "picos"** (jogs/staircase) ni
-diagonales, y tidiar una arista a un click ("Reset line").
+editable por el usuario, predecible y con ruteo ortogonal estándar. El usuario dobla una
+arista con gestos **controlados** (deslizar una sección, o crear un notch simétrico local
+con un fantasma ¼/¾) — **nunca diagonales ni staircase accidental** — y puede tidiar a un
+click ("Reset line").
 
 ## Contexto
 
@@ -35,13 +36,44 @@ segmentos completos.
 
 ## Decisiones (resueltas con el usuario)
 
-1. **Modelo de edición: sólo segment-drag por el punto medio (arrastre de segmento estándar).**
-   Se eliminó el arrastre de puntos libres. Cada segmento (largo ≥ `MIN_GRIP_LEN`)
-   muestra un *grip* en su punto medio cuando la arista está seleccionada; sólo
-   ese grip arrastra, en su normal (`computeSegmentDrag`), insertando offsets
-   limpios en los extremos del segmento. `simplifyWaypoints` colapsa colineales.
-   Además `buildPath` rutea el último vértice **recto al puerto** (sin `midX`)
-   cuando hay waypoints → la línea nunca se devuelve (sin picos).
+1. **Modelo de edición: DOS niveles por sección — vértice REAL al centro (desliza) + FANTASMAS a ¼/¾ (notch simétrico local) + esquinas redondeadas.**
+   Confirmado con el usuario (analizó el edge de dbdiagram.io y eligió opciones ASCII: "Real centro +
+   fantasmas ¼/¾", "notch simétrico", "local al cuarto agarrado"). Los waypoints son las **esquinas
+   literales** de la polilínea editable (no pass-through): ruta = `[a, aStub, ...waypoints, bStub, b]`
+   conectada con segmentos ortogonales directos + fillets.
+   - **Vértice REAL (azul) en el medio de cada sección editable** (`!rigid && len ≥ MIN_HANDLE_LEN`),
+     visible al seleccionar (sin hover). Arrastrarlo — o agarrar la sección en cualquier punto
+     (hit-line) — **DESLIZA toda la sección** perpendicular (`slideSegment`, 1-DOF). Son los "3 nodos
+     por defecto" de dbdiagram (uno por sección de un H-V-H). Deslizar mueve las 2 esquinas de la
+     sección; donde el vecino es **paralelo** (stub rígido / brazo colineal) inserta un codo para que
+     el ancla del puerto **no se mueva**; donde es **perpendicular** la esquina compartida sólo se
+     desplaza (el vecino se alarga).
+   - **FANTASMAS (gris) a ¼ y ¾** de cada sección (`len ≥ MIN_GHOST_LEN`), visibles **sólo en hover**.
+     Arrastrar un fantasma perpendicular **CREA un notch simétrico LOCAL** centrado en ese cuarto
+     (`notchAtQuarter` → `localNotchCorners`): 2 *pins* al nivel original (a `¼ ∓ ⅛`) + 2 esquinas
+     *hundidas*; el resto de la sección **queda plano** (lead-in corto, cola larga). Al soltar, el
+     fantasma pasa a vértice real (la nueva sección hundida trae su propio vértice central + sus
+     fantasmas). Crear exige cruzar `CREATE_THRESHOLD_PX = 8px`. El ¼ talla a la izquierda, el ¾ a la
+     derecha (subdivisión local, no centrada).
+   - **Profundizar / borrar:** el dip-run de un notch es una sección editable normal → su vértice
+     central lo **desliza** (`slideSegment`, profundiza/aplana). Volver al nivel del pin ⇒ el notch se
+     aplana y **desaparece** (`cleanCorners`, smart-delete). Doble-click en el dip-run ⇒ `deleteNotch`
+     (quita las 4 esquinas). `isDipRun` lo detecta vía `isDip` (¿los pins a ambos lados al mismo
+     nivel, distinto del run?).
+   - **1-DOF perpendicular** (h→↑↓, v→←→) con **cursor de redimensionar** por eje (`ns-resize` ↕
+     horizontal, `ew-resize` ↔ vertical). **No hay handles en las esquinas** (vueltas redondeadas).
+   - **Materialización:** al editar, las esquinas actuales se vuelven waypoints explícitos
+     (`editableCornersOf`) **antes** de insertar/mover, así editar una sección **no mueve el resto**.
+   - **Esquinas redondeadas (`roundedPathString`, `CORNER_RADIUS = 8`):** cada esquina interior ⇒
+     fillet `L (esquina−r) · Q esquina (esquina+r)`, `r = min(CORNER_RADIUS, dPrev/2, dNext/2)`.
+     Colineal/coincidente ⇒ `L` plano. Suavizado **sólo de render**: una vuelta nunca es nodo.
+   *(Iteraciones revertidas: (a) nodo sólido por sección + ghost-hover-only; (b) vértice-por-esquina
+   2D "B1"; (c) segment-SLIDE global + `simplifyWaypoints` que canonicalizaba (colapsaba el notch en
+   aguja); (d) **notch desde el medio del vértice real** — confundía el nodo real con el fantasma
+   intermedio: subdividía DESTRUYENDO el vértice real en vez de generar uno nuevo desde la mitad
+   (corrección clave del usuario). El modelo correcto son 2 niveles: el vértice real desliza; el
+   fantasma intermedio crea un notch local de 4 esquinas literales — sin canonicalización destructiva,
+   sólo `cleanCorners` tras un slide.)*
 2. **Modo imán: setting global.** `dddbml.ui.snapToGrid` (bool, default `false`)
    + `dddbml.ui.gridSize` (number, default 16), patrón spec 10. Snapper en
    `webview/layout/grid.ts`, aplicado a posiciones de tabla y vértices de arista.
@@ -49,7 +81,32 @@ segmentos completos.
 4. **Flip de puerto: sólo izq↔der**, vía `EdgeLayout.sourceSide`/`targetSide`
    (override de `chooseSides`); arrastre del endpoint cruza el centro de la tabla.
 5. **"Reset line":** resetea forma (waypoints + sides), conserva color.
-6. **Entrega:** las 5 features en un solo cambio.
+6. **Endpoint = sólo flip de lado.** El "nodo real" (endpoint sobre la tabla)
+   conmuta izq↔der (§4); **no** traslada la arista ni re-ancla a otra columna
+   (confirmado con el usuario). Mover toda la arista no es una acción de endpoint.
+7. **Stub RÍGIDO de longitud fija en ambos extremos (`MIN_STUB = 24` world units).**
+   El tramo `source → sourceStub` y `targetStub → target` es **inmutable**: nunca
+   arrastrable, nunca subdividible, **nunca colapsado** (son los segmentos
+   `rigid` primero/último, siempre horizontales, de largo exacto 24). Mantienen
+   coherente el punto de conexión (el marcador `1`/pata de gallo nunca queda
+   pegado a la tabla). **Toda la edición vive estrictamente entre `sourceStub` y
+   `targetStub`**, que actúan como los extremos fijos del polígono editable
+   (`buildPath` conecta las esquinas literales entre ellos vía `cornersThrough`;
+   sin waypoints usa `defaultEditableCorners`; luego envuelve con los dos stubs).
+   `slideSegment`/`notchAtQuarter`/`isDipRun`/`deleteNotch` materializan las esquinas
+   (`editableCornersOf`) entre `sourceStub`/`targetStub`, así editar una sección no toca el resto.
+   **Clamp anti-spike:** la longitud del stub se limita a la mitad de la
+   distancia horizontal entre puertos, así los dos stubs **se encuentran en vez de
+   cruzarse** cuando las tablas están a < `2*MIN_STUB`. Consecuencia: una arista
+   misma-fila muy cercana queda como conector recto rígido sin sección editable;
+   una arista offset cercana conserva su trunk vertical editable.
+8. **Animación de flujo en hover/selected.** Una `<path>` overlay (clon de `r.d`,
+   `pointer-events: none`) con puntos redondos (`stroke-dasharray`) y
+   `@keyframes ddd-edge-flow` animando `stroke-dashoffset` negativo → los puntos
+   fluyen en la dirección de la relación (source→target, porque el path se dibuja
+   `M source … L target`). Sólo se renderiza para la arista seleccionada y/o en
+   hover (≤ 2 a la vez) → cero churn en el render de 5000 tablas. Respeta
+   `prefers-reduced-motion` (se oculta con `display:none`).
 
 ### Preguntas abiertas restantes
 
@@ -74,14 +131,20 @@ otro extremo, asignar `ratio = (i+1)/(n+1)` (equidistante, sin tocar esquinas;
 clamp `[0.05, 0.95]`). Alinear `y` del puerto a la fila de la columna PK/FK vía
 `columnYResolver` (`columnCenterY`).
 
-**Computar path** (`buildPath` → `collapseColinear`): polilínea ortogonal de
-ejes alternados, exit/enter horizontal por los puertos. Sin waypoints ⇒ H-V-H
-con `midX`. `collapseColinear` fusiona corners colineales **excepto** los
-waypoints de usuario. Migración legacy `dx`/`dy` conservada (ver código).
+**Computar path** (`buildPath`): polilínea ortogonal de ejes alternados. El
+**polígono editable** se rutea entre los extremos fijos `aStub`/`bStub` (decisión
+7) conectando las **esquinas literales** del usuario directamente (`cornersThrough`,
+sin colapsar — un codo de seguridad sólo para un par no-alineado v1); sin waypoints
+⇒ `defaultEditableCorners` (recta misma-fila, o H-V-H con `midX` centrado entre los
+stubs). Luego se **envuelve** con los stubs rígidos: `corners = [a, ...editable, b]`,
+así `a→aStub` y `bStub→b` sobreviven como segmentos propios. `buildSegments` marca
+`rigid` el primero y el último. (Las ops de edición usan `cleanCorners` —quita sólo
+puntos coincidentes/colineales redundantes— tras un *slide*; el ruteo base no
+canonicaliza.) Migración legacy `dx`/`dy` conservada. `routeRefs` expone
+`sourceStub`/`targetStub` en el `EdgeRoute`.
 
-> **Invariante:** todo segmento es estrictamente H o V; ejes alternan. Esto ya
-> se cumple. El bug no es éste — es que la *edición* puede crear waypoints en
-> posiciones que generan escaleras de micro-segmentos.
+> **Invariante:** todo segmento es estrictamente H o V; ejes alternan. Los stubs
+> primero/último son `rigid` (inmutables) y de largo fijo `MIN_STUB`.
 
 ### 2. Puertos flotantes + waypoints fijados (semántica de ports flotantes)
 
@@ -91,28 +154,43 @@ waypoints de usuario. Migración legacy `dx`/`dy` conservada (ver código).
 - Al mover una tabla, sólo el tramo stub se re-rutea. **No** se implementa anclaje
   relativo ni "follow" de waypoints (decisión explícita del usuario).
 
-### 3. Interacción: arrastre de segmentos (segment dragging) — picos imposibles
+### 3. Interacción: dos niveles por sección (vértice real desliza + fantasmas ¼/¾ crean notch local)
 
-Reemplaza el arrastre de puntos libres. La ruta editable son corners
-`[port_a, w0…w_{n-1}, port_b]`, segmentos alternando H/V.
+Los waypoints son las **esquinas literales** de la polilínea editable entre
+`sourceStub`/`targetStub`; los stubs son `rigid`. Estilo dbdiagram: cada sección trae un **vértice
+real** (azul) que la **desliza** entera, y dos **fantasmas** (gris) a ¼/¾ que **subdividen** creando
+un notch local — sin mover el resto.
 
-- **Arrastrar un segmento interior** lo traslada **sólo en su normal**: un
-  segmento vertical mueve el `x` de sus dos corners; uno horizontal mueve el `y`.
-  Los corners se mantienen alineados ⇒ imposible crear diagonal o pico.
-- **Arrastrar un tramo stub** (adyacente a un puerto) **inserta** un par de
-  corners formando un codo limpio y luego traslada.
-- **`collapseColinear` corre tras cada edición** ⇒ corners redundantes
-  desaparecen; no se acumulan micro-segmentos.
-- **Snap a rejilla** si el modo imán está ON: redondear el desplazamiento a
-  `gridSize` (ver §6).
-- **Borrar un codo**: arrastrar un segmento hasta colinealidad con sus vecinos
-  (o doble-click sobre el corner) lo colapsa. Conserva el UX
-  `NEIGHBOR_COLLAPSE_THRESHOLD` existente, adaptado a corners.
+- **Visibilidad:** hover de una arista **no** seleccionada ⇒ **nada** (sólo flujo, §8). Al
+  **seleccionar** ⇒ **vértice real** (`.ddd-edge-handle`, azul) en el midpoint de cada sección
+  editable (`!rigid && len ≥ MIN_HANDLE_LEN`), visible sin hover; más los 2 handles de endpoint
+  (flip, §4). En **hover de una sección** (`len ≥ MIN_GHOST_LEN`) ⇒ **2 fantasmas** (`.ddd-edge-ghost`,
+  gris) a ¼ y ¾. **No hay handles en las esquinas.**
+- **Deslizar (vértice real / agarrar la sección):** la hit-line `.ddd-edge-segment-handle` o el
+  vértice central inician `startSegmentSlide` → `slideSegment` (1-DOF perpendicular, inmediato). La
+  sección entera se mueve a un nivel paralelo; vecino perpendicular ⇒ la esquina se desplaza, vecino
+  paralelo (stub/brazo colineal) ⇒ se inserta un codo (el ancla del puerto no se mueve). Deslizar un
+  dip-run lo **profundiza**; volver al nivel del pin ⇒ el notch se aplana (`cleanCorners`).
+- **Crear notch (fantasma ¼/¾):** `startNotchDrag(quarter)` → `notchAtQuarter` → `localNotchCorners`:
+  2 pins al nivel original (a `¼ ∓ ⅛`) + 2 esquinas hundidas; resto plano. Gate `CREATE_THRESHOLD_PX
+  = 8px`. ¼ ⇒ notch a la izquierda, ¾ ⇒ a la derecha. Al soltar, queda como vértice real.
+- **Borrar:** doble-click en el dip-run ⇒ `deleteEdgeNotch` → `deleteNotch` (4 esquinas). `isDipRun`
+  lo identifica.
+- Ambos gestos **recomputan desde el snapshot ORIGINAL + delta** (idempotente) y **materializan** las
+  esquinas (`editableCornersOf`) antes de editar, así el resto de la ruta no se mueve. **1-DOF
+  perpendicular** (h→↑↓, v→←→) con **cursor de redimensionar** por eje.
+- **Esquinas redondeadas** (`roundedPathString`, `CORNER_RADIUS = 8`): cada esquina interior ⇒
+  fillet `L (esquina−r) · Q esquina (esquina+r)`, `r = min(CORNER_RADIUS, dPrev/2, dNext/2)`.
+  Colineal/coincidente ⇒ `L` plano. Suavizado **sólo de render**; nunca un nodo.
+- **Stubs rígidos:** el primer/último segmento (`rigid`) nunca recibe handle ni se edita.
+- **Snap a rejilla** si el imán está ON.
 
-Implementación: nuevas acciones en `dragController.ts` (`startSegmentDrag`) y
-mutadores de store que muevan *pares* de corners en vez de un punto. Eliminar la
-proyección de punto libre (`startSegmentAddWaypoint` con punto arbitrario) y el
-arrastre de punto libre (`startWaypointDrag`).
+Implementación: `edgeLayer.tsx` (vértice real `selected && !rigid && len ≥ MIN_HANDLE_LEN`; fantasmas
+`+ len ≥ MIN_GHOST_LEN && hover`; doble-click → `deleteEdgeNotch`), `dragController.ts` →
+`startSegmentSlide` + `startNotchDrag` (gate de 8px) + `deleteEdgeNotch`, ambos sobre el loop
+compartido `runEdgeDrag`. Reusa `setEdgeWaypoints` + `WaypointCommand`. Motor (`edgeRouter.ts`):
+`slideSegment`/`notchAtQuarter`/`isDipRun`/`deleteNotch`/`localNotchCorners`/`cleanCorners`/
+`editableCornersOf` + `cornersThrough`/`defaultEditableCorners` + `roundedPathString`.
 
 ### 4. Flip de lado de puerto (origen izq↔der)
 
@@ -173,19 +251,37 @@ más allá del centro del campo conmuta el lado y persiste.
 2. **Tie-break de lado** binario (45° ⇒ horizontal). Aceptable.
 3. **Self-loops** (ref de tabla a sí misma) no soportados visualmente. v1.1.
 4. **Sin curvatura** en codos (90° rígidos). v1.1 opcional.
+5. **Retroceso en x-overlap** (target con borde izq dentro del extent-x del source ⇒
+   `chooseSides` invierte el span y la ruta se devuelve, incluso a cero-waypoints):
+   régimen degenerado contra-natura (v2). Las geometrías bien separadas (caso normal)
+   quedan limpias; el `clamp(newX)` evita que el slide lo agrave.
 
 ## Test plan
 
 `test/unit/edgeRouter*.test.ts` (actualizar `edgeRouter.waypoints.test.ts`):
 
-- Misma fila, target a la derecha ⇒ source=right, target=left, H-V-H.
+- Misma fila, target a la derecha ⇒ source=right, target=left; recta enmarcada
+  por dos stubs rígidos (`M…aStub…bStub…b`), una sección editable en medio.
 - Override `sourceSide`/`targetSide` respetado sobre `chooseSides`.
-- Segment-drag de un tramo vertical mueve `x` de ambos corners; ejes siguen
-  alternando; `collapseColinear` no deja micro-segmentos (no picos).
-- Drag de stub inserta codo limpio.
-- Snap ON ⇒ corners y posiciones múltiplos de `gridSize`.
+- **Deslizar (`edgeRouter.segmentDrag.test.ts`):** `slideSegment` sobre el trunk vertical ⇒ mueve
+  sus 2 esquinas (sin agregar puntos); sobre un brazo (colineal con su stub) ⇒ inserta un codo (el
+  ancla del puerto no se mueve). 1-DOF (v ignora `dy`, h ignora `dx`); `rigid` ⇒ no-op; idempotente.
+- **Notch (`notchAtQuarter`):** fantasma ¼ de una corrida horizontal ↓ ⇒ notch simétrico LOCAL en la
+  porción izquierda (2 pins al nivel original a `¼∓⅛`, 2 hundidas; cola plana); los extremos quedan;
+  ortogonal. ¾ ⇒ a la derecha. Mirror vertical (←→). 1-DOF; idempotente; profundidad 0 ⇒ sin notch.
+- **Deepen/delete:** `isDipRun` true en el dip-run, false en plano/trunk; `slideSegment` sobre el
+  dip-run mueve sólo las 2 hundidas (pins quedan); volver al nivel del pin ⇒ aplana el notch
+  (smart-delete, queda sólo el trunk); `deleteNotch` quita las 4 esquinas.
+- **Stub rígido:** primer y último segmento `rigid===true`, horizontales y de
+  largo exacto `MIN_STUB`; los interiores `rigid===false`; existe ≥ 1 sección
+  editable. `slideSegment`/`notchAtQuarter` sobre un `rigid` es no-op.
+- **Esquinas redondeadas** (`edgeRouter.rounding.test.ts`): `roundedPathString` deja recta
+  una polilínea colineal (sin `Q`); redondea una esquina interior con un `Q` cuyo punto de
+  control es el vértice; clampa `r` a media-sección adyacente; descarta puntos coincidentes;
+  `≤ 2` puntos ⇒ segmento plano. Vía `routeRefs`: arista misma-fila sin `Q`; arista doblada
+  con `Q` (el waypoint es una esquina literal → `Q<waypoint>`).
 - Bbox faltante ⇒ arista omitida (no crash).
-- Back-compat: `waypoints=[]` ⇒ salida pixel-idéntica al H-V-H v1.
+- Back-compat: `waypoints=[]` ⇒ ruta recta misma-fila / H-V-H offset con stubs.
 
-`history.waypoint.test.ts` / `store.history.test.ts`: undo/redo de segment-drag,
-flip y color como replays puros.
+`history.waypoint.test.ts` / `store.history.test.ts`: undo/redo de notch (create/deepen/
+delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`move`/`remove`).

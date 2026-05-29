@@ -115,6 +115,7 @@
     --ddd-edge: var(--vscode-charts-blue, #4a9eff);
     --ddd-edge-hover: var(--vscode-charts-foreground, #e8e8e8);
     --ddd-edge-selected: var(--ddd-accent);
+    --ddd-edge-handle: var(--ddd-fg-muted); /* subtle border of the segment-midpoint drag handle */
 
     /* ----- Bounded-context palette (12 colors, color-blind safer, dark-tuned) ----- */
     --ddd-bc-1-surface: #1e3a5f;   --ddd-bc-1-border: #5b9be8;
@@ -501,28 +502,43 @@
     stroke: var(--ddd-accent);
     stroke-opacity: 0.18;
   }
-  /* Midpoint drag grips — the only handle that creates/moves a bend (segment drag). */
-  .ddd-edges circle.ddd-edge-grip {
+  /* When the edge is selected, an editable run is grabbable along its whole length and shows the
+     axis-aware resize cursor (drag a horizontal run vertically, a vertical run horizontally). */
+  .ddd-edges line.ddd-edge-segment-handle.is-h { cursor: ns-resize; }
+  .ddd-edges line.ddd-edge-segment-handle.is-v { cursor: ew-resize; }
+  /* Two-tier control handles (dbdiagram smart-edge model):
+     - `.ddd-edge-handle` = the REAL vertex at each editable run's centre (blue ring, always shown
+       while selected). Drag it (or the run) to SLIDE the whole run perpendicular (1-DOF).
+     - `.ddd-edge-ghost` = the two intermediate GHOST knobs at ¼ / ¾, shown only on hover (grey
+       ring). Drag one to carve a local symmetric notch — a NEW vertex (turns blue on release).
+     Corners are rounded turns with NO handle. The hovered centre handle (`.is-hot`) grows. */
+  .ddd-edges circle.ddd-edge-handle {
     fill: var(--ddd-surface-raised);
     stroke: var(--ddd-edge-selected);
-    stroke-width: 2;
+    stroke-width: 1.6;
+    opacity: 0.95;
     pointer-events: auto;
   }
-  .ddd-edges circle.ddd-edge-grip.is-h { cursor: ns-resize; }
-  .ddd-edges circle.ddd-edge-grip.is-v { cursor: ew-resize; }
-  .ddd-edges circle.ddd-edge-grip:hover {
+  .ddd-edges circle.ddd-edge-handle.is-h { cursor: ns-resize; }
+  .ddd-edges circle.ddd-edge-handle.is-v { cursor: ew-resize; }
+  .ddd-edges circle.ddd-edge-handle.is-hot,
+  .ddd-edges circle.ddd-edge-handle:hover {
     fill: var(--ddd-edge-selected);
-  }
-  /* Ghost grip: faint preview shown only while hovering a segment's middle. */
-  .ddd-edges circle.ddd-edge-grip.is-ghost {
-    fill: var(--ddd-surface-raised);
-    stroke: var(--ddd-accent);
-    opacity: 0.55;
-    stroke-dasharray: 2 2;
-  }
-  .ddd-edges circle.ddd-edge-grip.is-ghost:hover {
+    stroke: var(--ddd-edge-selected);
     opacity: 1;
-    stroke-dasharray: none;
+  }
+  .ddd-edges circle.ddd-edge-ghost {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge-handle);
+    stroke-width: 1.5;
+    opacity: 0.85;
+    pointer-events: auto;
+  }
+  .ddd-edges circle.ddd-edge-ghost.is-h { cursor: ns-resize; }
+  .ddd-edges circle.ddd-edge-ghost.is-v { cursor: ew-resize; }
+  .ddd-edges circle.ddd-edge-ghost:hover {
+    stroke: var(--ddd-edge-selected);
+    opacity: 1;
   }
   /* Interactive handle overlay: above tables so handles stay grabbable over a table. */
   .ddd-edges-overlay {
@@ -540,11 +556,14 @@
     stroke: var(--ddd-edge);
     stroke-width: 1.5;
   }
-  /* Bend-vertex indicators (read-only; segments are dragged, not the vertices). */
-  .ddd-edges circle.ddd-edge-vertex {
-    fill: var(--ddd-edge-selected);
-    stroke: var(--ddd-surface-raised);
-    stroke-width: 1.5;
+  /* Flowing dots along the relation (source -> target), shown on hover/selected. */
+  .ddd-edges path.ddd-edge-flow {
+    fill: none;
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-dasharray: 1.5 10.5; /* round dots; 12u period matches the keyframe dashoffset */
+    animation: ddd-edge-flow 0.9s linear infinite;
     pointer-events: none;
   }
   /* Endpoint handles flip the port side (left <-> right) when dragged across the table. */
@@ -1343,6 +1362,12 @@
   }
 }
 
+/* Marching dots along an edge — negative offset + the path drawn M source…L target makes the
+   dots travel in the relation's direction (source -> target). */
+@keyframes ddd-edge-flow {
+  to { stroke-dashoffset: -12; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1350,5 +1375,9 @@
     animation-duration: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0ms !important;
+  }
+  /* The flow overlay carries no meaning frozen — hide it rather than leave a static dashed line. */
+  .ddd-edges path.ddd-edge-flow {
+    display: none;
   }
 }

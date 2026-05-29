@@ -1,7 +1,7 @@
 import { store } from '../state/store';
 import { buildEdgeStyleCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle } from '../state/history';
 import { schedulePersist } from '../persistence';
-import { computeSegmentDrag, type EdgeRoute } from '../render/edgeRouter';
+import { slideSegment, notchAtQuarter, deleteNotch, type EdgeRoute } from '../render/edgeRouter';
 import { gridSnapper } from '../layout/grid';
 import type { Waypoint } from '../../shared/types';
 
@@ -92,17 +92,19 @@ function snapshotWaypoints(refId: string): Waypoint[] {
   return layout?.waypoints ? layout.waypoints.map((w) => ({ x: w.x, y: w.y })) : [];
 }
 
-/**
- * Drag an edge segment along its normal (orthogonal segment dragging). The drag always
- * recomputes from the ORIGINAL route snapshot + cumulative delta, so it is idempotent and the
- * segment index never drifts as waypoints are inserted mid-drag. Spikes are impossible because
- * `computeSegmentDrag` only ever moves whole segments and re-simplifies colinear vertices.
- */
-export function startSegmentDrag(route: EdgeRoute, segIndex: number, e: PointerEvent, target: SVGElement | HTMLElement): void {
+/** Min screen-px a *creating* drag must travel before a new notch is committed (anti false-positive). */
+const CREATE_THRESHOLD_PX = 8;
+
+/** Shared pointer-drag loop for edge editing: recompute waypoints from a builder each frame, commit once. */
+function runEdgeDrag(
+  refId: string,
+  e: PointerEvent,
+  target: SVGElement | HTMLElement,
+  build: (dxWorld: number, dyWorld: number, ev: PointerEvent, startX: number, startY: number) => Waypoint[] | null,
+): void {
   if (e.button !== 0) return;
   e.stopPropagation();
   e.preventDefault();
-  const refId = route.id;
   const from = snapshotWaypoints(refId);
   const startX = e.clientX;
   const startY = e.clientY;
@@ -113,8 +115,8 @@ export function startSegmentDrag(route: EdgeRoute, segIndex: number, e: PointerE
     const zoom = store.getState().viewport.zoom;
     const dxWorld = (ev.clientX - startX) / zoom;
     const dyWorld = (ev.clientY - startY) / zoom;
-    const wps = computeSegmentDrag(route, segIndex, dxWorld, dyWorld, gridSnapper());
-    store.getState().setEdgeWaypoints(refId, wps);
+    const wps = build(dxWorld, dyWorld, ev, startX, startY);
+    store.getState().setEdgeWaypoints(refId, wps ?? from);
   };
 
   const onUp = (ev: PointerEvent) => {
@@ -134,6 +136,51 @@ export function startSegmentDrag(route: EdgeRoute, segIndex: number, e: PointerE
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
+}
+
+/**
+ * SLIDE a run perpendicular to itself — the gesture behind a run's REAL centre handle (and grabbing
+ * the run anywhere). Immediate (no threshold): the whole run moves to a new parallel level. Sliding
+ * a notch's dip-run deepens it; sliding it back to its pin level flattens the notch away. 1-DOF
+ * perpendicular: a horizontal run reacts to ↑↓, a vertical run to ←→. Recomputes from the ORIGINAL
+ * snapshot + cumulative delta (idempotent).
+ */
+export function startSegmentSlide(route: EdgeRoute, segIndex: number, e: PointerEvent, target: SVGElement | HTMLElement): void {
+  runEdgeDrag(route.id, e, target, (dxWorld, dyWorld) =>
+    slideSegment(route, segIndex, dxWorld, dyWorld, gridSnapper()),
+  );
+}
+
+/**
+ * NOTCH a run — the gesture behind the two GHOST handles at ¼ / ¾. Dragging perpendicular carves a
+ * local symmetric notch centred on `quarter`; the rest of the run stays flat. Gated behind an 8px
+ * screen threshold so a graze can't spawn one. 1-DOF perpendicular. Recomputes from the ORIGINAL
+ * snapshot + cumulative delta (idempotent; the notch never drifts mid-drag).
+ */
+export function startNotchDrag(
+  route: EdgeRoute,
+  segIndex: number,
+  quarter: number,
+  e: PointerEvent,
+  target: SVGElement | HTMLElement,
+): void {
+  const axis: 'h' | 'v' = route.segments[segIndex]?.axis ?? 'h';
+  runEdgeDrag(route.id, e, target, (dxWorld, dyWorld, ev, startX, startY) => {
+    const perpScreen = axis === 'v' ? ev.clientX - startX : ev.clientY - startY;
+    if (Math.abs(perpScreen) < CREATE_THRESHOLD_PX) return null; // graze → no notch yet
+    return notchAtQuarter(route, segIndex, quarter, dxWorld, dyWorld, gridSnapper());
+  });
+}
+
+/** Double-click a notch's dip-run to delete the whole notch (restore the flat run). */
+export function deleteEdgeNotch(route: EdgeRoute, segIndex: number): void {
+  const refId = route.id;
+  const from = snapshotWaypoints(refId);
+  const to = deleteNotch(route, segIndex);
+  store.getState().setEdgeWaypoints(refId, to);
+  const cmd = buildWaypointCommand(refId, from, to, to.length < from.length ? 'remove' : 'move');
+  if (cmd) store.getState().pushWaypointCommand(cmd);
+  schedulePersist();
 }
 
 /** Reset an edge's shape (waypoints + side overrides) and push history. Keeps color. */
