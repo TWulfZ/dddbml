@@ -148,14 +148,33 @@ Sólo el host escribe el sidecar. Flujo:
 
 ### Dos vistas + foco de cámara por diff (stepper)
 
-La barra tiene un toggle segmentado `[Review all | Step through]` (`mergeView` en
-el store; comparten conteo + `Apply`).
+**Chrome compartido (ambas vistas):** cabecera con título + **píldora de conteo**
+`R/N resolved` (única región `aria-live="polite"`), debajo una **barra de progreso**
+token (`.ddd-merge-progress` con `--ddd-merge-pct`; fill `--ddd-accent`, pasa a
+`--ddd-success` al 100% vía `[data-complete]`), luego el toggle segmentado
+`[Review all | Step through]` (`mergeView`; `role=tablist`/`role=tab`/`aria-selected`).
+Abajo, **un solo footer** (`.ddd-merge-bar__footer`) en **ambas** vistas: bulk
+*Keep all mine* / *Take all theirs* + `Apply` (anclado a la derecha; el gate
+`allResolved && !applying` se define una sola vez en `MergePanel`; etiqueta
+`Apply (R/N)` → `Apply (N)` al completar).
 
-- **Review all:** el contenido all-at-once (hint + filas grupo/arista + bulk); las
-  tablas se eligen en el lienzo con los fantasmas.
+**Afordancia mía/descartada** (filas y picks del stepper): el lado **elegido** usa el
+relleno accent propio del `<Button variant="action" active>` + una **marca ✓**; el
+**descartado** va con el CAP tachado + tinte `--ddd-danger` y swatch atenuado. Los
+colores de descarte viven en **spans hijo** (`.ddd-merge-side__cap/__mark`), nunca en
+el bg/borde del botón (esas son utilidades Tailwind en `@layer utilities`, que ganarían
+sobre una regla de `@layer components` — el motivo por el que no usamos `tailwind-merge`).
+
+- **Review all:** el contenido all-at-once (hint + filas grupo/arista); las tablas se
+  eligen en el lienzo con los fantasmas. El bulk + Apply viven en el footer compartido.
 - **Step through (`mergeStepper.tsx`):** un conflicto a la vez (`mergeCursor`),
   `i / N`, etiqueta del conflicto, botones mía/theirs (con coords para tablas) y
-  `‹ Prev` / `Next ›` (`mergeStep(±1)`).
+  **navegación sólo-chevron** — `<Button variant="history" size="tool">` con
+  `<IconChevronRight flipX/>` (prev) / `<IconChevronRight/>` (next), cada uno envuelto
+  en `<Tooltip label="Previous"/"Next" placement="bottom">` (sin texto, ahorra espacio;
+  el tooltip dispara también en focus de teclado) — `mergeStep(±1)`. Un **riel de puntos**
+  (`.ddd-merge-dots`, sin clicks) refleja resueltos/cursor. El `__pos` central **no** es
+  `aria-live` (lo es la píldora de cabecera — evita doble anuncio).
   - **Cámara enfoca el diff sólo en next/prev** (decisión del usuario: el zoom en
     *hover* marea y pelea con el pan). Un `useEffect([mergeCursor])` arma el bbox de
     los dos fantasmas (`estimateSize` + `(x,y)`) y llama `focusDiff` (`viewport.ts`):

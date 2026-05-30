@@ -1421,13 +1421,80 @@
   }
   .ddd-merge-bar__head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: var(--ddd-space-5);
   }
   .ddd-merge-bar__title { font-weight: 600; }
-  .ddd-merge-bar__count { font-size: var(--ddd-text-sm); color: var(--ddd-fg-muted); }
+  .ddd-merge-bar__count {
+    flex: none;
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    background: var(--ddd-surface-active);
+    padding: 0 var(--ddd-space-3);
+    border-radius: var(--ddd-radius-full);
+    font-variant-numeric: tabular-nums;
+  }
   .ddd-merge-bar__hint { margin: 0; font-size: var(--ddd-text-sm); color: var(--ddd-fg-muted); }
+
+  /* Progress spine — primary "how done are you" signal; turns success-green at 100%. */
+  .ddd-merge-progress {
+    height: var(--ddd-space-2);
+    border-radius: var(--ddd-radius-full);
+    background: var(--ddd-surface-active);
+    overflow: hidden;
+  }
+  .ddd-merge-progress__fill {
+    height: 100%;
+    width: var(--ddd-merge-pct, 0%);
+    border-radius: inherit;
+    background: var(--ddd-accent);
+    transition: width var(--ddd-duration-medium) var(--ddd-ease-out),
+                background-color var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-merge-progress__fill[data-complete] { background: var(--ddd-success); }
+
+  /* Step-view dot rail — per-conflict status mirror (done / current / pending). No clicks. */
+  .ddd-merge-dots {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ddd-space-2);
+  }
+  .ddd-merge-dot {
+    width: var(--ddd-space-3);
+    height: var(--ddd-space-3);
+    box-sizing: border-box;
+    border-radius: var(--ddd-radius-full);
+    border: 1px solid var(--ddd-fg-muted);
+    background: transparent;
+    transition: background-color var(--ddd-duration-fast) var(--ddd-ease-out),
+                border-color var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-merge-dot.is-done { background: var(--ddd-accent); border-color: var(--ddd-accent); }
+  .ddd-merge-dot.is-current { border-color: var(--ddd-accent); box-shadow: var(--ddd-shadow-focus); }
+
+  /* Mine/theirs pick affordance. Kept = the Button's own action=accent fill + a tick. Discarded =
+     struck, danger-tinted CAP + dimmed swatch — all on child spans, never the button bg/border (those
+     are Tailwind utilities in @layer utilities and would win over a component-layer rule → conflict). */
+  .ddd-merge-side__cap {
+    text-transform: uppercase;
+    font-size: var(--ddd-text-xs);
+    letter-spacing: 0.04em;
+  }
+  .ddd-merge-side__mark {
+    margin-left: auto;
+    font-size: var(--ddd-text-xs);
+    opacity: 0;
+  }
+  .ddd-merge-side--kept .ddd-merge-side__mark { opacity: 1; }
+  .ddd-merge-side--cut .ddd-merge-side__cap {
+    color: var(--ddd-danger);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .ddd-merge-side--cut .ddd-merge-bar__swatch { opacity: 0.5; }
   .ddd-merge-bar__rows {
     display: flex;
     flex-direction: column;
@@ -1463,13 +1530,15 @@
     border: 1px solid var(--ddd-border);
     vertical-align: middle;
   }
-  .ddd-merge-bar__actions {
+  /* One shared footer (both views): bulk on the left, Apply docked right. */
+  .ddd-merge-bar__footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--ddd-space-4);
+    gap: var(--ddd-space-2);
+    padding-top: var(--ddd-space-3);
+    border-top: 1px solid var(--ddd-border-subtle);
   }
-  .ddd-merge-bar__bulk { display: flex; gap: var(--ddd-space-2); }
+  .ddd-merge-bar__apply { margin-left: auto; }
 
   /* Segmented [Review all | Step through] toggle. */
   .ddd-merge-bar__tabs { display: flex; gap: var(--ddd-space-2); }
@@ -1477,12 +1546,14 @@
   /* Step-through view: prev/next + the current conflict's mine/theirs picks. */
   .ddd-merge-step { display: flex; flex-direction: column; gap: var(--ddd-space-3); }
   .ddd-merge-step__nav {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
     align-items: center;
-    justify-content: space-between;
     gap: var(--ddd-space-4);
   }
   .ddd-merge-step__pos {
+    justify-self: center;
+    text-align: center;
     font-size: var(--ddd-text-sm);
     color: var(--ddd-fg-muted);
     font-variant-numeric: tabular-nums;

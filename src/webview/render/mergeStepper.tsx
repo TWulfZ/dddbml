@@ -4,6 +4,10 @@ import { store, useAppStore } from '../state/store';
 import { estimateSize } from '../layout/autoLayout';
 import { focusDiff } from './viewport';
 import { Button } from '../ui/Button';
+import { Tooltip } from '../ui/Tooltip';
+import { cn } from '../ui/cn';
+import { IconChevronRight } from '../icons';
+import { sideClass } from './mergePanel';
 import type { Bbox } from './spatialIndex';
 
 /**
@@ -58,9 +62,22 @@ export function MergeStepper() {
   return (
     <div class="ddd-merge-step">
       <div class="ddd-merge-step__nav">
-        <Button variant="secondary" size="sm" disabled={idx <= 0} onClick={() => store.getState().mergeStep(-1)}>‹ Prev</Button>
-        <span class="ddd-merge-step__pos" aria-live="polite">{idx + 1} / {total}{decided ? ' ✓' : ''}</span>
-        <Button variant="secondary" size="sm" disabled={idx >= total - 1} onClick={() => store.getState().mergeStep(1)}>Next ›</Button>
+        <Tooltip label="Previous" placement="bottom">
+          <Button variant="history" size="tool" disabled={idx <= 0} onClick={() => store.getState().mergeStep(-1)}>
+            <IconChevronRight size={14} flipX />
+          </Button>
+        </Tooltip>
+        <span class="ddd-merge-step__pos">{idx + 1} / {total}{decided ? ' ✓' : ''}</span>
+        <Tooltip label="Next" placement="bottom">
+          <Button variant="history" size="tool" disabled={idx >= total - 1} onClick={() => store.getState().mergeStep(1)}>
+            <IconChevronRight size={14} />
+          </Button>
+        </Tooltip>
+      </div>
+      <div class="ddd-merge-dots" role="presentation">
+        {conflicts.map((cf, i) => (
+          <span key={cf.id} class={cn('ddd-merge-dot', i === idx && 'is-current', decisions[cf.id] != null && 'is-done')} />
+        ))}
       </div>
       <div class="ddd-merge-step__label" title={`${noun} ${c.key}`}>
         <span class="ddd-merge-bar__row-noun">{noun}</span> {c.key}
@@ -70,25 +87,27 @@ export function MergeStepper() {
           variant="action"
           size="sm"
           active={decided === 'ours'}
-          class={hoverState?.id === c.id && hoverState.side === 'ours' ? 'ddd-merge-cross' : undefined}
+          class={sideClass(decided, 'ours', hoverState?.id === c.id && hoverState.side === 'ours' ? 'ddd-merge-cross' : undefined)}
           onPointerEnter={() => enter('ours')}
           onPointerLeave={() => leave('ours')}
           onClick={() => pick('ours')}
         >
           {colorOf(c.ours) ? <span class="ddd-merge-bar__swatch" style={{ background: colorOf(c.ours)! }} /> : null}
-          mine{posText(c.ours)}
+          <span class="ddd-merge-side__cap">mine</span>{posText(c.ours)}
+          <span class="ddd-merge-side__mark" aria-hidden="true">✓</span>
         </Button>
         <Button
           variant="action"
           size="sm"
           active={decided === 'theirs'}
-          class={hoverState?.id === c.id && hoverState.side === 'theirs' ? 'ddd-merge-cross' : undefined}
+          class={sideClass(decided, 'theirs', hoverState?.id === c.id && hoverState.side === 'theirs' ? 'ddd-merge-cross' : undefined)}
           onPointerEnter={() => enter('theirs')}
           onPointerLeave={() => leave('theirs')}
           onClick={() => pick('theirs')}
         >
           {colorOf(c.theirs) ? <span class="ddd-merge-bar__swatch" style={{ background: colorOf(c.theirs)! }} /> : null}
-          theirs{posText(c.theirs)}
+          <span class="ddd-merge-side__cap">theirs</span>{posText(c.theirs)}
+          <span class="ddd-merge-side__mark" aria-hidden="true">✓</span>
         </Button>
       </div>
     </div>
