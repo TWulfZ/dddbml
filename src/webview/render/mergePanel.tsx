@@ -2,17 +2,20 @@ import type { GroupLayout, SerializableMergeConflict } from '../../shared/types'
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { Button } from '../ui/Button';
+import { MergeStepper } from './mergeStepper';
 
 /**
  * Blocking conflict-resolution bar (spec 14 §Tier-3). Shown while `mergeConflicts != null`; the
- * diagram behind it is read-only (pan/zoom only). Table conflicts are picked on the canvas via
- * ghost tables; group/edge conflicts (no position) are picked as rows here. `Apply` is enabled
- * only once every conflict has a decision — then one post writes the clean sidecar + `git add`.
+ * diagram behind it is read-only (pan/zoom only). Two views via a segmented toggle: **Review all**
+ * (table conflicts picked on-canvas via ghosts + group/edge rows here) and **Step through** (one
+ * diff at a time, camera-focused — see `MergeStepper`). `Apply` is shared and enabled only once
+ * every conflict has a decision — then one post writes the clean sidecar + `git add`.
  */
 export function MergePanel() {
   const conflicts = useAppStore((s) => s.mergeConflicts);
   const decisions = useAppStore((s) => s.mergeDecisions);
   const applying = useAppStore((s) => s.mergeApplying);
+  const view = useAppStore((s) => s.mergeView);
 
   if (!conflicts) return null;
 
@@ -31,29 +34,39 @@ export function MergePanel() {
   return (
     <div class="ddd-merge-bar" role="dialog" aria-label="Resolve layout merge conflicts">
       <div class="ddd-merge-bar__head">
-        <span class="ddd-merge-bar__title">Layout merge — resolve {total} conflict{total === 1 ? '' : 's'}</span>
+        <span class="ddd-merge-bar__title">Layout merge — {total} conflict{total === 1 ? '' : 's'}</span>
         <span class="ddd-merge-bar__count" aria-live="polite">{resolved}/{total} resolved</span>
       </div>
 
-      {tableCount > 0 ? (
-        <p class="ddd-merge-bar__hint">
-          {tableCount} table position{tableCount === 1 ? '' : 's'} — click a ghost on the canvas (kept lights up; the other turns red = discarded).
-        </p>
-      ) : null}
+      <div class="ddd-merge-bar__tabs" role="tablist">
+        <Button variant="action" size="sm" active={view === 'all'} onClick={() => store.getState().setMergeView('all')}>Review all</Button>
+        <Button variant="action" size="sm" active={view === 'step'} onClick={() => store.getState().setMergeView('step')}>Step through</Button>
+      </div>
 
-      {rows.length > 0 ? (
-        <div class="ddd-merge-bar__rows">
-          {rows.map((c) => (
-            <ConflictRow key={c.id} conflict={c} decided={decisions[c.id]} />
-          ))}
-        </div>
-      ) : null}
+      {view === 'step' ? (
+        <MergeStepper />
+      ) : (
+        <>
+          {tableCount > 0 ? (
+            <p class="ddd-merge-bar__hint">
+              {tableCount} table position{tableCount === 1 ? '' : 's'} — click a ghost on the canvas, or use <em>Step through</em> to walk them. Kept lights up; the other turns red = discarded.
+            </p>
+          ) : null}
+          {rows.length > 0 ? (
+            <div class="ddd-merge-bar__rows">
+              {rows.map((c) => (
+                <ConflictRow key={c.id} conflict={c} decided={decisions[c.id]} />
+              ))}
+            </div>
+          ) : null}
+          <div class="ddd-merge-bar__bulk">
+            <Button variant="secondary" size="sm" onClick={() => store.getState().setMergeDecisionsBulk('ours')}>Keep all mine</Button>
+            <Button variant="secondary" size="sm" onClick={() => store.getState().setMergeDecisionsBulk('theirs')}>Take all theirs</Button>
+          </div>
+        </>
+      )}
 
       <div class="ddd-merge-bar__actions">
-        <div class="ddd-merge-bar__bulk">
-          <Button variant="secondary" size="sm" onClick={() => store.getState().setMergeDecisionsBulk('ours')}>Keep all mine</Button>
-          <Button variant="secondary" size="sm" onClick={() => store.getState().setMergeDecisionsBulk('theirs')}>Take all theirs</Button>
-        </div>
         <Button variant="primary" size="md" disabled={!allResolved || applying} onClick={apply}>
           {applying ? 'Applying…' : `Apply (${total})`}
         </Button>

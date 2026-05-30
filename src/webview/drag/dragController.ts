@@ -24,6 +24,7 @@ let active = false;
 export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement): void {
   if (active || e.button !== 0) return;
   const state = store.getState();
+  if (state.mergeConflicts) return; // read-only during conflict resolution (spec 14); belt to the CSS lock
   const pos = state.positions.get(tableName);
   if (!pos) return;
 

@@ -1428,6 +1428,37 @@
   }
   .ddd-merge-bar__bulk { display: flex; gap: var(--ddd-space-2); }
 
+  /* Segmented [Review all | Step through] toggle. */
+  .ddd-merge-bar__tabs { display: flex; gap: var(--ddd-space-2); }
+
+  /* Step-through view: prev/next + the current conflict's mine/theirs picks. */
+  .ddd-merge-step { display: flex; flex-direction: column; gap: var(--ddd-space-3); }
+  .ddd-merge-step__nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ddd-space-4);
+  }
+  .ddd-merge-step__pos {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .ddd-merge-step__label {
+    font-size: var(--ddd-text-base);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-merge-step__choices { display: flex; gap: var(--ddd-space-3); }
+  .ddd-merge-step__choices > * { flex: 1; }
+  /* Cross-highlight: the matching button glows when its ghost is hovered on the canvas. */
+  .ddd-merge-cross {
+    outline: 1px solid var(--ddd-accent);
+    outline-offset: 1px;
+    box-shadow: var(--ddd-shadow-focus);
+  }
+
 }
 
 /* ============================================================================

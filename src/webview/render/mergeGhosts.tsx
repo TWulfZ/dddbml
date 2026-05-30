@@ -1,4 +1,3 @@
-import { useState } from 'preact/hooks';
 import type { QualifiedName, SerializableMergeConflict, Table, TableLayout } from '../../shared/types';
 import { estimateSize } from '../layout/autoLayout';
 import { store, useAppStore } from '../state/store';
@@ -13,7 +12,8 @@ import { store, useAppStore } from '../state/store';
 export function MergeGhosts({ tablesByName }: { tablesByName: Map<QualifiedName, Table> }) {
   const conflicts = useAppStore((s) => s.mergeConflicts);
   const decisions = useAppStore((s) => s.mergeDecisions);
-  const [hover, setHover] = useState<{ id: string; side: 'ours' | 'theirs' } | null>(null);
+  // Hover is shared via the store so the stepper's mine/theirs buttons cross-highlight these ghosts.
+  const hover = useAppStore((s) => s.mergeHover);
 
   if (!conflicts) return null;
   const tableConflicts = conflicts.filter((c) => c.section === 'tables');
@@ -31,7 +31,13 @@ export function MergeGhosts({ tablesByName }: { tablesByName: Map<QualifiedName,
             table={table}
             decided={decisions[c.id]}
             hovered={hover?.id === c.id ? hover.side : null}
-            onHover={(h) => setHover(h ? { id: c.id, side } : (cur) => (cur?.id === c.id && cur.side === side ? null : cur))}
+            onHover={(entering) => {
+              if (entering) store.getState().setMergeHover({ id: c.id, side });
+              else {
+                const cur = store.getState().mergeHover;
+                if (cur && cur.id === c.id && cur.side === side) store.getState().setMergeHover(null);
+              }
+            }}
             onPick={() => store.getState().setMergeDecision(c.id, side)}
           />
         ));

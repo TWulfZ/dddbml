@@ -146,6 +146,31 @@ Sólo el host escribe el sidecar. Flujo:
    con view-state re-aplicado) y `merge:done`. El webview sale del modo conflicto
    en `merge:done`.
 
+### Dos vistas + foco de cámara por diff (stepper)
+
+La barra tiene un toggle segmentado `[Review all | Step through]` (`mergeView` en
+el store; comparten conteo + `Apply`).
+
+- **Review all:** el contenido all-at-once (hint + filas grupo/arista + bulk); las
+  tablas se eligen en el lienzo con los fantasmas.
+- **Step through (`mergeStepper.tsx`):** un conflicto a la vez (`mergeCursor`),
+  `i / N`, etiqueta del conflicto, botones mía/theirs (con coords para tablas) y
+  `‹ Prev` / `Next ›` (`mergeStep(±1)`).
+  - **Cámara enfoca el diff sólo en next/prev** (decisión del usuario: el zoom en
+    *hover* marea y pelea con el pan). Un `useEffect([mergeCursor])` arma el bbox de
+    los dos fantasmas (`estimateSize` + `(x,y)`) y llama `focusDiff` (`viewport.ts`):
+    **encuadra ambos** + padding; si quedaran demasiado lejos para caber sobre un
+    piso de zoom, **centra el midpoint a un zoom cómodo** ("fit both, clamped").
+    `animateViewport` hace un tween rAF (easeOutCubic, ~220ms) cancelable; respeta
+    `prefers-reduced-motion` (salto instantáneo). Sólo para conflictos de **tabla**
+    (grupo/arista no tienen posición → sin movimiento).
+  - **Cross-highlight:** el hover se comparte vía `mergeHover` en el store (sacado
+    del estado local de `mergeGhosts.tsx`). Hover de un botón mía/theirs ilumina su
+    fantasma con el **mismo** efecto que el hover directo, y el fantasma ilumina el
+    botón (`.ddd-merge-cross`). **El hover nunca mueve la cámara.**
+  - **Pick = decide + auto-avanza** al siguiente conflicto sin decisión (`mergeStep`
+    implícito vía `setMergeCursor`), así resolver en cadena es rápido.
+
 ## Casos borde
 
 - **No-repo + marcadores** (≈imposible, los marcadores vienen de Git): throw →
@@ -168,7 +193,15 @@ Sólo el host escribe el sidecar. Flujo:
   e ids faltantes caen a `ours` (sesgo provisional). Puro, sin vscode/git en el test.
 - `store.merge.test.ts`: `beginMerge` entra al modo; `setMergeDecision` /
   `setMergeDecisionsBulk` llenan `mergeDecisions`; `endMerge` limpia. Conteo
-  resueltos = `Object.keys(mergeDecisions).length`.
+  resueltos = `Object.keys(mergeDecisions).length`. Además: undo/redo no-op en modo
+  conflicto; toggle de vista; `mergeStep`/`setMergeCursor` con clamp; `mergeHover`.
+- `mergeConflict.integration.test.ts`: arma un repo git temporal (os.tmpdir) donde
+  ambas ramas mueven las mismas `N` tablas, mergea → conflicto, y corre el camino real
+  (`gitStages` → `mergeThreeWay`) afirmando exactamente `N` conflictos (`N ∈ {3, 20}`);
+  el resto auto-mergea. Se salta si no hay `git`.
+- **Fixtures manuales (F5):** `node scripts/gen-fixtures.mjs merge 3` y `… merge 20`
+  (o `pnpm test:gen:merge`) generan repos conflictuados listos para abrir en el host
+  de desarrollo y probar el resolver con 3 y 20 diffs.
 - Validación manual de la mecánica Git: en repo scratch, `git merge` divergente →
   `ls-files -u` lista stages 1/2/3; `git show :N:` devuelve JSON limpio. Confirmado
   que el formato `<mode> <sha> <stage>\t<path>` matchea el parser de `gitStages`.
@@ -190,9 +223,13 @@ Sólo el host escribe el sidecar. Flujo:
   `merge:resolve` / `merge:done`.
 - `webview/state/store.ts` — slice de conflicto (`mergeConflicts`,
   `mergeDecisions`, `mergeApplying`) + acciones.
-- `webview/render/mergeGhosts.tsx` — fantasmas de tabla en el lienzo.
-- `webview/render/mergePanel.tsx` — barra (conteo, bulk, Apply, filas grupo/arista).
+- `webview/render/mergeGhosts.tsx` — fantasmas de tabla en el lienzo (hover vía `mergeHover`).
+- `webview/render/mergePanel.tsx` — barra + toggle de vista (conteo, bulk, Apply, filas grupo/arista).
+- `webview/render/mergeStepper.tsx` — vista paso-a-paso (i/N, prev/next, foco de cámara, auto-avance).
+- `webview/render/viewport.ts` — `fitToBbox`/`focusDiff`/`animateViewport` (tween rAF, reduced-motion).
 - `webview/app.tsx` — gating read-only + render del modo conflicto.
 - `webview/persistence.ts` — `schedulePersist` no-op en modo conflicto.
+- `scripts/gen-fixtures.mjs` — generador unificado (`small`/`huge`/`merge <count>` → repo git real
+  conflictuado bajo `test/fixtures/<count>/`, ya ignorado por git).
 - `layoutStore.ts` — `LayoutConflictError`/`hasConflictMarkers`, `readLayout` no
   borra ante marcadores.

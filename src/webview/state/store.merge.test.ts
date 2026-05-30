@@ -47,6 +47,8 @@ describe('merge conflict slice', () => {
       kind: 'move',
       from: [['public.t', { x: 0, y: 0 }]],
       to: [['public.t', { x: 5, y: 5 }]],
+      label: 'Move table',
+      timestamp: 0,
     };
     store.getState().pushMoveCommand(move);
     store.getState().beginMerge(conflicts);
@@ -57,5 +59,29 @@ describe('merge conflict slice', () => {
 
     store.getState().endMerge();
     store.getState().clearHistory();
+  });
+
+  it('view toggle, cursor clamp, mergeStep, hover; endMerge resets them', () => {
+    store.getState().beginMerge(conflicts); // 2 conflicts
+    expect(store.getState().mergeView).toBe('all');
+    expect(store.getState().mergeCursor).toBe(0);
+
+    store.getState().setMergeView('step');
+    expect(store.getState().mergeView).toBe('step');
+
+    store.getState().mergeStep(5); // clamp to last index (1)
+    expect(store.getState().mergeCursor).toBe(1);
+    store.getState().mergeStep(-5); // clamp to 0
+    expect(store.getState().mergeCursor).toBe(0);
+    store.getState().setMergeCursor(99); // clamp to last
+    expect(store.getState().mergeCursor).toBe(1);
+
+    store.getState().setMergeHover({ id: 'tables::a', side: 'theirs' });
+    expect(store.getState().mergeHover).toEqual({ id: 'tables::a', side: 'theirs' });
+
+    store.getState().endMerge();
+    expect(store.getState().mergeView).toBe('all');
+    expect(store.getState().mergeCursor).toBe(0);
+    expect(store.getState().mergeHover).toBeNull();
   });
 });

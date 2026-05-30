@@ -248,7 +248,7 @@
     "watch:extension": "esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --sourcemap --watch",
     "watch:webview": "vite build --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:gen": "mkdir -p test/fixtures && node scripts/gen-small-fixture.mjs > test/fixtures/small.dbml && node scripts/gen-huge-fixture.mjs > test/fixtures/huge.dbml",
+    "test:gen": "mkdir -p test/fixtures && node scripts/gen-fixtures.mjs small > test/fixtures/small.dbml && node scripts/gen-fixtures.mjs huge > test/fixtures/huge.dbml && node scripts/gen-fixtures.mjs merge 3 && node scripts/gen-fixtures.mjs merge 20",
     "test": "vitest run",
     "test:watch": "vitest",
     "package": "vsce package --no-dependencies",

@@ -49,6 +49,12 @@ export interface AppState {
   mergeDecisions: Record<string, 'ours' | 'theirs'>;
   /** True after Apply is posted to the host, while awaiting `merge:done`. */
   mergeApplying: boolean;
+  /** Conflict-resolver view: review-all list vs the focused one-at-a-time stepper. */
+  mergeView: 'all' | 'step';
+  /** Stepper index into `mergeConflicts`. */
+  mergeCursor: number;
+  /** Shared hover (ghost ↔ stepper button cross-highlight), keyed by conflict id + side. */
+  mergeHover: { id: string; side: 'ours' | 'theirs' } | null;
 }
 
 export interface AppActions {
@@ -87,6 +93,10 @@ export interface AppActions {
   setMergeDecision(id: string, side: 'ours' | 'theirs'): void;
   setMergeDecisionsBulk(side: 'ours' | 'theirs'): void;
   setMergeApplying(applying: boolean): void;
+  setMergeView(view: 'all' | 'step'): void;
+  setMergeCursor(index: number): void;
+  mergeStep(delta: number): void;
+  setMergeHover(hover: { id: string; side: 'ours' | 'theirs' } | null): void;
   endMerge(): void;
 }
 
@@ -115,6 +125,9 @@ const initial: AppState = {
   mergeConflicts: null,
   mergeDecisions: {},
   mergeApplying: false,
+  mergeView: 'all',
+  mergeCursor: 0,
+  mergeHover: null,
 };
 
 export const store = createStore<AppState & AppActions>((set, _get) => ({
@@ -347,7 +360,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   beginMerge(conflicts) {
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
-    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, selection: new Set(), selectedEdgeId: null });
+    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -363,8 +376,28 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   setMergeApplying(applying) {
     set({ mergeApplying: applying });
   },
+  setMergeView(view) {
+    set({ mergeView: view });
+  },
+  setMergeCursor(index) {
+    set((s) => {
+      const n = s.mergeConflicts?.length ?? 0;
+      if (n === 0) return s;
+      return { mergeCursor: Math.max(0, Math.min(n - 1, index)) };
+    });
+  },
+  mergeStep(delta) {
+    set((s) => {
+      const n = s.mergeConflicts?.length ?? 0;
+      if (n === 0) return s;
+      return { mergeCursor: Math.max(0, Math.min(n - 1, s.mergeCursor + delta)) };
+    });
+  },
+  setMergeHover(hover) {
+    set({ mergeHover: hover });
+  },
   endMerge() {
-    set({ mergeConflicts: null, mergeDecisions: {}, mergeApplying: false });
+    set({ mergeConflicts: null, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null });
   },
 }));
 
