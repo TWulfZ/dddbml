@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.4] — 2026-05-30
+
+Collaborative layout merge under Git, an in-canvas conflict resolver, and a large edge-rendering performance pass for thousands of relations (`specs/03`, `specs/14`, `specs/04`, `specs/05`, `specs/07`).
+
+### Added
+
+#### Collaborative 3-way layout merge (`specs/03`, `specs/14`)
+- **View-state left Git.** `viewport`, group `hidden`/`collapsed`, and table `hidden` now persist to a local-only file; the tracked sidecar carries **only** shared design (table x/y/color, group color, edges) — eliminating the per-commit conflict storm. Pan/zoom never touches the Git file.
+- **In-extension 3-way merge — zero manual git config.** On a conflicted sidecar, the extension reads Git's merge-index stages `:1:/:2:/:3:` and merges per key: unambiguous changes auto-resolve, and only genuine "both moved the same key" conflicts are surfaced. No merge driver, `.gitattributes`, or per-clone setup. `readLayout` now throws on conflict markers instead of silently wiping the layout.
+
+#### In-canvas ghost conflict resolver (`specs/14` §Tier-3)
+- Replaces the native QuickPick with a **blocking in-webview resolver**. Each table-position conflict draws **two ghost tables** — mine @ours, theirs @theirs — on the canvas. Hover previews (kept = accent bloom, the other dims red = discarded); click commits; every pick is revertible until **Apply**. Group/edge conflicts resolve as mine/theirs rows.
+- **Two views:** *Review all* (all-at-once list + bulk "keep all mine/theirs") and *Step through* (one diff at a time). The stepper **flies the camera to frame both ghost positions** of each diff — on **next/prev only**, never on hover — and picking **auto-advances** to the next unresolved conflict. Hovering a mine/theirs button **cross-highlights** its ghost (and vice-versa). Camera animation respects `prefers-reduced-motion`.
+- **Read-only while resolving:** pan/zoom only — no select, drag, edit, undo/redo, auto-arrange, or persist until you Apply (which writes the clean sidecar + `git add` once).
+- **Test fixtures:** one generator (`scripts/gen-fixtures.mjs` → `small | huge | merge <count>`) builds a real conflicted Git repo under `test/fixtures/<count>/` for hands-on review (`pnpm test:gen:merge` → 3- and 20-conflict scenarios).
+
+### Fixed
+- **Lost conflict dialog (data-flow bug).** The old QuickPick wrote a marker-free, ours-biased file the moment it was cancelled, so the next open saw no markers and never re-ran the resolver — the dialog destroyed its own trigger. Now **nothing is written until Apply**: the conflicted file keeps its markers, so closing mid-merge re-triggers the resolver on reopen.
+
+### Performance
+- **Edges scale to thousands of relations** (`specs/04`, `specs/05`, `specs/07`). `routeRefs` is memoized on geometry, so routing no longer recomputes on every pan/zoom frame; **route-all-then-cull** also fixes a port jitter during pan. The interactive overlay (per-segment hit-DOM) is now built **only for the selected edge** — a single transparent hit-path per other edge — and a zoom LOD draws straight, marker-less lines at bird's-eye. Net: per-frame edge CPU and overlay node count drop sharply on large diagrams.
+
 ## [0.2.3] — 2026-05-29
 
 Smart auto-layout — database-focused automatic table ordering (`specs/13-smart-auto-layout.md`).
