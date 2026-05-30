@@ -1,9 +1,10 @@
-import { useRef, useState } from 'preact/hooks';
+import { useMemo, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import type { QualifiedName, Ref, Schema } from '../../shared/types';
 import { columnCenterY, estimateSize } from '../layout/autoLayout';
 import { routeRefs, isDipRun, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
+import type { LodLevel } from './lod';
 import { store, useAppStore } from '../state/store';
 import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch } from '../drag/dragController';
 import type { EdgeStyle } from '../state/history';
@@ -20,7 +21,12 @@ interface GroupSize {
 }
 
 interface EdgeLayerProps {
+  /** ALL effective refs — routed once (memoized) and culled to `visibleRefIds` at render. */
   refs: Ref[];
+  /** Ids of refs with ≥ 1 visible endpoint; `null` = render every route (e.g. before first cull). */
+  visibleRefIds: Set<string> | null;
+  /** Current zoom LOD. `'rect'` (low zoom) → straight lines, no markers/dots/overlay. */
+  lod: LodLevel;
   positions: Map<QualifiedName, { x: number; y: number }>;
   tablesByName: Map<QualifiedName, Schema['tables'][number]>;
   groupSizes?: GroupSize[];
@@ -51,7 +57,7 @@ interface HoverState {
   near: number;
 }
 
-export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox }: EdgeLayerProps) {
+export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, groupSizes, worldBbox }: EdgeLayerProps) {
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -84,7 +90,26 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
     return columnCenterY(idx);
   };
 
-  const routes = routeRefs(refs, bboxOf, columnY, (id) => edgeLayouts.get(id));
+  // Route ALL refs, memoized on geometry/layout only — NOT on viewport (pan/zoom keep world
+  // positions fixed → only the CSS transform changes) nor hover/selection (local state). This is
+  // what makes edges scale to thousands of relations: routing is O(refs) once per move, not per
+  // frame. The bboxOf/columnY closures read exactly the deps below, so the cached result is valid
+  // whenever the memo recomputes. See spec 05 §8.
+  const routes = useMemo(
+    () => routeRefs(refs, bboxOf, columnY, (id) => edgeLayouts.get(id)),
+    [refs, positions, tablesByName, groupSizes, edgeLayouts],
+  );
+
+  // route-all-then-cull: render only the routes whose ref has a visible endpoint. `null` ⇒ all.
+  const visibleRoutes = useMemo(
+    () => (visibleRefIds ? routes.filter((r) => visibleRefIds.has(r.id)) : routes),
+    [routes, visibleRefIds],
+  );
+
+  // Low zoom (text illegible): draw each edge as a straight port-to-port line, no markers/dots,
+  // and skip the interactive overlay entirely. See spec 05 §8.4.
+  const lowZoom = lod === 'rect';
+  const straightPath = (r: EdgeRoute) => `M ${r.source.x} ${r.source.y} L ${r.target.x} ${r.target.y}`;
 
   const refById = new Map<string, Ref>();
   for (const r of refs) refById.set(r.id, r);
@@ -212,11 +237,15 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
             <path d="M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.4" />
           </marker>
         </defs>
-        {routes.map((r) => {
+        {visibleRoutes.map((r) => {
+          const color = edgeLayouts.get(r.id)?.color;
+          if (lowZoom) {
+            // Bird's-eye: straight port-to-port line, no crow's-foot, no direction dots.
+            return <path key={r.id} d={straightPath(r)} class="ddd-edge" style={color ? { stroke: color } : undefined} />;
+          }
           const ref = refById.get(r.id);
           const startMarker = ref?.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)';
           const endMarker = ref?.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)';
-          const color = edgeLayouts.get(r.id)?.color;
           return (
             <g key={r.id} style={color ? { color } : undefined}>
               <path
@@ -237,7 +266,7 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
       {/* Overlay layer: interactive handles. z-index above tables so handles stay grabbable
           even where an edge crosses a table. SVG is pointer-transparent; only handles catch. */}
       <svg class="ddd-edges ddd-edges-overlay" {...svgSize} style={svgStyle}>
-        {routes.map((r) => {
+        {lowZoom ? null : visibleRoutes.map((r) => {
           const selected = r.id === selectedEdgeId;
           const color = edgeLayouts.get(r.id)?.color;
           return (
@@ -250,6 +279,13 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
               {selected || hover?.refId === r.id ? (
                 <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} />
               ) : null}
+              {/* Interactive editing DOM (per-segment slide/ghost handles + endpoint flips) is built
+                  ONLY for the selected edge — see spec 05 §8.3. Every other visible edge gets a single
+                  transparent hit-path that handles select-on-click + hover-flow, instead of a hit-line
+                  per segment. This is what keeps the overlay's node/listener count flat at thousands
+                  of relations. */}
+              {selected ? (
+                <>
               {r.segments.map((s, i) => {
                 const len = Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1);
                 const hot = hover?.refId === r.id && hover.segIndex === i;
@@ -317,8 +353,6 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
                   </g>
                 );
               })}
-              {selected ? (
-                <>
                   {/* No handles on corners: bends are rounded turns (roundedPathString), and editing
                       is done via the segment-midpoint handles above. Only the 2 endpoints get a
                       handle (port-side flip). */}
@@ -337,7 +371,20 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
                     onPointerDown={(e) => onEndpointPointerDown(r, 'target', e as unknown as PointerEvent)}
                   />
                 </>
-              ) : null}
+              ) : (
+                <path
+                  d={r.d}
+                  class="ddd-edge-hit"
+                  stroke-width={SEGMENT_HOVER_THICKNESS}
+                  onPointerEnter={() => setHover({ refId: r.id, segIndex: -1, near: 0.25 })}
+                  onPointerLeave={() => setHover((h) => (h && h.refId === r.id ? null : h))}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    setClickPos({ x: e.clientX, y: e.clientY });
+                    store.getState().setSelectedEdge(r.id);
+                  }}
+                />
+              )}
             </g>
           );
         })}

@@ -11,8 +11,12 @@ click ("Reset line").
 ## Contexto
 
 `routeRefs()` (`src/webview/render/edgeRouter.ts`) corre dentro de `EdgeLayer`
-(`src/webview/render/edgeLayer.tsx`) en cada render, sobre los refs ya filtrados
-por visibilidad. El trabajo por frame escala con aristas visibles, no totales.
+(`src/webview/render/edgeLayer.tsx`), **memoizado por geometría** (no por frame):
+se rutean **todas** las `effectiveRefs` una sola vez por cambio de posiciones /
+layout / schema, y las *rutas* resultantes se **cullean por visibilidad** al
+render (route-all-then-cull). Bajo pan/zoom las posiciones world no cambian (sólo
+el transform CSS del world container), así que el ruteo **no recomputa por
+frame** ni al cambiar hover/selección. Ver Diseño §8.
 
 Estado del problema (capturas `2026-05-27`): el modelo v1 deja **colocar
 waypoints libres en cualquier coord world**. Al mover una tabla los puertos
@@ -120,6 +124,12 @@ segmentos completos.
 - **Ruteo del flip "contra-natura"** (puerto forzado al lado opuesto del target)
   no dibuja un lazo de salida hacia afuera; usa el `midX` simple y puede cruzar
   la tabla. Pulido a futuro (relacionado con obstacle avoidance, v2).
+- **Ruteo de >10k refs (§8).** `route-all-then-cull` rutea el set completo por
+  cada cambio de geometría. A ~1000 refs (fixture `huge`) es trivial; a decenas
+  de miles, el ruteo único podría costar decenas de ms en cada drag/commit (no
+  por frame). Mitigación futura: rutear por celda del spatial index + cache por
+  arista, o un LOD de ruteo. No bloqueante hoy (fuera del presupuesto de
+  fixtures, spec 07).
 
 ## Diseño
 
@@ -250,6 +260,51 @@ más allá del centro del campo conmuta el lado y persiste.
 - `persistence.ts` ya serializa `edges`; extender el serializador para incluir
   `color`, `sourceSide`, `targetSide` (omitir defaults; mantener escritura
   git-friendly: claves ordenadas, enteros, sin flags por defecto).
+
+### 8. Rendimiento con miles de relaciones (memoización + cull de rutas + LOD)
+
+Mismo patrón que las tablas (spatial index + LOD + memo), aplicado a las aristas.
+Cuatro piezas, escalonadas:
+
+1. **Ruteo memoizado, desacoplado del viewport.** `routeRefs` se envuelve en
+   `useMemo([refs, positions, tablesByName, groupSizes, edgeLayouts])`. Como
+   `positions`/`edgeLayouts` se reemplazan **inmutablemente** en el store (un
+   `new Map(...)` por edición), el memo sólo invalida cuando cambia la geometría
+   o el layout — **nunca en pan/zoom** (que sólo tocan el transform CSS), ni al
+   cambiar hover/selección (estado local de `EdgeLayer`). Antes `routeRefs`
+   corría en el cuerpo del render → se recomputaba en cada frame de pan y en cada
+   hover. Ahora el ruteo es O(refs) una vez por movimiento, no por frame.
+2. **Route-all-then-cull (puertos estables).** Se rutean **todas** las
+   `effectiveRefs` (no el subconjunto visible) y luego se filtran las *rutas* por
+   `visibleRefIds` (memo en `app.tsx`: refs con ≥ 1 endpoint en `visibleNames`).
+   Esto además **arregla un jitter**: la distribución de puertos
+   (`ratio = (i+1)/(n+1)` por `(table, side)`) dependía del subconjunto visible,
+   así que `n` cambiaba al panear y los puertos **temblaban**. Ruteando sobre el
+   set completo, `n` es estable.
+3. **Overlay interactivo sólo para la arista seleccionada.** Antes el overlay
+   construía, por cada arista visible, un `<g>` + por-segmento un `<line>` hit de
+   14px con 5 listeners — miles de nodos interactivos que Preact difea cada
+   render. Ahora: las aristas **no** seleccionadas reciben **un solo
+   `path.ddd-edge-hit`** transparente (`pointer-events: stroke`,
+   `stroke-width = SEGMENT_HOVER_THICKNESS`) que hace select-on-click +
+   hover-flow; los handles por-segmento (slide / fantasmas ¼-¾ / endpoints) se
+   renderizan **sólo para la arista seleccionada** (1 arista). El flujo
+   (Decisiones §8) sigue en seleccionada ∪ hover (≤ 2). DOM/listeners del overlay
+   pasan de O(Σ segmentos sobre visibles) a O(segmentos de 1). Costo: una arista
+   no seleccionada ya no tiñe el segmento al hover (`.ddd-edge-segment-handle
+   :hover`); el feedback de hover es el flujo, que ya existía.
+4. **LOD de arista por zoom (recta a bajo zoom).** Cuando `lod === 'rect'`
+   (zoom < `lowThreshold`, el texto de tabla ya es ilegible), cada arista se
+   dibuja como **recta `M source L target`**: sin fillets, sin crow's-foot, sin
+   direction dots, y el **overlay entero se omite** (no hay edición cuando no se
+   lee nada). A vista pájaro de 5000 tablas, cada arista es 1 `<path>`.
+   `header`/`full` conservan el ruteo ortogonal completo. El ruteo (memoizado)
+   sigue corriendo para resolver los puertos que anclan los extremos de la recta.
+
+Implementación: `app.tsx` (memo `visibleRefIds`; pasa `refs=effectiveRefs`,
+`visibleRefIds`, `lod` a `EdgeLayer`); `edgeLayer.tsx` (`useMemo` de `routes` +
+`visibleRoutes`; rama low-zoom; overlay seleccionada-only + `.ddd-edge-hit`);
+`style.css` (`.ddd-edge-hit`). Presupuesto y regresiones a vigilar: spec 07.
 
 ## Limitaciones conocidas
 

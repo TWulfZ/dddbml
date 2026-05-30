@@ -64,10 +64,18 @@ Decidido por `lodForZoom(viewport.zoom)` en `render/lod.ts`. Umbrales empíricos
 
 **v1 (M2-M3)**: líneas rectas center-to-center.
 **v1 (M4)**: Manhattan ortogonal (ver spec 05).
+**v0.2 (perf, miles de relaciones)**: ruteo **memoizado por geometría** (no por
+frame) + **route-all-then-cull** + **overlay interactivo sólo para la arista
+seleccionada** + **LOD de arista** (recta a `lod === 'rect'`). Detalle: spec 05 §8.
 
-Un solo `<svg>` overlay en el world container. Paths individuales por edge. Edge culling:
-- Si ni source ni target están en visibleNames → omit.
-- Margen del viewport (256px) ya incluye edges que cruzan el borde.
+Un solo `<svg>` overlay en el world container (regla dura: nunca un `<svg>` o path
+suelto por edge fuera de esta capa). Edge culling:
+- `routeRefs` se memoiza (`[refs, positions, tablesByName, groupSizes, edgeLayouts]`);
+  las posiciones world no cambian en pan/zoom → el ruteo no recomputa por frame.
+- Se rutean todas las `effectiveRefs`; las *rutas* se filtran por `visibleRefIds`
+  (al menos un endpoint en `visibleNames`). El margen de 256px ya incluye aristas
+  que cruzan el borde.
+- `lod === 'rect'`: arista = recta `M source L target`, sin markers/dots/overlay.
 
 ## Rendering framework decisions
 

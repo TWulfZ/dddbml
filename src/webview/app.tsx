@@ -378,6 +378,17 @@ export function App(_props: AppProps) {
     return spatialIndex.query(worldBbox);
   }, [spatialIndex, viewport, viewportRect, ready]);
 
+  // Visible edge ids (≥ 1 endpoint visible). Memoized so EdgeLayer can route ALL refs once
+  // (route-all-then-cull, spec 05 §8) and just filter the resulting routes by this set.
+  const visibleRefIds = useMemo(() => {
+    if (!visibleNames) return null;
+    const ids = new Set<string>();
+    for (const r of derived.effectiveRefs) {
+      if (visibleNames.has(r.source.table) || visibleNames.has(r.target.table)) ids.add(r.id);
+    }
+    return ids;
+  }, [visibleNames, derived.effectiveRefs]);
+
   const positionsEffective = useMemo(() => {
     const m = new Map<QualifiedName, { x: number; y: number }>();
     for (const [k, v] of positions) m.set(k, v);
@@ -418,9 +429,6 @@ export function App(_props: AppProps) {
 
   const lod = lodForZoom(viewport.zoom, lodThresholds);
   const worldTransform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
-  const visibleRefs = visibleNames
-    ? derived.effectiveRefs.filter((r) => visibleNames.has(r.source.table) || visibleNames.has(r.target.table))
-    : derived.effectiveRefs;
 
   const renderedTables = schema.tables.filter(
     (t) => !derived.hiddenTables.has(t.name) && !derived.collapsedTables.has(t.name),
@@ -450,7 +458,9 @@ export function App(_props: AppProps) {
               <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} />
             ))}
             <EdgeLayer
-              refs={visibleRefs}
+              refs={derived.effectiveRefs}
+              visibleRefIds={visibleRefIds}
+              lod={lod}
               positions={positionsEffective}
               tablesByName={tablesByName}
               groupSizes={derived.collapsedNodes}

@@ -525,6 +525,16 @@
      axis-aware resize cursor (drag a horizontal run vertically, a vertical run horizontally). */
   .ddd-edges line.ddd-edge-segment-handle.is-h { cursor: ns-resize; }
   .ddd-edges line.ddd-edge-segment-handle.is-v { cursor: ew-resize; }
+  /* Non-selected edges get ONE transparent fat hit-path (width set via the stroke-width attr =
+     SEGMENT_HOVER_THICKNESS) instead of a hit-line per segment: select-on-click + hover-flow with a
+     flat node/listener count at thousands of relations. Per-segment handles exist only once the
+     edge is selected. See spec 05 §8.3. */
+  .ddd-edges path.ddd-edge-hit {
+    stroke: transparent;
+    fill: none;
+    pointer-events: stroke;
+    cursor: pointer;
+  }
   /* Two-tier control handles (dbdiagram smart-edge model):
      - `.ddd-edge-handle` = the REAL vertex at each editable run's centre (blue ring, always shown
        while selected). Drag it (or the run) to SLIDE the whole run perpendicular (1-DOF).
