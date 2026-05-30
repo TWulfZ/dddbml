@@ -110,6 +110,10 @@
     --ddd-danger: var(--vscode-errorForeground, #f48771);
     --ddd-warning: var(--vscode-editorWarning-foreground, #cca700);
     --ddd-success: #4ec9b0;
+    /* Git-style merge sides — reuse the editor's current/incoming colors so users map the picks to
+       <<<<<<< current / >>>>>>> incoming (same mental model as a conflict in the editor). */
+    --ddd-merge-current: var(--vscode-merge-currentHeaderBackground, #3b6ea5);
+    --ddd-merge-incoming: var(--vscode-merge-incomingHeaderBackground, #3f8f5b);
 
     /* ----- Edges ----- */
     --ddd-edge: var(--vscode-charts-blue, #4a9eff);
@@ -1408,8 +1412,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--ddd-space-3);
-    width: max-content;
-    max-width: min(560px, calc(100% - 2 * var(--ddd-space-6)));
+    /* Fixed width so toggling Review-all ↔ Step-through never jumps horizontally. */
+    width: min(420px, calc(100% - 2 * var(--ddd-space-6)));
     max-height: calc(100% - 2 * var(--ddd-space-6));
     overflow: auto;
     padding: var(--ddd-space-4) var(--ddd-space-5);
@@ -1436,6 +1440,13 @@
     font-variant-numeric: tabular-nums;
   }
   .ddd-merge-bar__hint { margin: 0; font-size: var(--ddd-text-sm); color: var(--ddd-fg-muted); }
+  /* Swappable view body — min-height keeps the vertical size similar across the two views. */
+  .ddd-merge-bar__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-3);
+    min-height: 128px;
+  }
 
   /* Progress spine — primary "how done are you" signal; turns success-green at 100%. */
   .ddd-merge-progress {
@@ -1454,7 +1465,8 @@
   }
   .ddd-merge-progress__fill[data-complete] { background: var(--ddd-success); }
 
-  /* Step-view dot rail — per-conflict status mirror (done / current / pending). No clicks. */
+  /* Step-view dot rail — clickable per-conflict jump + status mirror. Unresolved = hollow grey;
+     resolved = filled in the git current/incoming color; cursor = accent ring. */
   .ddd-merge-dots {
     display: flex;
     flex-wrap: wrap;
@@ -1463,37 +1475,51 @@
     gap: var(--ddd-space-2);
   }
   .ddd-merge-dot {
-    width: var(--ddd-space-3);
-    height: var(--ddd-space-3);
+    width: var(--ddd-space-4);
+    height: var(--ddd-space-4);
+    padding: 0;
     box-sizing: border-box;
     border-radius: var(--ddd-radius-full);
     border: 1px solid var(--ddd-fg-muted);
     background: transparent;
+    cursor: pointer;
     transition: background-color var(--ddd-duration-fast) var(--ddd-ease-out),
-                border-color var(--ddd-duration-fast) var(--ddd-ease-out);
+                border-color var(--ddd-duration-fast) var(--ddd-ease-out),
+                transform var(--ddd-duration-fast) var(--ddd-ease-out);
   }
-  .ddd-merge-dot.is-done { background: var(--ddd-accent); border-color: var(--ddd-accent); }
-  .ddd-merge-dot.is-current { border-color: var(--ddd-accent); box-shadow: var(--ddd-shadow-focus); }
+  .ddd-merge-dot:hover { border-color: var(--ddd-fg); }
+  .ddd-merge-dot.is-current-side { background: var(--ddd-merge-current); border-color: var(--ddd-merge-current); }
+  .ddd-merge-dot.is-incoming-side { background: var(--ddd-merge-incoming); border-color: var(--ddd-merge-incoming); }
+  /* Cursor = scaled-up dot with an accent border (distinct from the global :focus-visible box-shadow
+     ring, so keyboard focus and "which conflict am I on" read as two different things). */
+  .ddd-merge-dot.is-at { transform: scale(1.35); border-color: var(--ddd-accent); }
 
-  /* Mine/theirs pick affordance. Kept = the Button's own action=accent fill + a tick. Discarded =
-     struck, danger-tinted CAP + dimmed swatch — all on child spans, never the button bg/border (those
-     are Tailwind utilities in @layer utilities and would win over a component-layer rule → conflict). */
+  /* current/incoming pick affordance. Chosen = the Button's own action=accent fill (no extra class).
+     Discarded = struck, danger-tinted CAP + dimmed value/swatch — all on child spans, never the button
+     bg/border (those are Tailwind utilities in @layer utilities and would win over a component rule). */
+  .ddd-merge-side__stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    line-height: var(--ddd-leading-tight);
+  }
   .ddd-merge-side__cap {
     text-transform: uppercase;
     font-size: var(--ddd-text-xs);
     letter-spacing: 0.04em;
   }
-  .ddd-merge-side__mark {
-    margin-left: auto;
+  .ddd-merge-side__pos {
     font-size: var(--ddd-text-xs);
-    opacity: 0;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
   }
-  .ddd-merge-side--kept .ddd-merge-side__mark { opacity: 1; }
   .ddd-merge-side--cut .ddd-merge-side__cap {
     color: var(--ddd-danger);
     text-decoration: line-through;
     text-decoration-thickness: 1px;
   }
+  .ddd-merge-side--cut .ddd-merge-side__pos { opacity: 0.45; }
   .ddd-merge-side--cut .ddd-merge-bar__swatch { opacity: 0.5; }
   .ddd-merge-bar__rows {
     display: flex;
@@ -1539,6 +1565,25 @@
     border-top: 1px solid var(--ddd-border-subtle);
   }
   .ddd-merge-bar__apply { margin-left: auto; }
+  /* Compact two-line bulk buttons: "All" over a git conflict-marker glyph (<<< current / >>> incoming);
+     the full action is in the Tooltip. flex-direction/gap aren't set by the secondary variant utilities,
+     so a component rule applies cleanly. */
+  .ddd-merge-bulk {
+    flex-direction: column;
+    gap: 0;
+    line-height: var(--ddd-leading-tight);
+  }
+  .ddd-merge-bulk__all {
+    font-size: var(--ddd-text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-merge-bulk__sym {
+    font-family: var(--ddd-font-mono);
+    font-size: var(--ddd-text-base);
+    letter-spacing: 1px;
+  }
 
   /* Segmented [Review all | Step through] toggle. */
   .ddd-merge-bar__tabs { display: flex; gap: var(--ddd-space-2); }

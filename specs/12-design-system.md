@@ -141,6 +141,8 @@ Bajo `@media (prefers-reduced-motion: reduce)`, las tres `duration-{fast,medium,
 | `--ddd-danger` | `--vscode-errorForeground` | borrar, error |
 | `--ddd-warning` | `--vscode-editorWarning-foreground` | note icon |
 | `--ddd-success` | `#4ec9b0` | confirmación |
+| `--ddd-merge-current` | `--vscode-merge-currentHeaderBackground` | lado *current* (HEAD) del merge resolver |
+| `--ddd-merge-incoming` | `--vscode-merge-incomingHeaderBackground` | lado *incoming* del merge resolver |
 | `--ddd-edge` | `--vscode-charts-blue` | relación FK |
 | `--ddd-edge-hover` | `--vscode-charts-foreground` | edge highlight |
 | `--ddd-edge-selected` | `--vscode-focusBorder` | edge selected |

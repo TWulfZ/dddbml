@@ -148,33 +148,40 @@ Sólo el host escribe el sidecar. Flujo:
 
 ### Dos vistas + foco de cámara por diff (stepper)
 
-**Chrome compartido (ambas vistas):** cabecera con título + **píldora de conteo**
-`R/N resolved` (única región `aria-live="polite"`), debajo una **barra de progreso**
-token (`.ddd-merge-progress` con `--ddd-merge-pct`; fill `--ddd-accent`, pasa a
-`--ddd-success` al 100% vía `[data-complete]`), luego el toggle segmentado
-`[Review all | Step through]` (`mergeView`; `role=tablist`/`role=tab`/`aria-selected`).
-Abajo, **un solo footer** (`.ddd-merge-bar__footer`) en **ambas** vistas: bulk
-*Keep all mine* / *Take all theirs* + `Apply` (anclado a la derecha; el gate
-`allResolved && !applying` se define una sola vez en `MergePanel`; etiqueta
-`Apply (R/N)` → `Apply (N)` al completar).
+**Chrome compartido (ambas vistas, ancho fijo):** la barra tiene **ancho fijo**
+(`min(420px, …)`) y un `__body` con `min-height` → alternar vistas **no salta**
+(ni horizontal ni mucho vertical). Cabecera: título "Layout merge" (**sin** conteo) +
+**píldora** `R/N resolved` — única región `aria-live="polite"` y **único** lugar donde se
+muestra el número de conflictos. Debajo, **barra de progreso** token (`.ddd-merge-progress`
+con `--ddd-merge-pct`; `--ddd-accent` → `--ddd-success` al 100% vía `[data-complete]`) y el
+toggle segmentado `[Review all | Step through]` (`role=tablist/tab/aria-selected`). **Footer
+único** en ambas vistas: dos botones bulk **compactos de 2 líneas** — "All" sobre el glifo de
+marcador git (`<<<` current / `>>>` incoming), con la acción completa en el `Tooltip`
+("Keep all current" / "Take all incoming") — y `Apply` a la derecha. `Apply` ya **no** lleva el
+número: abre un **diálogo de confirmación** (`Modal`) que es el **único** sitio donde se reanuncia
+el conteo (`Apply (N)`) — así no se contamina la UI repitiendo el número. El gate
+`allResolved && !applying` se define una vez en `MergePanel`.
 
-**Afordancia mía/descartada** (filas y picks del stepper): el lado **elegido** usa el
-relleno accent propio del `<Button variant="action" active>` + una **marca ✓**; el
-**descartado** va con el CAP tachado + tinte `--ddd-danger` y swatch atenuado. Los
-colores de descarte viven en **spans hijo** (`.ddd-merge-side__cap/__mark`), nunca en
-el bg/borde del botón (esas son utilidades Tailwind en `@layer utilities`, que ganarían
-sobre una regla de `@layer components` — el motivo por el que no usamos `tailwind-merge`).
+**Nombres estilo git:** los lados se rotulan **current** (ours/HEAD) e **incoming** (theirs),
+no "mine/theirs", para reusar el modelo mental de un conflicto del editor. Las claves del store
+siguen siendo `ours`/`theirs`; sólo cambian las etiquetas (`SIDE_LABEL` en `mergePanel.tsx`).
 
-- **Review all:** el contenido all-at-once (hint + filas grupo/arista); las tablas se
-  eligen en el lienzo con los fantasmas. El bulk + Apply viven en el footer compartido.
-- **Step through (`mergeStepper.tsx`):** un conflicto a la vez (`mergeCursor`),
-  `i / N`, etiqueta del conflicto, botones mía/theirs (con coords para tablas) y
-  **navegación sólo-chevron** — `<Button variant="history" size="tool">` con
-  `<IconChevronRight flipX/>` (prev) / `<IconChevronRight/>` (next), cada uno envuelto
-  en `<Tooltip label="Previous"/"Next" placement="bottom">` (sin texto, ahorra espacio;
-  el tooltip dispara también en focus de teclado) — `mergeStep(±1)`. Un **riel de puntos**
-  (`.ddd-merge-dots`, sin clicks) refleja resueltos/cursor. El `__pos` central **no** es
-  `aria-live` (lo es la píldora de cabecera — evita doble anuncio).
+**Afordancia elegido/descartado:** el elegido se marca **sólo** con el relleno accent propio del
+`<Button variant="action" active>` (**sin** ícono de check — el fondo ya lo dice). El descartado
+(hay decisión y no es este lado) va con el CAP tachado + `--ddd-danger` y valor/swatch atenuados —
+todo en **spans hijo** (`.ddd-merge-side__cap/__pos`), nunca en el bg/borde del botón (utilidades
+Tailwind en `@layer utilities` ganarían sobre `@layer components`; por eso no hay `tailwind-merge`).
+
+- **Review all:** hint (sin número) + filas grupo/arista; las tablas se eligen en el lienzo con
+  los fantasmas. Bulk + Apply en el footer compartido.
+- **Step through (`mergeStepper.tsx`):** un conflicto a la vez (`mergeCursor`), `i / N` (sin ✓),
+  etiqueta del conflicto, y picks **current/incoming con la posición apilada debajo del nombre**
+  (`X:… Y:…`, ahorra ancho). **Navegación sólo-chevron** — `<Button variant="history" size="tool">`
+  con `<IconChevronRight flipX/>` (prev) / `<IconChevronRight/>` (next), cada uno en
+  `<Tooltip placement="bottom">` (sin texto; dispara también en focus). El **riel de puntos**
+  (`.ddd-merge-dots`) es **clickable** (salta a ese conflicto vía `setMergeCursor(i)`) y se colorea
+  por el lado resuelto con los colores git del editor (`--ddd-merge-current/incoming`; gris hueco =
+  sin resolver; anillo accent = cursor). El `__pos` central **no** es `aria-live` (lo es la píldora).
   - **Cámara enfoca el diff sólo en next/prev** (decisión del usuario: el zoom en
     *hover* marea y pelea con el pan). Un `useEffect([mergeCursor])` arma el bbox de
     los dos fantasmas (`estimateSize` + `(x,y)`) y llama `focusDiff` (`viewport.ts`):
@@ -184,7 +191,7 @@ sobre una regla de `@layer components` — el motivo por el que no usamos `tailw
     `prefers-reduced-motion` (salto instantáneo). Sólo para conflictos de **tabla**
     (grupo/arista no tienen posición → sin movimiento).
   - **Cross-highlight:** el hover se comparte vía `mergeHover` en el store (sacado
-    del estado local de `mergeGhosts.tsx`). Hover de un botón mía/theirs ilumina su
+    del estado local de `mergeGhosts.tsx`). Hover de un botón current/incoming ilumina su
     fantasma con el **mismo** efecto que el hover directo, y el fantasma ilumina el
     botón (`.ddd-merge-cross`). **El hover nunca mueve la cámara.**
   - **Pick = decide + auto-avanza** al siguiente conflicto sin decisión (`mergeStep`

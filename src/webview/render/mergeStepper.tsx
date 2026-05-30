@@ -7,7 +7,7 @@ import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
 import { cn } from '../ui/cn';
 import { IconChevronRight } from '../icons';
-import { sideClass } from './mergePanel';
+import { sideClass, SIDE_LABEL } from './mergePanel';
 import type { Bbox } from './spatialIndex';
 
 /**
@@ -67,17 +67,28 @@ export function MergeStepper() {
             <IconChevronRight size={14} flipX />
           </Button>
         </Tooltip>
-        <span class="ddd-merge-step__pos">{idx + 1} / {total}{decided ? ' ✓' : ''}</span>
+        <span class="ddd-merge-step__pos">{idx + 1} / {total}</span>
         <Tooltip label="Next" placement="bottom">
           <Button variant="history" size="tool" disabled={idx >= total - 1} onClick={() => store.getState().mergeStep(1)}>
             <IconChevronRight size={14} />
           </Button>
         </Tooltip>
       </div>
-      <div class="ddd-merge-dots" role="presentation">
-        {conflicts.map((cf, i) => (
-          <span key={cf.id} class={cn('ddd-merge-dot', i === idx && 'is-current', decisions[cf.id] != null && 'is-done')} />
-        ))}
+      <div class="ddd-merge-dots" role="group" aria-label="Conflicts">
+        {conflicts.map((cf, i) => {
+          const d = decisions[cf.id];
+          return (
+            <button
+              type="button"
+              key={cf.id}
+              class={cn('ddd-merge-dot', i === idx && 'is-at', d === 'ours' && 'is-current-side', d === 'theirs' && 'is-incoming-side')}
+              aria-current={i === idx || undefined}
+              aria-label={`Conflict ${i + 1} of ${total}${d ? `, resolved as ${SIDE_LABEL[d]}` : ', unresolved'}`}
+              title={`${i + 1} / ${total}${d ? ` · ${SIDE_LABEL[d]}` : ''}`}
+              onClick={() => store.getState().setMergeCursor(i)}
+            />
+          );
+        })}
       </div>
       <div class="ddd-merge-step__label" title={`${noun} ${c.key}`}>
         <span class="ddd-merge-bar__row-noun">{noun}</span> {c.key}
@@ -93,8 +104,10 @@ export function MergeStepper() {
           onClick={() => pick('ours')}
         >
           {colorOf(c.ours) ? <span class="ddd-merge-bar__swatch" style={{ background: colorOf(c.ours)! }} /> : null}
-          <span class="ddd-merge-side__cap">mine</span>{posText(c.ours)}
-          <span class="ddd-merge-side__mark" aria-hidden="true">✓</span>
+          <span class="ddd-merge-side__stack">
+            <span class="ddd-merge-side__cap">{SIDE_LABEL.ours}</span>
+            {posLine(c.ours) ? <span class="ddd-merge-side__pos">{posLine(c.ours)}</span> : null}
+          </span>
         </Button>
         <Button
           variant="action"
@@ -106,8 +119,10 @@ export function MergeStepper() {
           onClick={() => pick('theirs')}
         >
           {colorOf(c.theirs) ? <span class="ddd-merge-bar__swatch" style={{ background: colorOf(c.theirs)! }} /> : null}
-          <span class="ddd-merge-side__cap">theirs</span>{posText(c.theirs)}
-          <span class="ddd-merge-side__mark" aria-hidden="true">✓</span>
+          <span class="ddd-merge-side__stack">
+            <span class="ddd-merge-side__cap">{SIDE_LABEL.theirs}</span>
+            {posLine(c.theirs) ? <span class="ddd-merge-side__pos">{posLine(c.theirs)}</span> : null}
+          </span>
         </Button>
       </div>
     </div>
@@ -120,9 +135,9 @@ function bboxAt(v: SerializableMergeConflict['ours'], size: { width: number; hei
   return { x: t.x, y: t.y, w: size.width, h: size.height };
 }
 
-function posText(v: SerializableMergeConflict['ours']): string {
+function posLine(v: SerializableMergeConflict['ours']): string {
   const t = v as TableLayout | null;
-  return t && typeof t.x === 'number' ? ` (${t.x}, ${t.y})` : '';
+  return t && typeof t.x === 'number' ? `X:${t.x} Y:${t.y}` : '';
 }
 
 function colorOf(v: SerializableMergeConflict['ours']): string | null {

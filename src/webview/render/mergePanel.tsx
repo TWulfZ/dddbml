@@ -1,23 +1,32 @@
+import { useState } from 'preact/hooks';
 import type { GroupLayout, SerializableMergeConflict } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { Button } from '../ui/Button';
+import { Tooltip } from '../ui/Tooltip';
+import { Modal } from '../ui/Modal';
 import { cn } from '../ui/cn';
 import { MergeStepper } from './mergeStepper';
 
+/** Git-style side labels — `ours`=current (HEAD), `theirs`=incoming. The store keys stay ours/theirs;
+ *  only the user-facing words change so the model matches an editor merge conflict. */
+export const SIDE_LABEL: Record<'ours' | 'theirs', string> = { ours: 'current', theirs: 'incoming' };
+
 /**
  * Blocking conflict-resolution bar (spec 14 §Tier-3). Shown while `mergeConflicts != null`; the
- * diagram behind it is read-only (pan/zoom only). A progress spine (bar + count pill) + a segmented
+ * diagram behind it is read-only (pan/zoom only). A progress spine (count pill + bar) + a segmented
  * toggle drive two views: **Review all** (table conflicts picked on-canvas via ghosts + group/edge
  * rows here) and **Step through** (one diff at a time, camera-focused — see `MergeStepper`). A single
- * shared footer (bulk keep-all + `Apply`) renders in both views; `Apply` is enabled only once every
- * conflict has a decision — then one post writes the clean sidecar + `git add`.
+ * shared footer holds bulk keep-all + `Apply`; the panel keeps a stable width so toggling views does
+ * not jump. `Apply` opens a confirm dialog (the only place the conflict count is restated) and is the
+ * sole step that writes the clean sidecar + `git add`.
  */
 export function MergePanel() {
   const conflicts = useAppStore((s) => s.mergeConflicts);
   const decisions = useAppStore((s) => s.mergeDecisions);
   const applying = useAppStore((s) => s.mergeApplying);
   const view = useAppStore((s) => s.mergeView);
+  const [confirm, setConfirm] = useState(false);
 
   if (!conflicts) return null;
 
@@ -28,8 +37,9 @@ export function MergePanel() {
   const rows = conflicts.filter((c) => c.section !== 'tables');
   const pct = total ? Math.round((resolved / total) * 100) : 0;
 
-  const apply = () => {
+  const doApply = () => {
     if (!allResolved || applying) return;
+    setConfirm(false);
     store.getState().setMergeApplying(true);
     postToHost({ type: 'merge:resolve', payload: { decisions } });
   };
@@ -37,7 +47,7 @@ export function MergePanel() {
   return (
     <div class="ddd-merge-bar" role="dialog" aria-label="Resolve layout merge conflicts">
       <div class="ddd-merge-bar__head">
-        <span class="ddd-merge-bar__title">Layout merge — {total} conflict{total === 1 ? '' : 's'}</span>
+        <span class="ddd-merge-bar__title">Layout merge</span>
         <span class="ddd-merge-bar__count" aria-live="polite">{resolved}/{total} resolved</span>
       </div>
 
@@ -50,32 +60,61 @@ export function MergePanel() {
         <Button variant="action" size="sm" role="tab" aria-selected={view === 'step'} active={view === 'step'} onClick={() => store.getState().setMergeView('step')}>Step through</Button>
       </div>
 
-      {view === 'step' ? (
-        <MergeStepper />
-      ) : (
-        <>
-          {tableCount > 0 ? (
-            <p class="ddd-merge-bar__hint">
-              {tableCount} table position{tableCount === 1 ? '' : 's'} — click a ghost on the canvas, or use <em>Step through</em> to walk them. Kept lights up; the other turns red = discarded.
-            </p>
-          ) : null}
-          {rows.length > 0 ? (
-            <div class="ddd-merge-bar__rows">
-              {rows.map((c) => (
-                <ConflictRow key={c.id} conflict={c} decided={decisions[c.id]} />
-              ))}
-            </div>
-          ) : null}
-        </>
-      )}
+      <div class="ddd-merge-bar__body">
+        {view === 'step' ? (
+          <MergeStepper />
+        ) : (
+          <>
+            {tableCount > 0 ? (
+              <p class="ddd-merge-bar__hint">
+                Table positions — click a ghost on the canvas, or use <em>Step through</em>. Kept lights up; the other turns red = discarded.
+              </p>
+            ) : null}
+            {rows.length > 0 ? (
+              <div class="ddd-merge-bar__rows">
+                {rows.map((c) => (
+                  <ConflictRow key={c.id} conflict={c} decided={decisions[c.id]} />
+                ))}
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
 
       <div class="ddd-merge-bar__footer">
-        <Button variant="secondary" size="sm" onClick={() => store.getState().setMergeDecisionsBulk('ours')}>Keep all mine</Button>
-        <Button variant="secondary" size="sm" onClick={() => store.getState().setMergeDecisionsBulk('theirs')}>Take all theirs</Button>
-        <Button class="ddd-merge-bar__apply" variant="primary" size="md" disabled={!allResolved || applying} onClick={apply}>
-          {applying ? 'Applying…' : allResolved ? `Apply (${total})` : `Apply (${resolved}/${total})`}
+        <Tooltip label="Keep all current">
+          <Button variant="secondary" size="sm" class="ddd-merge-bulk" onClick={() => store.getState().setMergeDecisionsBulk('ours')}>
+            <span class="ddd-merge-bulk__all">All</span>
+            <span class="ddd-merge-bulk__sym">{'<<<'}</span>
+          </Button>
+        </Tooltip>
+        <Tooltip label="Take all incoming">
+          <Button variant="secondary" size="sm" class="ddd-merge-bulk" onClick={() => store.getState().setMergeDecisionsBulk('theirs')}>
+            <span class="ddd-merge-bulk__all">All</span>
+            <span class="ddd-merge-bulk__sym">{'>>>'}</span>
+          </Button>
+        </Tooltip>
+        <Button class="ddd-merge-bar__apply" variant="primary" size="md" disabled={!allResolved || applying} onClick={() => setConfirm(true)}>
+          {applying ? 'Applying…' : 'Apply'}
         </Button>
       </div>
+
+      <Modal
+        open={confirm}
+        onClose={() => setConfirm(false)}
+        title="Apply layout merge"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConfirm(false)}>Cancel</Button>
+            <Button variant="primary" onClick={doApply}>Apply {total}</Button>
+          </>
+        }
+      >
+        <p>
+          Write the merged layout and stage it (git add) with your {total} resolution{total === 1 ? '' : 's'}.
+          The discarded side stays recoverable through Git.
+        </p>
+      </Modal>
     </div>
   );
 }
@@ -93,28 +132,21 @@ function ConflictRow({ conflict, decided }: { conflict: SerializableMergeConflic
       <div class="ddd-merge-bar__row-choices">
         <Button variant="action" size="sm" active={decided === 'ours'} class={sideClass(decided, 'ours')} onClick={() => pick('ours')}>
           {oursColor ? <span class="ddd-merge-bar__swatch" style={{ background: oursColor }} /> : null}
-          <span class="ddd-merge-side__cap">mine</span>
-          <span class="ddd-merge-side__mark" aria-hidden="true">✓</span>
+          <span class="ddd-merge-side__cap">{SIDE_LABEL.ours}</span>
         </Button>
         <Button variant="action" size="sm" active={decided === 'theirs'} class={sideClass(decided, 'theirs')} onClick={() => pick('theirs')}>
           {theirsColor ? <span class="ddd-merge-bar__swatch" style={{ background: theirsColor }} /> : null}
-          <span class="ddd-merge-side__cap">theirs</span>
-          <span class="ddd-merge-side__mark" aria-hidden="true">✓</span>
+          <span class="ddd-merge-side__cap">{SIDE_LABEL.theirs}</span>
         </Button>
       </div>
     </div>
   );
 }
 
-/** kept = chosen side (Button's accent fill owns the highlight; we add a tick); cut = the other side
- *  once a decision exists (struck + danger CAP); undecided = neutral (no class). */
+/** Discarded side (a decision exists and it's not this one) → struck + danger cap. The chosen side's
+ *  highlight is the Button's own `active` accent fill (no extra class), so the two never collide. */
 export function sideClass(decided: 'ours' | 'theirs' | undefined, side: 'ours' | 'theirs', extra?: string): string {
-  return cn(
-    'ddd-merge-side',
-    decided === side && 'ddd-merge-side--kept',
-    decided && decided !== side && 'ddd-merge-side--cut',
-    extra,
-  );
+  return cn('ddd-merge-side', decided && decided !== side && 'ddd-merge-side--cut', extra);
 }
 
 /** Best-effort color preview for a group conflict side (null = deleted / no color). */
