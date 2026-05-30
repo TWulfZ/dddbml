@@ -14,6 +14,9 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const PERSIST_DEBOUNCE_MS = 300;
 
 export function schedulePersist(): void {
+  // Blocking conflict mode (spec 14): the layout shown is provisional (ours-biased) and must
+  // NOT be written until the user resolves + applies. Drop every persist while resolving.
+  if (store.getState().mergeConflicts) return;
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;

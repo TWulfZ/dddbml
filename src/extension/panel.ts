@@ -2,7 +2,11 @@ import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, Ref, ViewportCommand, WebviewToHost, Schema, QualifiedName } from '../shared/types';
 import { parseDbml } from './parser';
-import { emptyLayout, mergeLayout, readLayout, sidecarUri, writeLayout } from './layoutStore';
+import { emptyLayout, LayoutConflictError, mergeLayout, readLayout, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
+import { applyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
+import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
+import type { MergeConflict } from './mergeThreeWay';
+import { gitAdd } from './gitStages';
 import { getExporter, listExporters } from './exporters';
 import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
 
@@ -45,6 +49,14 @@ export class DiagramPanel {
   private lastWrittenSerialized: string | null = null;
   private pendingPersist: Layout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
+  /** Set while a conflicted sidecar awaits in-webview resolution; null otherwise. Holds the
+   *  retained host-side conflicts so the webview only has to return per-conflict decisions. */
+  private pendingMerge: { conflicts: MergeConflict[]; merged: Layout; repoRoot: string; relpath: string } | null = null;
+  /** Guards against concurrent Apply round-trips writing/staging twice. */
+  private mergeResolving = false;
+  /** Signature (joined conflict ids) of the last `merge:begin` posted — so re-detecting the SAME
+   *  conflict set (e.g. a double-firing watcher) doesn't re-post and wipe the user's decisions. */
+  private lastPostedMergeSig: string | null = null;
 
   private constructor(
     private readonly context: vscode.ExtensionContext,
@@ -161,6 +173,9 @@ export class DiagramPanel {
       case 'settings:update':
         void applySettingsPatch(msg.payload as Partial<FlatSettingsPatch>);
         return;
+      case 'merge:resolve':
+        void this.resolveMerge(msg.payload.decisions);
+        return;
       case 'error:log':
         console.error('[dddbml webview]', msg.payload.message, msg.payload.stack);
         return;
@@ -257,6 +272,7 @@ export class DiagramPanel {
     // store and the auto-layout effect skips tables that already have a saved position.
     await this.sendLayout();
     await this.sendSchema();
+    this.maybePostMerge(); // after schema, so the ghost tables can render
     this.post({ type: 'theme:change', payload: { kind: this.currentThemeKind() } });
     this.post({ type: 'settings:loaded', payload: loadSettings() });
     this.post({ type: 'exporters:list', payload: { exporters: listExporters() } });
@@ -289,11 +305,127 @@ export class DiagramPanel {
   }
 
   private async sendLayout(isExternal = false): Promise<void> {
-    this.currentLayout = await readLayout(this.dbmlUri);
+    this.currentLayout = await this.loadFullLayout();
     this.post({
       type: isExternal ? 'layout:external-change' : 'layout:loaded',
       payload: this.currentLayout,
     });
+  }
+
+  /**
+   * Reconstructs the full layout the webview expects from BOTH persistence
+   * destinations: the git sidecar (shared design) + the local view-state file
+   * (viewport / per-user hidden+collapsed). The webview never sees the split.
+   */
+  private async loadFullLayout(): Promise<Layout> {
+    const shared = await this.loadSharedLayout();
+    const vs = await readViewState(this.context, this.dbmlUri);
+    return applyViewState(shared, vs);
+  }
+
+  /**
+   * Reads the shared sidecar. On unresolved git conflict markers, runs the
+   * in-extension 3-way merge (reads git stages 1/2/3, QuickPick for true conflicts)
+   * instead of silently wiping. If even that fails (e.g. not a git repo), keeps the
+   * last good in-memory layout rather than losing positions.
+   */
+  private async loadSharedLayout(): Promise<Layout> {
+    try {
+      const layout = await readLayout(this.dbmlUri);
+      this.pendingMerge = null; // a clean read clears any stale conflict state
+      return layout;
+    } catch (err) {
+      if (err instanceof LayoutConflictError) {
+        return this.handleConflict();
+      }
+      return emptyLayout();
+    }
+  }
+
+  /**
+   * A conflicted sidecar: read git's three stages and run the pure 3-way merge. Unambiguous keys
+   * auto-merge; genuine "both moved the same key" conflicts are handed to the webview ghost UI
+   * (merge:begin, posted by maybePostMerge once the schema is up). Crucially the file KEEPS its
+   * conflict markers until the user applies — so closing the panel mid-merge re-triggers this on
+   * reopen (the old QuickPick wrote a marker-free file on cancel and destroyed its own trigger).
+   * Returns the provisional (ours-biased) merge for spatial context; with zero conflicts it
+   * writes + stages immediately, like the old auto path.
+   */
+  private async handleConflict(): Promise<Layout> {
+    let detected;
+    try {
+      detected = await detectSidecarConflict(this.dbmlUri);
+    } catch {
+      void vscode.window.showWarningMessage(
+        'dddbml: could not read the layout conflict from git — resolve the markers manually, then reopen the diagram.',
+      );
+      return this.currentLayout;
+    }
+    const { merged, conflicts, repoRoot, relpath } = detected;
+    if (conflicts.length === 0) {
+      const serialized = await writeSharedLayout(this.dbmlUri, merged);
+      this.lastWrittenSerialized = serialized;
+      try { await gitAdd(repoRoot, relpath); } catch { /* staging is best-effort */ }
+      this.pendingMerge = null;
+      void vscode.window.showInformationMessage(
+        `dddbml: layout auto-merged cleanly — ${countKeys(merged)} item(s), no conflicts.`,
+      );
+      return merged;
+    }
+    this.pendingMerge = { conflicts, merged, repoRoot, relpath };
+    return merged;
+  }
+
+  /** Post the conflict set to the webview (schema must already be up so ghosts can render). Skips a
+   *  re-post when the conflict set is unchanged, so a double-firing watcher doesn't wipe decisions. */
+  private maybePostMerge(): void {
+    if (!this.pendingMerge) { this.lastPostedMergeSig = null; return; }
+    const conflicts = toSerializableConflicts(this.pendingMerge.conflicts);
+    const sig = conflicts.map((c) => c.id).join('|');
+    if (sig === this.lastPostedMergeSig) return; // identical set already on screen — keep the user's picks
+    if (this.lastPostedMergeSig !== null) {
+      void vscode.window.showWarningMessage('dddbml: the layout changed on disk — the conflict list was refreshed.');
+    }
+    this.lastPostedMergeSig = sig;
+    this.post({ type: 'merge:begin', payload: { conflicts } });
+  }
+
+  /** The webview resolved the conflicts: apply decisions, write the clean sidecar, stage, refresh, exit. */
+  private async resolveMerge(decisions: Record<string, 'ours' | 'theirs'>): Promise<void> {
+    const pending = this.pendingMerge;
+    if (!pending || this.mergeResolving) return; // ignore concurrent Apply clicks
+    this.mergeResolving = true;
+    try {
+      const resolved = applyDecisions(pending.merged, pending.conflicts, decisions);
+      try {
+        const serialized = await writeSharedLayout(this.dbmlUri, resolved);
+        this.lastWrittenSerialized = serialized;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`dddbml: failed to write resolved layout — ${message}`);
+        // Re-post the conflicts so the webview leaves its "Applying…" state and can retry; the file
+        // still has its markers and pendingMerge is intact.
+        this.post({ type: 'merge:begin', payload: { conflicts: toSerializableConflicts(pending.conflicts) } });
+        return;
+      }
+      try { await gitAdd(pending.repoRoot, pending.relpath); } catch { /* staging is best-effort */ }
+      this.pendingMerge = null;
+      this.lastPostedMergeSig = null;
+      const chosen = pending.conflicts.length;
+      const auto = countKeys(resolved) - chosen;
+      const vs = await readViewState(this.context, this.dbmlUri);
+      this.currentLayout = applyViewState(resolved, vs);
+      // Apply the final layout WHILE still in conflict mode (conflicting tables are hidden behind
+      // their ghosts), THEN exit — so each conflicting table goes ghost → final position with no
+      // intermediate frame at the provisional (ours) spot.
+      this.post({ type: 'layout:loaded', payload: this.currentLayout });
+      this.post({ type: 'merge:done' });
+      void vscode.window.showInformationMessage(
+        `dddbml: layout merged — ${auto} auto-resolved, ${chosen} chosen by you.`,
+      );
+    } finally {
+      this.mergeResolving = false;
+    }
   }
 
   private onLayoutPersist(payload: Partial<Layout>): void {
@@ -310,12 +442,23 @@ export class DiagramPanel {
   }
 
   private async flushPersist(layout: Layout): Promise<void> {
+    // Git sidecar: shared design only. Skip the write when the shared form is unchanged
+    // so pure pan/zoom (view-state only) never churns the tracked file.
     try {
-      const serialized = await writeLayout(this.dbmlUri, layout);
-      this.lastWrittenSerialized = serialized;
+      const sharedSerialized = serializeSharedLayout(layout);
+      if (sharedSerialized !== this.lastWrittenSerialized) {
+        await writeSharedLayout(this.dbmlUri, layout);
+        this.lastWrittenSerialized = sharedSerialized;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`dddbml: failed to write layout file — ${message}`);
+    }
+    // Local view-state: never tracked by git, so failures here are non-fatal.
+    try {
+      await writeViewState(this.context, this.dbmlUri, extractViewState(layout));
+    } catch (err) {
+      console.error('[dddbml] failed to write view-state', err);
     }
   }
 
@@ -345,6 +488,7 @@ export class DiagramPanel {
         return;
       }
       await this.sendLayout(true);
+      this.maybePostMerge(); // external pull/merge may have introduced conflicts
     };
     layoutWatcher.onDidChange(onLayoutFs);
     layoutWatcher.onDidCreate(onLayoutFs);

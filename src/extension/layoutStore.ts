@@ -9,6 +9,22 @@ export function emptyLayout(): Layout {
   return { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
 }
 
+/** Raised by `readLayout` when the sidecar still holds unresolved git conflict markers.
+ *  Callers route this to the 3-way merge resolver instead of silently wiping the layout. */
+export class LayoutConflictError extends Error {
+  constructor(public readonly conflictedText: string) {
+    super('dddbml: layout sidecar contains unresolved git conflict markers');
+    this.name = 'LayoutConflictError';
+  }
+}
+
+// `<<<<<<<`, `|||||||` (diff3 base), `=======`, `>>>>>>>` — never valid at the start of a JSON line.
+const CONFLICT_MARKER_RE = /^(<{7}|={7}|>{7}|\|{7})/m;
+
+export function hasConflictMarkers(text: string): boolean {
+  return CONFLICT_MARKER_RE.test(text);
+}
+
 /**
  * Merges a `layout:persist` partial onto the current layout. The webview sends a partial; a key
  * it omits must keep its current value — never drop a sub-object. `edges` is included here on
@@ -26,19 +42,25 @@ export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
 
 export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
   const uri = sidecarUri(dbmlUri);
+  let text: string;
   try {
     const bytes = await vscode.workspace.fs.readFile(uri);
-    const text = new TextDecoder('utf-8').decode(bytes);
-    return parseLayout(text);
+    text = new TextDecoder('utf-8').decode(bytes);
   } catch {
-    return emptyLayout();
+    return emptyLayout(); // missing/unreadable sidecar → treat as empty
   }
+  // Do NOT feed conflict-marker soup to JSON.parse: it throws and the old catch wiped the
+  // layout to empty. Signal the conflict so the caller can run the 3-way merge instead.
+  if (hasConflictMarkers(text)) throw new LayoutConflictError(text);
+  return parseLayout(text);
 }
 
-export async function writeLayout(dbmlUri: vscode.Uri, layout: Layout): Promise<string> {
+/** Writes the Git-tracked sidecar. Always the SHARED form — per-user view-state
+ *  (viewport, hidden/collapsed) lives in the local view-state file, never here. */
+export async function writeSharedLayout(dbmlUri: vscode.Uri, layout: Layout): Promise<string> {
   const layoutUri = sidecarUri(dbmlUri);
   const tmpUri = layoutUri.with({ path: layoutUri.path + '.tmp' });
-  const serialized = serializeLayout(layout);
+  const serialized = serializeSharedLayout(layout);
   const bytes = new TextEncoder().encode(serialized);
   await vscode.workspace.fs.writeFile(tmpUri, bytes);
   await vscode.workspace.fs.rename(tmpUri, layoutUri, { overwrite: true });
@@ -146,21 +168,40 @@ function numeric(v: unknown, fallback: number, asInt: boolean): number {
  *   - compact object-on-one-line for leaves (tables/groups)
  */
 export function serializeLayout(layout: Layout): string {
+  return serializeLayoutImpl(layout, false);
+}
+
+/**
+ * Git-tracked serialization: shared design ONLY. Omits all per-user view-state
+ * (`viewport`, table `hidden`, group `collapsed`/`hidden`) and any group entry with
+ * no `color`. The sidecar therefore never diffs on pan/zoom or personal show/hide —
+ * it carries only what the team collaborates on (positions, colors, edge routing).
+ */
+export function serializeSharedLayout(layout: Layout): string {
+  return serializeLayoutImpl(layout, true);
+}
+
+function serializeLayoutImpl(layout: Layout, shared: boolean): string {
   const tableKeys = Object.keys(layout.tables).sort();
-  const groupKeys = Object.keys(layout.groups).sort();
+  const groupKeys = (shared
+    ? Object.keys(layout.groups).filter((k) => !!layout.groups[k]!.color)
+    : Object.keys(layout.groups)
+  ).sort();
 
   const lines: string[] = [];
   lines.push('{');
   lines.push(`  "version": ${layout.version},`);
-  const vp = layout.viewport;
-  lines.push(`  "viewport": { "x": ${Math.round(vp.x)}, "y": ${Math.round(vp.y)}, "zoom": ${Math.round(vp.zoom * 1000) / 1000} },`);
+  if (!shared) {
+    const vp = layout.viewport;
+    lines.push(`  "viewport": { "x": ${Math.round(vp.x)}, "y": ${Math.round(vp.y)}, "zoom": ${Math.round(vp.zoom * 1000) / 1000} },`);
+  }
 
   lines.push('  "tables": {');
   tableKeys.forEach((k, i) => {
     const v = layout.tables[k]!;
     const comma = i < tableKeys.length - 1 ? ',' : '';
     const parts = [`"x": ${Math.round(v.x)}`, `"y": ${Math.round(v.y)}`];
-    if (v.hidden) parts.push('"hidden": true');
+    if (!shared && v.hidden) parts.push('"hidden": true');
     if (v.color) parts.push(`"color": ${JSON.stringify(v.color)}`);
     lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
   });
@@ -170,8 +211,8 @@ export function serializeLayout(layout: Layout): string {
   groupKeys.forEach((k, i) => {
     const v = layout.groups[k]!;
     const parts: string[] = [];
-    if (v.collapsed) parts.push('"collapsed": true');
-    if (v.hidden) parts.push('"hidden": true');
+    if (!shared && v.collapsed) parts.push('"collapsed": true');
+    if (!shared && v.hidden) parts.push('"hidden": true');
     if (v.color) parts.push(`"color": ${JSON.stringify(v.color)}`);
     const body = parts.length > 0 ? ` ${parts.join(', ')} ` : '';
     const comma = i < groupKeys.length - 1 ? ',' : '';

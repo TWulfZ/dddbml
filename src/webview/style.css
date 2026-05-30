@@ -1280,6 +1280,154 @@
     background: var(--ddd-surface-hover);
   }
 
+  /* ----- Collaborative-merge conflict UI (spec 14 §Tier-3) ----- */
+  /* Blocking mode: everything in the world is read-only (pan/zoom only) EXCEPT the ghost layer. */
+  .ddd-world.is-merge-locked > *:not(.ddd-merge-ghost-layer) {
+    pointer-events: none;
+  }
+  .ddd-merge-ghost-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none; /* the layer never blocks; only the ghost cards catch */
+  }
+  .ddd-merge-ghost {
+    box-sizing: border-box;
+    pointer-events: auto;
+    cursor: pointer;
+    user-select: none;
+    overflow: hidden;
+    border: 2px dashed var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    background: var(--ddd-surface-raised);
+    color: var(--ddd-fg);
+    box-shadow: var(--ddd-shadow-md);
+    transition: opacity var(--ddd-duration-fast),
+                border-color var(--ddd-duration-fast),
+                box-shadow var(--ddd-duration-fast),
+                filter var(--ddd-duration-fast);
+  }
+  /* Neutral = undecided + not hovered: faint dashed. */
+  .ddd-merge-ghost.is-neutral {
+    opacity: 0.62;
+    border-style: dashed;
+    border-color: var(--ddd-fg-muted);
+  }
+  /* Keep = hovered or chosen: full opacity + accent ring (bloom). */
+  .ddd-merge-ghost.is-keep {
+    opacity: 1;
+    border-style: solid;
+    border-color: var(--ddd-accent);
+    box-shadow: var(--ddd-shadow-md), var(--ddd-shadow-focus);
+  }
+  /* Discard = the losing side: dim + reddish so it reads as "this gets thrown away". */
+  .ddd-merge-ghost.is-discard {
+    opacity: 0.38;
+    border-style: solid;
+    border-color: var(--ddd-danger);
+    filter: saturate(0.55);
+  }
+  .ddd-merge-ghost__tag {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ddd-space-3);
+    padding: var(--ddd-space-1) var(--ddd-space-3);
+    font-size: var(--ddd-text-sm);
+  }
+  .ddd-merge-ghost__who {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  /* Mine vs theirs always tinted differently so the two ghosts are tellable apart at a glance. */
+  .ddd-merge-ghost.is-mine .ddd-merge-ghost__who { color: var(--ddd-accent); }
+  .ddd-merge-ghost.is-theirs .ddd-merge-ghost__who { color: var(--ddd-warning); }
+  .ddd-merge-ghost__check { color: var(--ddd-accent); font-weight: 700; }
+  .ddd-merge-ghost__name {
+    padding: var(--ddd-space-2) var(--ddd-space-3);
+    font-weight: 600;
+    border-top: 1px solid var(--ddd-border);
+  }
+  .ddd-merge-ghost.is-removed .ddd-merge-ghost__name { color: var(--ddd-danger); }
+  .ddd-merge-ghost__pos {
+    padding: 0 var(--ddd-space-3) var(--ddd-space-2);
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+  }
+
+  /* The blocking conflict bar: floats top-centre over the read-only diagram. */
+  .ddd-merge-bar {
+    position: absolute;
+    top: var(--ddd-space-5);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-3);
+    width: max-content;
+    max-width: min(560px, calc(100% - 2 * var(--ddd-space-6)));
+    max-height: calc(100% - 2 * var(--ddd-space-6));
+    overflow: auto;
+    padding: var(--ddd-space-4) var(--ddd-space-5);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-lg);
+    box-shadow: var(--ddd-shadow-lg);
+    color: var(--ddd-fg);
+  }
+  .ddd-merge-bar__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--ddd-space-5);
+  }
+  .ddd-merge-bar__title { font-weight: 600; }
+  .ddd-merge-bar__count { font-size: var(--ddd-text-sm); color: var(--ddd-fg-muted); }
+  .ddd-merge-bar__hint { margin: 0; font-size: var(--ddd-text-sm); color: var(--ddd-fg-muted); }
+  .ddd-merge-bar__rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-2);
+    max-height: 220px;
+    overflow: auto;
+  }
+  .ddd-merge-bar__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ddd-space-4);
+  }
+  .ddd-merge-bar__row-label {
+    min-width: 0;
+    font-size: var(--ddd-text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-merge-bar__row-noun {
+    color: var(--ddd-fg-muted);
+    text-transform: uppercase;
+    font-size: var(--ddd-text-xs);
+  }
+  .ddd-merge-bar__row-choices { display: flex; gap: var(--ddd-space-2); flex: none; }
+  .ddd-merge-bar__swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: var(--ddd-space-2);
+    border-radius: var(--ddd-radius-xs);
+    border: 1px solid var(--ddd-border);
+    vertical-align: middle;
+  }
+  .ddd-merge-bar__actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ddd-space-4);
+  }
+  .ddd-merge-bar__bulk { display: flex; gap: var(--ddd-space-2); }
+
 }
 
 /* ============================================================================

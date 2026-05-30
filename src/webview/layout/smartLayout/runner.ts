@@ -17,6 +17,7 @@ import { computeEdgeResets, computeSelectionEdgeResets, movedNames } from './edg
 export async function runSmartLayout(mode: SmartLayoutMode): Promise<void> {
   const s = store.getState();
   if (s.schema.tables.length === 0) return;
+  if (s.mergeConflicts) return; // blocking conflict mode (spec 14): the layout is read-only
 
   const colCount = new Map<QualifiedName, number>();
   for (const t of s.schema.tables) colCount.set(t.name, t.columns.length);

@@ -1,6 +1,6 @@
 import { createStore } from 'zustand/vanilla';
 import { useEffect, useReducer } from 'preact/hooks';
-import type { AppSettings, EdgeLayout, GroupLayout, Layout, ParseError, QualifiedName, Schema, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
+import type { AppSettings, EdgeLayout, GroupLayout, Layout, ParseError, QualifiedName, Schema, SerializableMergeConflict, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
@@ -42,6 +42,13 @@ export interface AppState {
   future: EditCommand[];
   /** Hard cap for `past`; oldest entries drop FIFO when exceeded. */
   historyCapacity: number;
+  /** Active layout-merge conflicts (spec 14). Non-null ⇒ the diagram is in blocking
+   *  conflict-resolution mode: pan/zoom only, no select/drag/edit/persist until resolved. */
+  mergeConflicts: SerializableMergeConflict[] | null;
+  /** Per-conflict decisions keyed by `SerializableMergeConflict.id`. Revertible until Apply. */
+  mergeDecisions: Record<string, 'ours' | 'theirs'>;
+  /** True after Apply is posted to the host, while awaiting `merge:done`. */
+  mergeApplying: boolean;
 }
 
 export interface AppActions {
@@ -76,6 +83,11 @@ export interface AppActions {
   undo(): void;
   redo(): void;
   clearHistory(): void;
+  beginMerge(conflicts: SerializableMergeConflict[]): void;
+  setMergeDecision(id: string, side: 'ours' | 'theirs'): void;
+  setMergeDecisionsBulk(side: 'ours' | 'theirs'): void;
+  setMergeApplying(applying: boolean): void;
+  endMerge(): void;
 }
 
 const initial: AppState = {
@@ -100,6 +112,9 @@ const initial: AppState = {
   past: [],
   future: [],
   historyCapacity: 200,
+  mergeConflicts: null,
+  mergeDecisions: {},
+  mergeApplying: false,
 };
 
 export const store = createStore<AppState & AppActions>((set, _get) => ({
@@ -303,6 +318,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   undo() {
     set((s) => {
+      if (s.mergeConflicts) return s; // read-only during conflict resolution (spec 14)
       if (s.past.length === 0) return s;
       const cmd = s.past[s.past.length - 1]!;
       const patch = applyCommand(s, cmd, 'undo');
@@ -315,6 +331,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   redo() {
     set((s) => {
+      if (s.mergeConflicts) return s; // read-only during conflict resolution (spec 14)
       if (s.future.length === 0) return s;
       const cmd = s.future[s.future.length - 1]!;
       const patch = applyCommand(s, cmd, 'redo');
@@ -327,6 +344,27 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   clearHistory() {
     set({ past: [], future: [] });
+  },
+  beginMerge(conflicts) {
+    // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
+    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, selection: new Set(), selectedEdgeId: null });
+  },
+  setMergeDecision(id, side) {
+    set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
+  },
+  setMergeDecisionsBulk(side) {
+    set((s) => {
+      if (!s.mergeConflicts) return s;
+      const next: Record<string, 'ours' | 'theirs'> = {};
+      for (const c of s.mergeConflicts) next[c.id] = side;
+      return { mergeDecisions: next };
+    });
+  },
+  setMergeApplying(applying) {
+    set({ mergeApplying: applying });
+  },
+  endMerge() {
+    set({ mergeConflicts: null, mergeDecisions: {}, mergeApplying: false });
   },
 }));
 

@@ -109,6 +109,25 @@ export interface Layout {
   edges?: Record<string, EdgeLayout>;
 }
 
+/* ----- Collaborative merge (see specs/14) ----- */
+
+export type MergeSection = 'tables' | 'groups' | 'edges';
+
+/**
+ * A single "both sides changed the same key" conflict, in a shape safe to cross the
+ * postMessage boundary. Absent/deleted sides are `null` (NOT `undefined` — VS Code's
+ * postMessage drops undefined keys). `id` = `${section}::${key}`, stable, keys the
+ * resolution map the webview sends back. The host applies from its OWN retained
+ * `MergeConflict[]`; this payload is display-only + identity.
+ */
+export interface SerializableMergeConflict {
+  id: string;
+  section: MergeSection;
+  key: string;
+  ours: TableLayout | GroupLayout | EdgeLayout | null;
+  theirs: TableLayout | GroupLayout | EdgeLayout | null;
+}
+
 /* ----- Settings ----- */
 
 export type UiDensity = 'compact' | 'cozy' | 'comfortable';
@@ -175,6 +194,8 @@ export type HostToWebview =
   | { type: 'exporters:list'; payload: { exporters: ExporterMeta[] } }
   | { type: 'export:result'; payload: { ok: boolean; warnings?: string[]; message?: string } }
   | { type: 'settings:loaded'; payload: AppSettings }
+  | { type: 'merge:begin'; payload: { conflicts: SerializableMergeConflict[] } }
+  | { type: 'merge:done' }
   | { type: 'export:prompt' };
 
 /* ----- Protocol: Webview → Host ----- */
@@ -186,6 +207,7 @@ export type WebviewToHost =
   | { type: 'command:pruneOrphans' }
   | { type: 'command:export'; payload: ExportCommandPayload }
   | { type: 'settings:update'; payload: Partial<FlatSettingsPatch> }
+  | { type: 'merge:resolve'; payload: { decisions: Record<string, 'ours' | 'theirs'> } }
   | { type: 'error:log'; payload: { message: string; stack?: string } };
 
 /**

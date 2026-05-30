@@ -3,6 +3,8 @@ import { store, useAppStore } from './state/store';
 import { autoLayout, estimateSize } from './layout/autoLayout';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
+import { MergeGhosts } from './render/mergeGhosts';
+import { MergePanel } from './render/mergePanel';
 import { CollapsedGroupNode } from './render/collapsedGroupNode';
 import { GroupContainer } from './render/groupContainer';
 import { ZoomButtons } from './render/zoomButtons';
@@ -40,6 +42,7 @@ export function App(_props: AppProps) {
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
   const tableColors = useAppStore((s) => s.tableColors);
   const selection = useAppStore((s) => s.selection);
+  const mergeConflicts = useAppStore((s) => s.mergeConflicts);
   const lodThresholds = useAppStore((s) => s.settings.lod);
   const density = useAppStore((s) => s.settings.ui.density);
   const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
@@ -253,6 +256,7 @@ export function App(_props: AppProps) {
         return;
       }
       if (e.button === 0) {
+        if (store.getState().mergeConflicts) return; // conflict mode: no marquee/selection
         // Only start marquee if click landed on empty viewport (not on a table / group / etc).
         const target = e.target as HTMLElement;
         if (target !== el && !target.classList.contains('ddd-world') && !target.classList.contains('ddd-group-container')) {
@@ -334,6 +338,7 @@ export function App(_props: AppProps) {
       // Skip when typing inside an input/textarea/contenteditable (e.g. color popup).
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (store.getState().mergeConflicts) return; // conflict mode: no undo/redo (layout is read-only)
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const k = e.key.toLowerCase();
@@ -430,6 +435,10 @@ export function App(_props: AppProps) {
   const lod = lodForZoom(viewport.zoom, lodThresholds);
   const worldTransform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
 
+  // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
+  const mergeTableKeys = new Set<QualifiedName>();
+  if (mergeConflicts) for (const c of mergeConflicts) if (c.section === 'tables') mergeTableKeys.add(c.key);
+
   const renderedTables = schema.tables.filter(
     (t) => !derived.hiddenTables.has(t.name) && !derived.collapsedTables.has(t.name),
   );
@@ -441,7 +450,7 @@ export function App(_props: AppProps) {
     <>
       <div class="ddd-viewport" ref={viewportRef} tabIndex={0}>
         {ready && schema.tables.length > 0 ? (
-          <div class="ddd-world" style={{ transform: worldTransform }}>
+          <div class={mergeConflicts ? 'ddd-world is-merge-locked' : 'ddd-world'} style={{ transform: worldTransform }}>
             {snapToGrid ? (
               <div
                 class="ddd-grid"
@@ -468,6 +477,7 @@ export function App(_props: AppProps) {
             />
             {renderedTables.map((t) => {
               if (visibleNames && !visibleNames.has(t.name)) return null;
+              if (mergeTableKeys.has(t.name)) return null; // shown as ghosts during conflict resolution
               const pos = positions.get(t.name);
               if (!pos) return null;
               const groupColor = t.groupName ? (groupState[t.groupName]?.color ?? colorForGroup(t.groupName)) : undefined;
@@ -500,6 +510,7 @@ export function App(_props: AppProps) {
                 />
               );
             })}
+            {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} /> : null}
           </div>
         ) : null}
         {marquee ? (
@@ -519,7 +530,8 @@ export function App(_props: AppProps) {
         ) : null}
         {ready ? <GroupPanel /> : null}
         {ready ? <ZoomButtons /> : null}
-        {ready ? <ActionsPanel /> : null}
+        {ready && !mergeConflicts ? <ActionsPanel /> : null}
+        {ready && mergeConflicts ? <MergePanel /> : null}
       </div>
       {parseError ? (
         <div class="ddd-banner" title={parseError.message}>

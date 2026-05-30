@@ -54,6 +54,12 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
     case 'command:autoArrange':
       void runSmartLayout(msg.payload.mode);
       return;
+    case 'merge:begin':
+      state.beginMerge(msg.payload.conflicts);
+      return;
+    case 'merge:done':
+      state.endMerge();
+      return;
   }
 });
 
