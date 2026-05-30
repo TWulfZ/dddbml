@@ -1,4 +1,4 @@
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { GroupLayout, SerializableMergeConflict, TableLayout } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
 import { estimateSize } from '../layout/autoLayout';
@@ -6,7 +6,11 @@ import { focusDiff } from './viewport';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
 import { cn } from '../ui/cn';
-import { IconChevronRight } from '../icons';
+import { IconChevronDown, IconChevronRight, IconChevronUp } from '../icons';
+
+/** Above this many orbs the rail can't show one comfortable row at the panel's fixed width, so the
+ *  collapsed rail scrolls and the expand toggle (full wrapped grid) appears. */
+const DOT_OVERFLOW_AT = 28;
 import { sideClass, SIDE_LABEL } from './mergePanel';
 import type { Bbox } from './spatialIndex';
 
@@ -22,6 +26,8 @@ export function MergeStepper() {
   const cursor = useAppStore((s) => s.mergeCursor);
   const schema = useAppStore((s) => s.schema);
   const hoverState = useAppStore((s) => s.mergeHover);
+  const [dotsExpanded, setDotsExpanded] = useState(false);
+  const activeDotRef = useRef<HTMLButtonElement>(null);
 
   // Camera follows the cursor: frame the current diff whenever it lands on a TABLE conflict.
   useEffect(() => {
@@ -36,6 +42,12 @@ export function MergeStepper() {
     else if (a) focusDiff(a, a);
     else if (b) focusDiff(b, b);
   }, [cursor, conflicts]);
+
+  // Keep the active orb in view as the cursor moves (the collapsed rail scrolls horizontally).
+  // Instant (no behavior) so it respects reduced-motion and never lags the camera tween.
+  useEffect(() => {
+    activeDotRef.current?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }, [cursor, dotsExpanded]);
 
   if (!conflicts || conflicts.length === 0) return null;
   const total = conflicts.length;
@@ -74,21 +86,33 @@ export function MergeStepper() {
           </Button>
         </Tooltip>
       </div>
-      <div class="ddd-merge-dots" role="group" aria-label="Conflicts">
-        {conflicts.map((cf, i) => {
-          const d = decisions[cf.id];
-          return (
-            <button
-              type="button"
-              key={cf.id}
-              class={cn('ddd-merge-dot', i === idx && 'is-at', d === 'ours' && 'is-current-side', d === 'theirs' && 'is-incoming-side')}
-              aria-current={i === idx || undefined}
-              aria-label={`Conflict ${i + 1} of ${total}${d ? `, resolved as ${SIDE_LABEL[d]}` : ', unresolved'}`}
-              title={`${i + 1} / ${total}${d ? ` · ${SIDE_LABEL[d]}` : ''}`}
-              onClick={() => store.getState().setMergeCursor(i)}
-            />
-          );
-        })}
+      <div class="ddd-merge-rail">
+        <div class={cn('ddd-merge-dots', dotsExpanded && 'is-expanded')} role="group" aria-label="Conflicts">
+          {conflicts.map((cf, i) => {
+            const d = decisions[cf.id];
+            return (
+              <button
+                type="button"
+                key={cf.id}
+                ref={i === idx ? activeDotRef : undefined}
+                class={cn('ddd-merge-dot', i === idx && 'is-at', d === 'ours' && 'is-current-side', d === 'theirs' && 'is-incoming-side')}
+                aria-current={i === idx || undefined}
+                aria-label={`Conflict ${i + 1} of ${total}${d ? `, resolved as ${SIDE_LABEL[d]}` : ', unresolved'}`}
+                title={`${i + 1} / ${total}${d ? ` · ${SIDE_LABEL[d]}` : ''}`}
+                onClick={() => store.getState().setMergeCursor(i)}
+              >
+                <span class="ddd-merge-dot__orb" />
+              </button>
+            );
+          })}
+        </div>
+        {total > DOT_OVERFLOW_AT ? (
+          <Tooltip label={dotsExpanded ? 'Collapse orbs' : 'Show all orbs'} placement="bottom">
+            <Button variant="history" size="tool" aria-expanded={dotsExpanded} onClick={() => setDotsExpanded((v) => !v)}>
+              {dotsExpanded ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+            </Button>
+          </Tooltip>
+        ) : null}
       </div>
       <div class="ddd-merge-step__label" title={`${noun} ${c.key}`}>
         <span class="ddd-merge-bar__row-noun">{noun}</span> {c.key}

@@ -178,10 +178,17 @@ Tailwind en `@layer utilities` ganarían sobre `@layer components`; por eso no h
   etiqueta del conflicto, y picks **current/incoming con la posición apilada debajo del nombre**
   (`X:… Y:…`, ahorra ancho). **Navegación sólo-chevron** — `<Button variant="history" size="tool">`
   con `<IconChevronRight flipX/>` (prev) / `<IconChevronRight/>` (next), cada uno en
-  `<Tooltip placement="bottom">` (sin texto; dispara también en focus). El **riel de puntos**
-  (`.ddd-merge-dots`) es **clickable** (salta a ese conflicto vía `setMergeCursor(i)`) y se colorea
-  por el lado resuelto con los colores git del editor (`--ddd-merge-current/incoming`; gris hueco =
-  sin resolver; anillo accent = cursor). El `__pos` central **no** es `aria-live` (lo es la píldora).
+  `<Tooltip placement="bottom">` (sin texto; dispara también en focus). El **riel de orbes**
+  (`.ddd-merge-rail` → `.ddd-merge-dots`): cada orbe es un `<button>` con **padding transparente** que
+  envuelve el círculo visible (`.ddd-merge-dot__orb`); con `gap:0` los hit-box **tilean** todo el ancho,
+  así clickear el espacio entre orbes ya selecciona (no hay que acertar el círculo de 8px). Hover →
+  borde accent del orbe; **clickable** salta a ese conflicto (`setMergeCursor(i)`); se colorea por el
+  lado resuelto con los colores git del editor (`--ddd-merge-current/incoming`; gris hueco = sin
+  resolver); cursor = orbe **escalado + borde accent** (distinto del anillo de `:focus-visible`).
+  **Overflow:** por defecto **una fila con scroll horizontal** (alto constante; el orbe activo se
+  auto-centra con `scrollIntoView` en cada next/prev); un **toggle de expandir** (sólo si hay >28
+  orbes) cambia a la **grilla completa** envuelta, con alto tope + scroll vertical. El `__pos` central
+  **no** es `aria-live` (lo es la píldora).
   - **Cámara enfoca el diff sólo en next/prev** (decisión del usuario: el zoom en
     *hover* marea y pelea con el pan). Un `useEffect([mergeCursor])` arma el bbox de
     los dos fantasmas (`estimateSize` + `(x,y)`) y llama `focusDiff` (`viewport.ts`):
