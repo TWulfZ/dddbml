@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.6] — 2026-05-30
+
+Conflict-resolver panel UX overhaul (`specs/14`, `specs/12`). Pure-webview — no host/protocol changes.
+
+### Changed
+- **Chevron-only stepper nav + progress spine.** Step-through Prev/Next are now icon-only chevrons with tooltips; a count pill, a progress bar (success-green at 100%) and a per-conflict dot rail replace the old text nav. The panel keeps a stable width so toggling Review-all ↔ Step-through no longer jumps.
+- **Git-style naming.** Sides are labeled **current** / **incoming** (not mine/theirs) to match an editor merge conflict (store keys stay `ours`/`theirs`). The step picks stack the position (`X:… Y:…`) under the side name to save width.
+- **Diff-orb rail.** The dot rail is clickable — jump to any conflict — with generous tiled hit targets (no need to land on the small circle) and a hover border cue. Orbs are colored by the resolved side using the editor's git current/incoming colors (`--ddd-merge-current/incoming`); unresolved = hollow grey; the cursor orb scales + accent border. It scrolls as one row by default (active orb auto-centered on next/prev) and an **expand toggle** (past ~28 orbs) reveals the full wrapped, height-capped grid.
+- **Less redundancy + a confirm step.** The conflict count now appears only in the `R/N resolved` pill (dropped from the title, the hint and the Apply button); **Apply opens a confirmation dialog** that restates the count. Removed the redundant check ticks. Bulk actions are compact two-line buttons (“All” over a git marker glyph `<<<`/`>>>`, full action in the tooltip).
+
+### Fixed
+- Resolver accessibility: a single `aria-live` region (the count pill), the dot rail exposes a labeled `role="group"`, dots carry per-conflict labels + `aria-current`, and the cursor indicator was made visually distinct from the keyboard focus ring.
+
 ## [0.2.5] — 2026-05-30
 
 A "premium" UI polish pass: a floating, icon-only tool bar, a reusable styled tooltip, one canonical icon button across every overlay menu, and tasteful token-driven motion (`specs/12`, `specs/06`). Pure-webview — no host/protocol changes.
