@@ -248,11 +248,13 @@ Inventario de modificadores `.is-*`. Cada uno se aplica en `@layer state` con re
 - **Tooltips, context menus, color popup, modal overlay**: fade-in `var(--ddd-duration-fast) var(--ddd-ease-out)`.
 - **Modal panel**: fade + translateY(8px) → 0, `var(--ddd-duration-medium)`.
 - **Group panel slide**: ancho/altura `var(--ddd-duration-slow) var(--ddd-ease-out)`.
-- **Botones**: hover transition `background var(--ddd-duration-instant)`, press `transform: scale(0.97) var(--ddd-ease-spring)`.
+- **Botones**: transición conjunta `color/background/border/scale var(--ddd-duration-instant) var(--ddd-ease-out)` en la clase base; press = `active:scale-[0.97]` (cierra el drift previo: el spec lo documentaba pero solo `secondary`/`primary` lo tenían — ahora **todas** las variantes). La geometría del scale usa la propiedad CSS `scale` (no `transform`), independiente de las animaciones de entrada que animan `transform`.
+- **Tip de botón** (`ui/Tooltip`): fade + rise `translateY(4px)→0` (`ddd-tip-in`, `var(--ddd-duration-fast) var(--ddd-ease-out)`). El elemento externo posiciona (`translate(-50%, …)`); el interno anima — separación de propiedades para no colisionar el transform.
+- **Barra de acciones (entrada escalonada)**: al expandir, cada tool entra con `ddd-tool-in` (fade + `translateY(6px)→0`, `var(--ddd-duration-medium) var(--ddd-ease-out)`) con `animation-delay` por `nth-child` (25ms de paso). `backwards` mantiene el estado inicial antes del delay.
 
 Nada que afecte `width`/`height`/`top`/`left` directo dentro del viewport (el render usa `transform`, ya cumple).
 
-Reduce-motion (`@media (prefers-reduced-motion: reduce)`): `--ddd-duration-fast/medium/slow` → `0ms`. No se desactivan las animaciones del drag (son interacciones directas, no decorativas).
+Reduce-motion (`@media (prefers-reduced-motion: reduce)`): `--ddd-duration-fast/medium/slow` → `0ms` **y** `animation-delay: 0ms !important` (para que la entrada escalonada no secuencie). No se desactivan las animaciones del drag (son interacciones directas, no decorativas).
 
 ---
 
@@ -327,7 +329,7 @@ Solución: una capa de primitivos en `src/webview/ui/`, siguiendo el **patrón s
   todos los atributos nativos: `onClick`, `title`, `disabled`, `aria-*`; `type` por defecto
   `"button"`). La config de variantes vive **dentro del componente** vía `cva()`
   (class-variance-authority), exportada como `buttonVariants`. API: `variant` ×
-  `size: sm | md | icon` + props de toggle `active` / `off`. Las **7 variantes mapean 1:1 a las
+  `size: sm | md | icon | tool` + props de toggle `active` / `off`. Las **7 variantes mapean 1:1 a las
   7 familias legacy**: `ghost`→`.ddd-icon-btn`, `secondary`→`.ddd-btn`,
   `primary`→`.ddd-btn--primary`, `action`→`.ddd-actions-btn`, `history`→`.ddd-hist-btn`,
   `zoom`→`.ddd-zoom__btn`, `toolbar`→`.ddd-edge-toolbar__btn`. `size="icon"` = cuadrado
@@ -372,7 +374,17 @@ real** (≥2 call sites):
   (settingsPanel) y `FieldEditor` (exportModal) que cada archivo reimplementaba.
 - **`RadioGroup.tsx`** — control segmentado (`.ddd-radio-group`), genérico
   `<T extends string>`. Migrado: densidad en settingsPanel.
-- **`Search.tsx`** — input con ícono (`.ddd-search`). Migrado: groupPanel.
+- **`Search.tsx`** — input con ícono (`.ddd-search`). Migrado: groupPanel. Acepta
+  `inputRef` opcional para enfocar el input imperativamente (lo usa el botón Search de la barra).
+- **`Tooltip.tsx`** — tip ligero para botones solo-ícono (distinto del tooltip rico de
+  canvas en `render/tooltip.tsx`). **Clona** su único hijo para inyectarle los handlers
+  hover/focus + `aria-label`/`aria-describedby` (la metadata a11y cae en el `<button>` real y
+  se elimina el `title` nativo → sin doble tooltip del SO). Se muestra en **hover y focus de
+  teclado**, con delay de apertura (~400ms) y cierre instantáneo; se descarta con Escape.
+  Portaleado a `<body>` (escapa `overflow`), posicionado desde el rect del trigger. API:
+  `<Tooltip label shortcut? placement?>`. Migrado: barra de acciones, zoom, header de Diagram
+  Views, edge toolbar. **Las filas densas (group/table rows) siguen con `title` nativo** — son
+  listas, no menús; evita el coste de un wrapper por fila.
 
 Se dejan nativos: los radios clásicos de *Scope* en exportModal (`.ddd-radio` con
 contadores + disabled, uso único) y los controles estructurales ya citados.
@@ -423,7 +435,42 @@ Setup (verificado, build OK):
   necesitó el fallback de emitir CSS como asset + `<link asWebviewUri>` (el CSP ya lo permitiría
   si hiciera falta). Costo de bundle observado: +13 KB sin minify (247 → 260 KB; gzip 57.9 KB).
 
+## Botón de ícono canónico + barra de acciones flotante (UI polish)
+
+Pase de pulido de UI ("componentes premium"): la barra de acciones se sentía **anclada** al
+borde y mezclaba botones ícono / ícono+texto / solo-texto de ancho variable. Decisiones tomadas
+con el owner (ver plan):
+
+- **Geometría en `size`, color/estado en `variant`.** Las variantes solo-ícono (`history`,
+  `zoom`, `toolbar`) **ya no traen ancho/alto**; la geometría vive en `size`. Se añade
+  `size="tool"` = **un único cuadrado fijo (28×28, `--ddd-radius-sm`)** para todos los botones de
+  barra/menú flotante (barra de acciones, zoom, header de Diagram Views, edge toolbar). Las filas
+  densas conservan `size="icon"` (24×22). Regla: *un* botón de ícono para los menús, consistente.
+  Como Tailwind no controla especificidad, separar geometría (size) de color (variant) mantiene
+  las utilidades **libres de conflicto** sin `tailwind-merge`.
+- **Barra de acciones flotante y colapsable** (`render/actionsPanel.tsx`, `.ddd-actions-bar`):
+  despega del borde (`bottom: var(--ddd-space-4)`), con borde completo + `--ddd-shadow-md` +
+  `--ddd-radius-md` en ambos estados (se elimina el look anclado `border-bottom:none`/sombra
+  removida). Colapsada = un solo handle (chevron). Expandida = una fila de botones solo-ícono
+  (Auto-arrange · Grid/snap · Search · Export · Settings) con entrada escalonada. Auto-arrange
+  abre un **popover** reusando `ContextMenu` (`render/contextMenu.tsx`) con sus 3 ámbitos
+  (all/new/selection).
+- **Reubicaciones:** Undo/Redo → el cluster de **zoom** (la navegación de historial acompaña a la
+  de viewport; `.ddd-zoom__divider` los separa). El filtro **PK/FK** → **Diagram Views** como
+  *View options* (es una opción de vista). El botón Search de la barra abre y enfoca el buscador
+  de Diagram Views (`openViewsAndFocusSearch` en el store).
+- **Diferido:** "Seleccionar todas las relaciones" requiere un modelo de selección **multi-edge**
+  (hoy solo existe `selectedEdgeId: string | null`); queda como comando futuro.
+
+State conventions nuevas: `.ddd-actions-bar.is-collapsed` / `.is-expanded`.
+
 ## Preguntas abiertas (Open Questions)
+
+5. ~~Pulido de UI: barra flotante + botones solo-ícono + tooltips~~ **RESUELTO** (este cambio):
+   barra colapsable flotante, `size="tool"` canónico (geometría en size, color en variant),
+   primitivo `Tooltip` reutilizable (hover + focus, a11y, reduced-motion), reubicación de
+   undo/redo → zoom y PK/FK → Diagram Views, motion con tokens existentes. "Select all relations"
+   diferido (necesita selección multi-edge).
 
 1. ~~Validación visual + decisión continuar/revertir~~ **RESUELTO**: el owner confirmó el look,
    se migraron los 6 call sites, se adoptó el patrón shadcn (`cva` co-localizado) y se retiraron

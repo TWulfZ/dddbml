@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.5] — 2026-05-30
+
+A "premium" UI polish pass: a floating, icon-only tool bar, a reusable styled tooltip, one canonical icon button across every overlay menu, and tasteful token-driven motion (`specs/12`, `specs/06`). Pure-webview — no host/protocol changes.
+
+### Added
+
+#### Reusable `Tooltip` primitive (`src/webview/ui/Tooltip.tsx`, `specs/12`)
+- Lightweight styled tooltip for icon-only buttons, distinct from the rich canvas tooltip. Shows on **hover and keyboard focus**, with an open delay, Escape-dismiss, and a fade+rise entrance. Clones its trigger to inject `aria-label`/`aria-describedby` and drop the native `title` (no doubled OS tooltip); portaled to `<body>`. Optional shortcut-key chip (e.g. `Ctrl+Z`).
+
+### Changed
+
+#### Floating, icon-only action bar (`src/webview/render/actionsPanel.tsx`, `specs/12`)
+- The bottom bar now **floats** (lifted off the edge, full border + shadow + radius in every state) instead of docking flush. It is **collapsible** to a single chevron handle and expands to one row of **fixed-size, icon-only** buttons (Auto-arrange · Grid/snap · Search · Export · Settings) with a staggered entrance. **Auto-arrange opens a popover** (Re-arrange all / Place new tables / Re-arrange selection) reusing the generic `ContextMenu`.
+
+#### Canonical icon button (`src/webview/ui/Button.tsx`, `specs/12`)
+- One fixed `size="tool"` (28×28) square for **all** floating-toolbar/menu icon buttons (action bar, zoom cluster, Diagram Views header, edge toolbar); dense list rows keep `size="icon"`. Geometry now lives in `size` and the icon variants (`history`/`zoom`/`toolbar`) carry **color/state only** — conflict-free, still no `tailwind-merge`. Press feedback (`active:scale`) moved to the base so every button gets it.
+
+#### Command relocations
+- **Undo/Redo → the zoom cluster** (history navigation now pairs with viewport navigation; a divider separates the groups).
+- **PK/FK-only filter → Diagram Views** as a *View options* toggle (it's a view option). The panel now **always renders** (even with no groups) and its open/focus state is store-driven, so the tool bar's **Search** button opens Diagram Views and focuses its search input.
+- Edge toolbar and the Diagram Views header buttons adopt the canonical icon button + tooltips.
+
+#### Motion (tokens only, `specs/12`)
+- Tooltip fade-rise, staggered tool-bar entrance, and a unified button press transition — all via existing `--ddd-*` tokens. `prefers-reduced-motion: reduce` now also zeroes `animation-delay` so the staggered entrance plays instantly.
+
+### Notes
+- *Deferred:* "select all relations" — needs a multi-edge selection model the store doesn't have yet (today only a single edge is selectable). It will land as a future command.
+
 ## [0.2.4] — 2026-05-30
 
 Collaborative layout merge under Git, an in-canvas conflict resolver, and a large edge-rendering performance pass for thousands of relations (`specs/03`, `specs/14`, `specs/04`, `specs/05`, `specs/07`).

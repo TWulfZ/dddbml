@@ -668,6 +668,40 @@
     word-wrap: break-word;
   }
 
+  /* ----- Tip (lightweight button tooltip; see ui/Tooltip.tsx) ----- */
+  /* Outer holds placement transform so the inner can own the entrance animation conflict-free. */
+  .ddd-tip-pos {
+    position: fixed;
+    z-index: 1000;
+    pointer-events: none;
+  }
+  .ddd-tip--top { transform: translate(-50%, -100%); }
+  .ddd-tip--bottom { transform: translate(-50%, 0); }
+  .ddd-tip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-3);
+    white-space: nowrap;
+    padding: var(--ddd-space-2) var(--ddd-space-4);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-sm);
+    color: var(--ddd-fg);
+    font-size: var(--ddd-text-sm);
+    line-height: var(--ddd-leading-tight);
+    box-shadow: var(--ddd-shadow-md);
+    animation: ddd-tip-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-tip__key {
+    font-family: var(--ddd-font-mono);
+    font-size: var(--ddd-text-xs);
+    color: var(--ddd-fg-muted);
+    background: var(--ddd-surface-active);
+    border: 1px solid var(--ddd-border-subtle);
+    border-radius: var(--ddd-radius-xs);
+    padding: 0 var(--ddd-space-2);
+  }
+
   /* ----- Context menu ----- */
   .ddd-context-menu {
     position: fixed;
@@ -825,13 +859,21 @@
     bottom: var(--ddd-space-4);
     right: var(--ddd-space-4);
     display: flex;
+    align-items: center;
     gap: var(--ddd-space-1);
     background: var(--ddd-surface-raised);
     border: 1px solid var(--ddd-border);
     border-radius: var(--ddd-radius-md);
     padding: var(--ddd-space-1);
     z-index: 5;
-    box-shadow: var(--ddd-shadow-sm);
+    box-shadow: var(--ddd-shadow-md);
+  }
+  /* Thin rule separating the undo/redo sub-group from the zoom controls. */
+  .ddd-zoom__divider {
+    width: 1px;
+    align-self: stretch;
+    margin: var(--ddd-space-1) var(--ddd-space-1);
+    background: var(--ddd-border-subtle);
   }
   .ddd-zoom__pct {
     position: relative;
@@ -869,61 +911,45 @@
     opacity: 0;
   }
 
-  /* ----- Actions panel (bottom-center) ----- */
-  .ddd-actions-panel {
+  /* ----- Actions bar (bottom-center, floating) ----- */
+  .ddd-actions-bar {
     position: absolute;
-    bottom: 0;
+    bottom: var(--ddd-space-4);
     left: 50%;
     transform: translateX(-50%);
-    display: flex;
-    flex-direction: column-reverse;
-    align-items: center;
     z-index: 5;
-  }
-  .ddd-actions-panel__footer {
     display: flex;
-    align-items: stretch;
-    background: var(--ddd-surface-raised);
-    border: 1px solid var(--ddd-border);
-    border-bottom: none;
-    border-top-left-radius: var(--ddd-radius-md);
-    border-top-right-radius: var(--ddd-radius-md);
-    box-shadow: var(--ddd-shadow-sm);
-    overflow: hidden;
-  }
-  .ddd-actions-panel.is-open .ddd-actions-panel__footer {
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-    border-top: none;
-    box-shadow: none;
-  }
-  .ddd-actions-panel__handle {
-    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    padding: var(--ddd-space-2) var(--ddd-space-6);
-    background: transparent;
-    border: none;
-    border-left: 1px solid var(--ddd-border);
-    color: var(--ddd-fg-muted);
-    cursor: pointer;
-    transition: color var(--ddd-duration-instant), background var(--ddd-duration-instant);
-  }
-  .ddd-actions-panel__handle:hover {
-    color: var(--ddd-fg);
-    background: var(--ddd-surface-hover);
-  }
-  .ddd-actions-panel__body {
+    padding: var(--ddd-space-1);
     background: var(--ddd-surface-raised);
     border: 1px solid var(--ddd-border);
-    border-bottom: none;
-    border-top-left-radius: var(--ddd-radius-md);
-    border-top-right-radius: var(--ddd-radius-md);
-    padding: var(--ddd-space-4) var(--ddd-space-5);
-    display: flex;
-    gap: var(--ddd-space-3);
+    border-radius: var(--ddd-radius-md);
     box-shadow: var(--ddd-shadow-md);
   }
+  .ddd-actions-bar__row {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-1);
+  }
+  .ddd-actions-bar__divider {
+    width: 1px;
+    align-self: stretch;
+    margin: var(--ddd-space-1) var(--ddd-space-1);
+    background: var(--ddd-border-subtle);
+  }
+  /* Staggered entrance of the tools when the bar expands (transform-prop only; the buttons'
+     :active scale uses the separate `scale` property, so the two never collide). */
+  .ddd-actions-bar.is-expanded .ddd-actions-bar__row > * {
+    animation: ddd-tool-in var(--ddd-duration-medium) var(--ddd-ease-out) backwards;
+  }
+  .ddd-actions-bar__row > *:nth-child(1) { animation-delay: 0ms; }
+  .ddd-actions-bar__row > *:nth-child(2) { animation-delay: 25ms; }
+  .ddd-actions-bar__row > *:nth-child(3) { animation-delay: 50ms; }
+  .ddd-actions-bar__row > *:nth-child(4) { animation-delay: 75ms; }
+  .ddd-actions-bar__row > *:nth-child(5) { animation-delay: 100ms; }
+  .ddd-actions-bar__row > *:nth-child(6) { animation-delay: 125ms; }
+  .ddd-actions-bar__row > *:nth-child(7) { animation-delay: 150ms; }
+  .ddd-actions-bar__row > *:nth-child(8) { animation-delay: 175ms; }
 
   /* ----- Group panel ----- */
   .ddd-group-panel {
@@ -974,6 +1000,23 @@
   }
   .ddd-group-panel__handle:hover {
     background: var(--ddd-surface-hover);
+  }
+
+  /* Global view toggles (PK/FK, …) — sit above the group list. */
+  .ddd-group-panel__views {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--ddd-space-2);
+    padding: var(--ddd-space-3) var(--ddd-space-5);
+    border-bottom: 1px solid var(--ddd-border-subtle);
+  }
+  .ddd-group-panel__section {
+    font-size: var(--ddd-text-xs);
+    font-weight: var(--ddd-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ddd-fg-muted);
   }
 
   .ddd-group-empty {
@@ -1576,6 +1619,18 @@
   }
 }
 
+/* Button tooltip — fade + slight rise (inner element; outer owns the placement transform). */
+@keyframes ddd-tip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Staggered tool entrance when the floating action bar expands. */
+@keyframes ddd-tool-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* Marching dots along an edge — negative offset + the path drawn M source…L target makes the dots
    travel in the relation's direction (source -> target). The offset is a LITERAL equal to one dash
    period — which, since the dash is 0, is just --ddd-edge-flow-gap — so the wrap is seamless (offset
@@ -1591,6 +1646,7 @@
   *::before,
   *::after {
     animation-duration: 0ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0ms !important;
   }

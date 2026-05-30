@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { TableGroup } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { ColorPopup } from '../render/colorPopup';
 import { Button } from '../ui/Button';
 import { Search } from '../ui/Search';
+import { Tooltip } from '../ui/Tooltip';
 import { bcColorFor } from './bcPalette';
 import {
   IconChevronDown,
@@ -14,6 +15,7 @@ import {
   IconExpandAll,
   IconEye,
   IconEyeClosed,
+  IconFilter,
   IconSettings,
 } from '../icons';
 
@@ -21,10 +23,17 @@ export function GroupPanel() {
   const groups = useAppStore((s) => s.schema.groups);
   const groupState = useAppStore((s) => s.groups);
   const hiddenTables = useAppStore((s) => s.hiddenTables);
-  const [open, setOpen] = useState(true);
+  const open = useAppStore((s) => s.viewsPanelOpen);
+  const focusNonce = useAppStore((s) => s.viewsSearchFocusNonce);
+  const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
   const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const setOpen = (v: boolean) => store.getState().setViewsPanelOpen(v);
 
-  if (groups.length === 0) return null;
+  // The toolbar's search button opens this panel and bumps the nonce; focus the input when it fires.
+  useEffect(() => {
+    if (focusNonce > 0) searchRef.current?.focus();
+  }, [focusNonce]);
 
   const lcQuery = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -35,6 +44,7 @@ export function GroupPanel() {
     });
   }, [groups, lcQuery]);
 
+  const hasGroups = groups.length > 0;
   const anyVisible = groups.some((g) => !(groupState[g.name]?.hidden));
   const anyExpanded = groups.some((g) => !(groupState[g.name]?.collapsed));
 
@@ -68,20 +78,45 @@ export function GroupPanel() {
       <div class="ddd-group-panel__head">
         <span class="ddd-group-panel__title">Diagram Views</span>
         <div class="ddd-group-panel__actions">
-          <Button variant="subtle" size="icon" onClick={toggleAllHidden} title={anyVisible ? 'Hide all' : 'Show all'}>
-            {anyVisible ? <IconEye size={13} /> : <IconEyeClosed size={13} />}
-          </Button>
-          <Button variant="subtle" size="icon" onClick={toggleAllCollapsed} title={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
-            {anyExpanded ? <IconCollapseAll size={13} /> : <IconExpandAll size={13} />}
-          </Button>
-          <Button variant="subtle" size="icon" onClick={() => setOpen(false)} title="Close">
-            <IconClose size={12} />
-          </Button>
+          {hasGroups ? (
+            <>
+              <Tooltip label={anyVisible ? 'Hide all' : 'Show all'}>
+                <Button variant="subtle" size="tool" onClick={toggleAllHidden}>
+                  {anyVisible ? <IconEye size={13} /> : <IconEyeClosed size={13} />}
+                </Button>
+              </Tooltip>
+              <Tooltip label={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
+                <Button variant="subtle" size="tool" onClick={toggleAllCollapsed}>
+                  {anyExpanded ? <IconCollapseAll size={13} /> : <IconExpandAll size={13} />}
+                </Button>
+              </Tooltip>
+            </>
+          ) : null}
+          <Tooltip label="Close">
+            <Button variant="subtle" size="tool" onClick={() => setOpen(false)}>
+              <IconClose size={12} />
+            </Button>
+          </Tooltip>
         </div>
       </div>
-      <Search value={query} onInput={setQuery} placeholder="Search table or group" />
+      <div class="ddd-group-panel__views">
+        <span class="ddd-group-panel__section">View options</span>
+        <Button
+          variant="action"
+          size="sm"
+          active={showOnlyPkFk}
+          onClick={() => store.getState().toggleShowOnlyPkFk()}
+          title="Show only primary-key and foreign-key columns"
+        >
+          <IconFilter size={12} />
+          <span>PK/FK columns only</span>
+        </Button>
+      </div>
+      <Search value={query} onInput={setQuery} placeholder="Search table or group" inputRef={searchRef} />
       <ul class="ddd-group-list">
-        {filtered.length === 0 ? (
+        {!hasGroups ? (
+          <li class="ddd-group-empty">No groups defined</li>
+        ) : filtered.length === 0 ? (
           <li class="ddd-group-empty">No matches for "{query}"</li>
         ) : null}
         {filtered.map((g) => (

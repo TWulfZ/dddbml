@@ -1,3 +1,4 @@
+import type { Ref } from 'preact';
 import { cn } from './cn';
 import { IconSearch } from '../icons';
 
@@ -7,15 +8,18 @@ export interface SearchProps {
   onInput: (value: string) => void;
   placeholder?: string;
   class?: string;
+  /** Optional ref to the inner input, so callers can focus it imperatively. */
+  inputRef?: Ref<HTMLInputElement>;
 }
 
-export function Search({ value, onInput, placeholder, class: extra }: SearchProps) {
+export function Search({ value, onInput, placeholder, class: extra, inputRef }: SearchProps) {
   return (
     <label class={cn('ddd-search', extra)}>
       <span class="ddd-search__icon">
         <IconSearch size={12} />
       </span>
       <input
+        ref={inputRef}
         class="ddd-search__input"
         type="text"
         placeholder={placeholder}

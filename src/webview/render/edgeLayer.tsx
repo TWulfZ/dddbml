@@ -10,6 +10,7 @@ import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoint
 import type { EdgeStyle } from '../state/history';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
 import { Button } from '../ui/Button';
+import { Tooltip } from '../ui/Tooltip';
 import { IconReset, IconSettings } from '../icons';
 
 interface GroupSize {
@@ -397,24 +398,28 @@ export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, g
               style={{ left: `${toolbarPos.x}px`, top: `${toolbarPos.y}px` }}
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <Button
-                variant="toolbar"
-                title="Reset line"
-                onClick={() => resetEdgeWaypoints(selectedRoute.id)}
-              >
-                <IconReset size={13} />
-              </Button>
-              <Button
-                variant="toolbar"
-                title="Edge color"
-                onClick={(e) => {
-                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  const { x, y } = popupAnchorFor(rect);
-                  setColorPopup({ refId: selectedRoute.id, x, y, before: readEdgeStyle(selectedRoute.id) });
-                }}
-              >
-                <IconSettings size={13} />
-              </Button>
+              <Tooltip label="Reset line">
+                <Button
+                  variant="toolbar"
+                  size="tool"
+                  onClick={() => resetEdgeWaypoints(selectedRoute.id)}
+                >
+                  <IconReset size={13} />
+                </Button>
+              </Tooltip>
+              <Tooltip label="Edge color">
+                <Button
+                  variant="toolbar"
+                  size="tool"
+                  onClick={(e) => {
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    const { x, y } = popupAnchorFor(rect);
+                    setColorPopup({ refId: selectedRoute.id, x, y, before: readEdgeStyle(selectedRoute.id) });
+                  }}
+                >
+                  <IconSettings size={13} />
+                </Button>
+              </Tooltip>
             </div>,
             document.body,
           )

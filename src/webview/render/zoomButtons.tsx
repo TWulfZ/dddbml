@@ -1,26 +1,58 @@
 import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
+import { schedulePersist } from '../persistence';
 import { fitToContent, zoomAtCenter } from './viewport';
 import { Button } from '../ui/Button';
-import { IconFitScreen, IconMinus, IconPlus } from '../icons';
+import { Tooltip } from '../ui/Tooltip';
+import { IconFitScreen, IconMinus, IconPlus, IconRedo, IconUndo } from '../icons';
 
 export function ZoomButtons() {
   const viewport = useAppStore((s) => s.viewport);
   const zoomStep = useAppStore((s) => s.settings.zoomStep);
+  const pastLen = useAppStore((s) => s.past.length);
+  const futureLen = useAppStore((s) => s.future.length);
   const getEl = () => document.querySelector<HTMLElement>('.ddd-viewport');
+
+  const undo = () => {
+    if (store.getState().past.length === 0) return;
+    store.getState().undo();
+    schedulePersist();
+  };
+  const redo = () => {
+    if (store.getState().future.length === 0) return;
+    store.getState().redo();
+    schedulePersist();
+  };
 
   return (
     <div class="ddd-zoom">
-      <Button variant="zoom" title="Zoom out (Ctrl+-)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(1 / zoomStep, el); }}>
-        <IconMinus size={13} />
-      </Button>
+      <Tooltip label="Undo" shortcut="Ctrl+Z">
+        <Button variant="history" size="tool" disabled={pastLen === 0} onClick={undo}>
+          <IconUndo size={14} />
+        </Button>
+      </Tooltip>
+      <Tooltip label="Redo" shortcut="Ctrl+Shift+Z">
+        <Button variant="history" size="tool" disabled={futureLen === 0} onClick={redo}>
+          <IconRedo size={14} />
+        </Button>
+      </Tooltip>
+      <span class="ddd-zoom__divider" aria-hidden="true" />
+      <Tooltip label="Zoom out" shortcut="Ctrl+-">
+        <Button variant="zoom" size="tool" onClick={() => { const el = getEl(); if (el) zoomAtCenter(1 / zoomStep, el); }}>
+          <IconMinus size={14} />
+        </Button>
+      </Tooltip>
       <ZoomInput zoom={viewport.zoom} />
-      <Button variant="zoom" title="Zoom in (Ctrl+=)" onClick={() => { const el = getEl(); if (el) zoomAtCenter(zoomStep, el); }}>
-        <IconPlus size={13} />
-      </Button>
-      <Button variant="zoom" title="Fit to content (Ctrl+1)" onClick={() => { const el = getEl(); if (el) fitToContent(el); }}>
-        <IconFitScreen size={13} />
-      </Button>
+      <Tooltip label="Zoom in" shortcut="Ctrl+=">
+        <Button variant="zoom" size="tool" onClick={() => { const el = getEl(); if (el) zoomAtCenter(zoomStep, el); }}>
+          <IconPlus size={14} />
+        </Button>
+      </Tooltip>
+      <Tooltip label="Fit to content" shortcut="Ctrl+1">
+        <Button variant="zoom" size="tool" onClick={() => { const el = getEl(); if (el) fitToContent(el); }}>
+          <IconFitScreen size={14} />
+        </Button>
+      </Tooltip>
     </div>
   );
 }

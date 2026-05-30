@@ -36,6 +36,11 @@ export interface AppState {
   exportPromptOpen: boolean;
   /** When true, the Settings panel is open. */
   settingsPanelOpen: boolean;
+  /** When true, the Diagram Views panel is expanded (was local to GroupPanel; lifted so the
+   *  toolbar's search button can open it). */
+  viewsPanelOpen: boolean;
+  /** Bumped to request the Diagram Views search input take focus (toolbar search action). */
+  viewsSearchFocusNonce: number;
   /** Undo stack. Tail = most recent. Capped at `historyCapacity`. Volatile. */
   past: EditCommand[];
   /** Redo stack. Tail = most recently undone. Cleared on any new push. */
@@ -82,6 +87,8 @@ export interface AppActions {
   setExporters(list: ExporterMeta[]): void;
   setExportPromptOpen(open: boolean): void;
   setSettingsPanelOpen(open: boolean): void;
+  setViewsPanelOpen(open: boolean): void;
+  openViewsAndFocusSearch(): void;
   pushMoveCommand(cmd: MoveCommand): void;
   pushWaypointCommand(cmd: WaypointCommand): void;
   pushEdgeStyleCommand(cmd: EdgeStyleCommand): void;
@@ -119,6 +126,8 @@ const initial: AppState = {
   exporters: [],
   exportPromptOpen: false,
   settingsPanelOpen: false,
+  viewsPanelOpen: true,
+  viewsSearchFocusNonce: 0,
   past: [],
   future: [],
   historyCapacity: 200,
@@ -316,6 +325,12 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setSettingsPanelOpen(open) {
     set({ settingsPanelOpen: open });
+  },
+  setViewsPanelOpen(open) {
+    set({ viewsPanelOpen: open });
+  },
+  openViewsAndFocusSearch() {
+    set((s) => ({ viewsPanelOpen: true, viewsSearchFocusNonce: s.viewsSearchFocusNonce + 1 }));
   },
   pushMoveCommand(cmd) {
     set((s) => pushHistory(s, cmd));

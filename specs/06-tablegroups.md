@@ -38,15 +38,29 @@ Cuando un group está collapsed, todas sus tablas se sustituyen por el nodo-caja
 - **Drag**: NO soportado en v1. Para mover un group, expandir → arrastrar tablas → colapsar.
 - **Double-click** en el group-box → expande (toggle collapsed off).
 
-## UI: Group Panel
+## UI: Diagram Views panel
 
-Panel flotante top-right dentro del viewport. Lista alfabética de groups con:
-- swatch de color
-- nombre + count de tablas
-- botón toggle hidden (●/◌)
-- botón toggle collapsed (▦/□)
+Panel flotante top-right dentro del viewport (título **"Diagram Views"**), colapsable a un handle
+"Views". Contiene, de arriba a abajo:
 
-Toggle disparar `schedulePersist()` para guardar estado en layout file.
+- **Header**: título + acciones de header (hide-all / collapse-all — solo si hay groups — y cerrar),
+  como botones solo-ícono `size="tool"` con `Tooltip` (ver spec 12).
+- **View options**: toggles de vista globales. Hoy: **PK/FK columns only** (`showOnlyPkFk`). Es una
+  opción de *vista* (no de grupo), por eso vive aquí y no en la barra de acciones.
+- **Search**: input con ícono; filtra groups y tablas por nombre. Expone `inputRef` para enfoque
+  imperativo.
+- **Lista**: groups en orden alfabético, cada fila con swatch de color, nombre + count, y botones
+  solo-ícono (`size="icon"`, filas densas) de toggle hidden / collapsed / configurar color.
+
+Toggles disparan `schedulePersist()` para guardar estado en el layout file.
+
+**Cambios de comportamiento (UI polish):**
+- El panel **se renderiza siempre que el diagrama esté listo**, no solo cuando hay groups — porque
+  ahora aloja View options globales y el buscador. Sin groups, la lista muestra "No groups defined".
+- El estado **abierto/cerrado vive en el store** (`viewsPanelOpen`), no local al componente, para
+  que el **botón Search de la barra de acciones** pueda abrir el panel y enfocar su buscador
+  (`openViewsAndFocusSearch()` → set `viewsPanelOpen=true` + bump `viewsSearchFocusNonce`; el panel
+  observa el nonce y enfoca vía `inputRef`).
 
 ## Color default
 

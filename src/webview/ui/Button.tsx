@@ -25,7 +25,8 @@ import { cn } from './cn';
  * means a `git revert` of that change, not a string swap.
  */
 const buttonVariants = cva(
-  'inline-flex items-center justify-center cursor-pointer transition-colors duration-[var(--ddd-duration-instant)]',
+  'inline-flex items-center justify-center cursor-pointer active:scale-[0.97] ' +
+    'transition-[color,background-color,border-color,scale] duration-[var(--ddd-duration-instant)] ease-[var(--ddd-ease-out)]',
   {
     variants: {
       variant: {
@@ -40,8 +41,9 @@ const buttonVariants = cva(
         action:
           'rounded-[var(--ddd-radius-sm)] border gap-[var(--ddd-space-3)] px-[var(--ddd-space-5)] py-[var(--ddd-space-2)] ' +
           'text-[length:var(--ddd-text-base)]',
+        // icon-only variants below carry COLOR/STATE only — geometry comes from `size` (use size="tool")
         history:
-          'rounded-[var(--ddd-radius-sm)] border-none w-[28px] px-0 py-[var(--ddd-space-2)] ' +
+          'rounded-[var(--ddd-radius-sm)] border-none ' +
           'hover:bg-[var(--ddd-surface-hover)] hover:text-[color:var(--ddd-fg)] disabled:opacity-[0.35] disabled:cursor-default',
         // non-toggle: full look inline
         secondary:
@@ -53,16 +55,19 @@ const buttonVariants = cva(
           'text-[length:var(--ddd-text-base)] font-medium bg-[var(--ddd-accent)] text-[color:var(--ddd-fg-on-accent)] active:scale-[0.97] ' +
           'hover:bg-[var(--ddd-accent-hover)] hover:border-[color:var(--ddd-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed',
         zoom:
-          'rounded-[var(--ddd-radius-sm)] border-none min-w-[28px] h-[24px] px-[var(--ddd-space-3)] leading-none ' +
-          'text-[length:var(--ddd-text-base)] bg-transparent text-[color:var(--ddd-fg)] hover:bg-[var(--ddd-surface-hover)]',
+          'rounded-[var(--ddd-radius-sm)] border-none ' +
+          'bg-transparent text-[color:var(--ddd-fg)] hover:bg-[var(--ddd-surface-hover)]',
         toolbar:
-          'rounded-[var(--ddd-radius-sm)] border-none w-[22px] h-[22px] bg-transparent text-[color:var(--ddd-fg)] ' +
+          'rounded-[var(--ddd-radius-sm)] border-none bg-transparent text-[color:var(--ddd-fg)] ' +
           'hover:bg-[var(--ddd-surface-selected)]',
       },
       size: {
         sm: 'px-[var(--ddd-space-4)] py-[var(--ddd-space-1)] text-[length:var(--ddd-text-sm)]',
         md: 'px-[var(--ddd-space-5)] py-[var(--ddd-space-2)] text-[length:var(--ddd-text-base)]',
+        // dense list rows
         icon: 'w-[24px] h-[22px] p-0',
+        // canonical floating-toolbar / menu icon button — one fixed square everywhere
+        tool: 'w-[28px] h-[28px] p-0',
       },
       active: { true: '', false: '' },
       off: { true: 'opacity-[0.55]', false: '' },
