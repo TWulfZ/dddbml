@@ -2,7 +2,7 @@
   "name": "dddbml",
   "displayName": "dddbml — DBML Diagram with Git-friendly Layout",
   "description": "Interactive DBML diagram renderer for VSCode with per-table position persistence, TableGroup collapse for DDD contexts, and viewport culling for large schemas (5000+ tables).",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "TWulfZ",
   "icon": "docs/icon.png",
   "engines": {
@@ -52,6 +52,11 @@
       {
         "command": "dddbml.exportSchema",
         "title": "dddbml: Export Schema…",
+        "category": "dddbml"
+      },
+      {
+        "command": "dddbml.autoArrange",
+        "title": "dddbml: Auto-arrange Diagram…",
         "category": "dddbml"
       },
       {
@@ -255,6 +260,7 @@
     "@vscode/codicons": "^0.0.45",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "elkjs": "^0.11.1",
     "preact": "^10.22.0",
     "zustand": "^5.0.0"
   },

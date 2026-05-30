@@ -43,6 +43,24 @@ export function activate(context: vscode.ExtensionContext): void {
       setTimeout(() => DiagramPanel.get(uri)?.openExportModal(), 250);
     }),
 
+    vscode.commands.registerCommand('dddbml.autoArrange', async () => {
+      const active = DiagramPanel.getActive();
+      if (!active) {
+        vscode.window.showErrorMessage('dddbml: open the diagram first (dddbml: Open Diagram).');
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        [
+          { label: 'Re-arrange all', description: 'Lay out every table', mode: 'all' as const },
+          { label: 'Place new tables only', description: 'Keep existing positions, place un-positioned tables', mode: 'new' as const },
+          { label: 'Re-arrange selection', description: 'Move only the selected tables', mode: 'selection' as const },
+        ],
+        { placeHolder: 'Smart auto-layout — choose what to arrange' },
+      );
+      if (!pick) return;
+      active.sendAutoArrange(pick.mode);
+    }),
+
     vscode.commands.registerCommand('dddbml.zoomIn',       () => DiagramPanel.getActive()?.sendViewportCommand('zoomIn')),
     vscode.commands.registerCommand('dddbml.zoomOut',      () => DiagramPanel.getActive()?.sendViewportCommand('zoomOut')),
     vscode.commands.registerCommand('dddbml.resetView',    () => DiagramPanel.getActive()?.sendViewportCommand('resetView')),

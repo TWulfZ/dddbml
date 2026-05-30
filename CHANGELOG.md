@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] — 2026-05-29
+
+Smart auto-layout — database-focused automatic table ordering (`specs/13-smart-auto-layout.md`).
+
+### Added
+
+#### Smart auto-layout
+- New **Auto-arrange** that positions every table from its foreign-key relationships and declared table groups: satellites orbit their parent, junction (M:N) tables sit between their two parents, hubs anchor radial star clusters, and TableGroups (bounded contexts) are honored as first-class clusters.
+- Three modes: **all** (re-arrange everything), **new** (place only un-positioned tables), **selection** (move only the selected tables; the rest stay as fixed obstacles).
+- Engine: ELK compound layout (`elkjs`) over a database-aware *classify → cluster* pipeline; dedicated radial placement for hub clusters; a column-alignment pass straightens FK rows; an AABB safety pass guarantees no overlaps. Output is deterministic (git-friendly).
+- Three triggers, all funnelling into one action: the command palette (`dddbml: Auto-arrange Diagram…`), the in-canvas Actions panel (wand button + 3-mode submenu, with a live selection count), and the right-click context menu on selected tables (*Auto-arrange selected (N)*).
+
+#### Reset relations
+- New *Reset relations (N)* on the right-click menu of selected tables: resets every edge touching the selection back to default routing — waypoints, legacy offsets and port-side overrides cleared, colour kept. One undoable step.
+
+### Changed
+- **Undoable auto-arrange (composite).** A single Ctrl+Z reverts a whole arrange — both the table moves and the edge-waypoint resets it triggered — via a new `ArrangeCommand` in the action history.
+- **Bulk moves reset stranded edge waypoints.** Waypoints are absolute world coords that don't follow tables, so a bulk move would strand them into staircase paths. Auto-arrange now clears the shape (colour + port sides preserved) of edges whose *both* endpoints moved; they re-route cleanly via the column-row resolver. The sidecar layout format is unchanged.
+
+### Notes
+- The ELK engine (`elkjs`) adds ~600 KB gzip to the webview bundle — a deliberate, accepted trade for higher-quality grouped layout (see `specs/07-performance-budgets.md`). Measured layout on the 5000-table fixture ≈ 2.6 s, within the 3 s budget.
+
 ## [0.2.2] — 2026-05-29
 
 Major rework of interactive edge editing and edge visuals (`specs/05-edge-routing.md`, `specs/12-design-system.md`).

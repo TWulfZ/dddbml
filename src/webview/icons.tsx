@@ -28,7 +28,8 @@ export type IconName =
   | 'filter'
   | 'redo'
   | 'discard'
-  | 'magnet';
+  | 'magnet'
+  | 'wand';
 
 interface IconProps {
   size?: number;
@@ -78,3 +79,4 @@ export const IconUndo = make('redo', true);
 export const IconRedo = make('redo');
 export const IconReset = make('discard');
 export const IconMagnet = make('magnet');
+export const IconAutoArrange = make('wand');

@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
-import type { FlatSettingsPatch, HostToWebview, Layout, Ref, ViewportCommand, WebviewToHost, Schema, QualifiedName } from '../shared/types';
+import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, Ref, ViewportCommand, WebviewToHost, Schema, QualifiedName } from '../shared/types';
 import { parseDbml } from './parser';
 import { emptyLayout, mergeLayout, readLayout, sidecarUri, writeLayout } from './layoutStore';
 import { getExporter, listExporters } from './exporters';
@@ -92,6 +92,10 @@ export class DiagramPanel {
 
   public sendViewportCommand(action: ViewportCommand): void {
     this.post({ type: 'viewport:command', payload: { action } });
+  }
+
+  public sendAutoArrange(mode: AutoArrangeMode): void {
+    this.post({ type: 'command:autoArrange', payload: { mode } });
   }
 
   public async resetLayout(): Promise<void> {

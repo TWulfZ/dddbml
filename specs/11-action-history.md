@@ -58,8 +58,15 @@ interface WaypointCommand {
   timestamp: number;
 }
 
-type EditCommand = MoveCommand | WaypointCommand;
+// Además (ya en código): `EdgeStyleCommand` (color/port-side) y `ArrangeCommand`.
+type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand | ArrangeCommand;
 ```
+
+**`ArrangeCommand` (compuesto, smart auto-layout).** Un solo Ctrl+Z revierte el reordenamiento
+completo: posiciones de tablas **y** los reseteos de waypoints que el arrange disparó (los waypoints
+son coords world absolutas y no siguen a las tablas — un movimiento masivo los deja varados). Lleva
+`from`/`to` de posiciones **y** `edgesFrom`/`edgesTo` (snapshots por arista del `EdgeLayout`). Ver
+`specs/13-smart-auto-layout.md`.
 
 `from`/`to` son snapshots al momento de push — undo→edit→redo es determinista (redo aplica el target original, no el state actual).
 

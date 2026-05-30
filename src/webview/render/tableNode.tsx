@@ -3,6 +3,7 @@ import type { Column, Table } from '../../shared/types';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag } from '../drag/dragController';
+import { countResettableSelectionEdges, resetSelectedEdges, runSmartLayout } from '../layout/smartLayout';
 import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
 import { store, useAppStore } from '../state/store';
@@ -25,6 +26,7 @@ interface TableNodeProps {
 export function TableNode({ table, x, y, lod, selected, color, fkColumns }: TableNodeProps) {
   const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const selection = useAppStore((s) => s.selection);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   const onPointerDown = (e: PointerEvent) => {
@@ -45,6 +47,21 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
     { label: '', onClick: () => {}, separator: true },
     { label: 'Copy table name', onClick: () => { void navigator.clipboard.writeText(table.tableName); } },
   ];
+
+  // Selection actions, shown only when right-clicking a selected table.
+  if (selection.size > 0 && selection.has(table.name)) {
+    const resettable = countResettableSelectionEdges();
+    ctxItems.push({ label: '', onClick: () => {}, separator: true });
+    ctxItems.push({
+      label: `Auto-arrange selected (${selection.size})`,
+      onClick: () => { void runSmartLayout('selection'); },
+    });
+    ctxItems.push({
+      label: `Reset relations (${resettable})`,
+      disabled: resettable === 0,
+      onClick: () => resetSelectedEdges(),
+    });
+  }
 
   const ctxMenuEl = ctxMenu ? (
     <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems} onClose={() => setCtxMenu(null)} />

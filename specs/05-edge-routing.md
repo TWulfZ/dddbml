@@ -23,6 +23,10 @@ ERD tools estándar y confirmó la semántica deseada:
 - **Los waypoints NO siguen a la tabla.** Sólo el primer/último tramo (stub) se
   re-conecta al puerto flotante. Esto es correcto y deseado — no hay que anclar
   waypoints relativos.
+  - *Smart auto-layout (spec 13):* como un reordenamiento masivo deja varados los
+    waypoints absolutos, auto-arrange **resetea** la forma (waypoints + `dx/dy`) de
+    aristas cuyos dos extremos se movieron, conservando color y `sourceSide`/`targetSide`;
+    el `columnYResolver` re-ancla los puertos a las filas de columna FK/PK.
 - **El arreglo real es de *calidad de ruteo* + *modelo de edición*,** no de
   "seguir". Con ruteo ortogonal limpio + edición por arrastre de segmentos
   (picos imposibles) + un botón "Reset line", el sprawl post-move se vuelve

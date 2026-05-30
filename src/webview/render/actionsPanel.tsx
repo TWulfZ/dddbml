@@ -3,7 +3,8 @@ import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
 import { Button } from '../ui/Button';
-import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconMagnet, IconRedo, IconSettings, IconUndo } from '../icons';
+import { runSmartLayout } from '../layout/smartLayout';
+import { IconAutoArrange, IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconMagnet, IconRedo, IconSettings, IconUndo } from '../icons';
 
 /**
  * Floating bottom-center actions panel. Footer row (undo/redo + chevron) is always visible.
@@ -11,10 +12,17 @@ import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconMagnet, I
  */
 export function ActionsPanel() {
   const [open, setOpen] = useState(false);
+  const [arrangeOpen, setArrangeOpen] = useState(false);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
   const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
   const pastLen = useAppStore((s) => s.past.length);
   const futureLen = useAppStore((s) => s.future.length);
+  const selCount = useAppStore((s) => s.selection.size);
+
+  const arrange = (mode: 'all' | 'new' | 'selection') => {
+    void runSmartLayout(mode);
+    setArrangeOpen(false);
+  };
 
   const undo = () => {
     if (store.getState().past.length === 0) return;
@@ -64,6 +72,33 @@ export function ActionsPanel() {
       </div>
       {open ? (
         <div class="ddd-actions-panel__body">
+          <Button
+            variant="action"
+            active={arrangeOpen}
+            onClick={() => setArrangeOpen(!arrangeOpen)}
+            title="Smart auto-layout — order tables by their relationships and groups"
+          >
+            <IconAutoArrange size={12} />
+            <span>Auto-arrange</span>
+          </Button>
+          {arrangeOpen ? (
+            <>
+              <Button variant="action" onClick={() => arrange('all')} title="Re-arrange every table">
+                <span>Re-arrange all</span>
+              </Button>
+              <Button variant="action" onClick={() => arrange('new')} title="Place only tables without a saved position">
+                <span>Place new tables</span>
+              </Button>
+              <Button
+                variant="action"
+                disabled={selCount === 0}
+                onClick={() => arrange('selection')}
+                title="Re-arrange only the selected tables"
+              >
+                <span>Re-arrange selection ({selCount})</span>
+              </Button>
+            </>
+          ) : null}
           <Button
             variant="action"
             active={showOnlyPkFk}

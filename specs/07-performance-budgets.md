@@ -49,15 +49,24 @@ requestAnimationFrame(tick);
 
 ## Bundle size budget
 
-| Artefacto | Budget | Actual (M3) |
+| Artefacto | Budget | Actual |
 |---|---|---|
-| `dist/webview/webview.js` (gzipped) | < 40kb | ~29kb post-M2 |
-| `dist/webview/webview.js` (uncompressed) | < 200kb | ~106kb post-M2 |
+| `dist/webview/webview.js` (gzipped) | < 40kb (pre-ELK) | ~29kb post-M2 · **~644kb con ELK** (excepción consciente) |
+| `dist/webview/webview.js` (uncompressed) | < 200kb (pre-ELK) | ~106kb post-M2 · ~3.7MB con ELK |
 | `dist/extension/**` (uncompressed) | < 50kb | tbd |
+
+> **Excepción de bundle — smart auto-layout (ELK), v0.3.** El presupuesto original
+> (<40kb gz) asumía sólo dagre. El motor ELK (`elkjs`) añade ~600kb gz al webview.
+> Se aceptó conscientemente (el usuario: la app ya pesa ~10MB y herramientas DBML
+> pares pesan +10MB; +1MB no afecta) a cambio de un layout compound de mucha mayor
+> calidad para diagramas agrupados (ver `specs/13-smart-auto-layout.md`). El webview
+> se empaqueta como un único IIFE, así que ELK no se puede code-split a un chunk lazy
+> con el target actual. Mantener el resto del webview lean; el peso extra es sólo ELK.
 
 Librerías pesadas (cuidado):
 - `@dbml/core` corre sólo en host → no afecta webview.
-- `@dagrejs/dagre` corre en webview (auto-layout) → ~30kb gzipped. Aceptable v1. Migrar a Web Worker si se nota jank en auto-layout inicial (v1.1).
+- `@dagrejs/dagre` corre en webview (fallback `autoLayout()`) → ~30kb gzipped.
+- `elkjs` corre en webview (smart auto-layout) → ~600kb gzipped. Excepción consciente (arriba). Layout medido en huge.dbml ~2.57s < 3s. Si se nota jank, mover a Web Worker (v1.1).
 
 ## Regresiones conocidas a vigilar
 

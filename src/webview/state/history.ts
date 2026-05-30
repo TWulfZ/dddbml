@@ -1,4 +1,4 @@
-import type { QualifiedName, Waypoint } from '../../shared/types';
+import type { EdgeLayout, QualifiedName, Waypoint } from '../../shared/types';
 
 /**
  * Action history entry for a table move (single or batch).
@@ -49,7 +49,24 @@ export interface EdgeStyleCommand {
   timestamp: number;
 }
 
-export type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand;
+/**
+ * Action history entry for a bulk smart auto-arrange. Composite on purpose: a single
+ * Ctrl+Z reverts both the table moves AND the edge-waypoint resets that the arrange
+ * triggered (waypoints are absolute world coords that don't follow tables, so a bulk
+ * move strands them — see spec 13). `edgesFrom`/`edgesTo` snapshot the full per-edge
+ * layout before/after, mirroring the other commands' pure-replay semantics.
+ */
+export interface ArrangeCommand {
+  kind: 'arrange';
+  from: Array<[QualifiedName, { x: number; y: number }]>;
+  to: Array<[QualifiedName, { x: number; y: number }]>;
+  edgesFrom: Array<[string, EdgeLayout | null]>;
+  edgesTo: Array<[string, EdgeLayout | null]>;
+  label: string;
+  timestamp: number;
+}
+
+export type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand | ArrangeCommand;
 
 /**
  * Build a MoveCommand from a drag's origins map and the post-drag positions.
@@ -137,4 +154,68 @@ export function buildEdgeStyleCommand(
     return null;
   }
   return { kind: 'edgeStyle', refId, from: { ...from }, to: { ...to }, label, timestamp: Date.now() };
+}
+
+/**
+ * Build an ArrangeCommand from before/after positions plus the edge resets the arrange applied.
+ *
+ * `before` is the position snapshot taken before layout ran; `after` the applied result. Only
+ * tables present in `before` whose position changed are recorded (new tables have no prior state
+ * to undo to). `edgesBefore` is the full pre-arrange edgeLayouts; `edgeResets` is the list of
+ * `[refId, newLayout|null]` the arrange wrote. Returns null when nothing actually changed.
+ */
+export function buildArrangeCommand(
+  before: Map<QualifiedName, { x: number; y: number }>,
+  after: Map<QualifiedName, { x: number; y: number }>,
+  edgesBefore: Map<string, EdgeLayout>,
+  edgeResets: Array<[string, EdgeLayout | null]>,
+): ArrangeCommand | null {
+  const from: ArrangeCommand['from'] = [];
+  const to: ArrangeCommand['to'] = [];
+  for (const [name, fromPos] of before) {
+    const toPos = after.get(name);
+    if (!toPos) continue;
+    if (toPos.x === fromPos.x && toPos.y === fromPos.y) continue;
+    from.push([name, { x: fromPos.x, y: fromPos.y }]);
+    to.push([name, { x: toPos.x, y: toPos.y }]);
+  }
+
+  const edgesFrom: ArrangeCommand['edgesFrom'] = [];
+  const edgesTo: ArrangeCommand['edgesTo'] = [];
+  for (const [refId, next] of edgeResets) {
+    edgesFrom.push([refId, edgesBefore.get(refId) ?? null]);
+    edgesTo.push([refId, next]);
+  }
+
+  if (from.length === 0 && edgesFrom.length === 0) return null;
+
+  return {
+    kind: 'arrange',
+    from,
+    to,
+    edgesFrom,
+    edgesTo,
+    label: `Auto-arrange ${from.length} table${from.length === 1 ? '' : 's'}`,
+    timestamp: Date.now(),
+  };
+}
+
+/**
+ * Build an edges-only ArrangeCommand for a manual "reset relations" of selected tables.
+ * Reuses the composite `arrange` kind with empty position arrays so a single undo restores
+ * the cleared edge shapes. Returns null when there's nothing to reset.
+ */
+export function buildEdgesResetCommand(
+  edgesBefore: Map<string, EdgeLayout>,
+  edgeResets: Array<[string, EdgeLayout | null]>,
+  label: string,
+): ArrangeCommand | null {
+  if (edgeResets.length === 0) return null;
+  const edgesFrom: ArrangeCommand['edgesFrom'] = [];
+  const edgesTo: ArrangeCommand['edgesTo'] = [];
+  for (const [refId, next] of edgeResets) {
+    edgesFrom.push([refId, edgesBefore.get(refId) ?? null]);
+    edgesTo.push([refId, next]);
+  }
+  return { kind: 'arrange', from: [], to: [], edgesFrom, edgesTo, label, timestamp: Date.now() };
 }

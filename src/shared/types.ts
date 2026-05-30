@@ -162,12 +162,16 @@ export function defaultSettings(): AppSettings {
 
 export type ViewportCommand = 'zoomIn' | 'zoomOut' | 'resetView' | 'fitToContent';
 
+/** Smart auto-layout modes. See specs/13-smart-auto-layout.md. */
+export type AutoArrangeMode = 'all' | 'new' | 'selection';
+
 export type HostToWebview =
   | { type: 'schema:update'; payload: { schema: Schema; parseError: ParseError | null } }
   | { type: 'layout:loaded'; payload: Layout }
   | { type: 'layout:external-change'; payload: Layout }
   | { type: 'theme:change'; payload: { kind: 'light' | 'dark' } }
   | { type: 'viewport:command'; payload: { action: ViewportCommand } }
+  | { type: 'command:autoArrange'; payload: { mode: AutoArrangeMode } }
   | { type: 'exporters:list'; payload: { exporters: ExporterMeta[] } }
   | { type: 'export:result'; payload: { ok: boolean; warnings?: string[]; message?: string } }
   | { type: 'settings:loaded'; payload: AppSettings }

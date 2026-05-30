@@ -3,7 +3,7 @@ import { useEffect, useReducer } from 'preact/hooks';
 import type { AppSettings, EdgeLayout, GroupLayout, Layout, ParseError, QualifiedName, Schema, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
-import type { EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
+import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
 
 export interface TooltipState {
   title: string;
@@ -56,6 +56,7 @@ export interface AppActions {
   setTableColor(name: QualifiedName, color: string | null): void;
   setEdgeLayout(refId: string, layout: EdgeLayout | null): void;
   setEdgeWaypoints(refId: string, waypoints: Waypoint[]): void;
+  applyEdgeLayouts(entries: Array<[string, EdgeLayout | null]>): void;
   setEdgeColor(refId: string, color: string | null): void;
   setEdgeSide(refId: string, end: 'source' | 'target', side: 'left' | 'right' | null): void;
   resetEdgeShape(refId: string): void;
@@ -71,6 +72,7 @@ export interface AppActions {
   pushMoveCommand(cmd: MoveCommand): void;
   pushWaypointCommand(cmd: WaypointCommand): void;
   pushEdgeStyleCommand(cmd: EdgeStyleCommand): void;
+  pushArrangeCommand(cmd: ArrangeCommand): void;
   undo(): void;
   redo(): void;
   clearHistory(): void;
@@ -216,6 +218,16 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       return { edgeLayouts: next };
     });
   },
+  applyEdgeLayouts(entries) {
+    set((s) => {
+      const next = new Map(s.edgeLayouts);
+      for (const [refId, layout] of entries) {
+        if (layout) writeLayout(next, refId, { ...layout });
+        else next.delete(refId);
+      }
+      return { edgeLayouts: next };
+    });
+  },
   setEdgeColor(refId, color) {
     set((s) => {
       const next = new Map(s.edgeLayouts);
@@ -286,6 +298,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   pushEdgeStyleCommand(cmd) {
     set((s) => pushHistory(s, cmd));
   },
+  pushArrangeCommand(cmd) {
+    set((s) => pushHistory(s, cmd));
+  },
   undo() {
     set((s) => {
       if (s.past.length === 0) return s;
@@ -341,6 +356,18 @@ function applyCommand(
     if (t.targetSide !== undefined) merged.targetSide = t.targetSide; else delete merged.targetSide;
     writeLayout(edgeLayouts, cmd.refId, merged);
     return { edgeLayouts };
+  }
+  if (cmd.kind === 'arrange') {
+    const positions = new Map(s.positions);
+    const posEntries = direction === 'undo' ? cmd.from : cmd.to;
+    for (const [name, pos] of posEntries) positions.set(name, { x: pos.x, y: pos.y });
+    const edgeLayouts = new Map(s.edgeLayouts);
+    const edgeEntries = direction === 'undo' ? cmd.edgesFrom : cmd.edgesTo;
+    for (const [refId, layout] of edgeEntries) {
+      if (layout) writeLayout(edgeLayouts, refId, { ...layout });
+      else edgeLayouts.delete(refId);
+    }
+    return { positions, edgeLayouts };
   }
   const edgeLayouts = new Map(s.edgeLayouts);
   const merged: EdgeLayout = { ...(edgeLayouts.get(cmd.refId) ?? {}) };
