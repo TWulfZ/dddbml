@@ -1,5 +1,5 @@
 import type { QualifiedName } from '../../../shared/types';
-import { store } from '../../state/store';
+import { store, isCanvasReadOnly } from '../../state/store';
 import { buildArrangeCommand, buildEdgesResetCommand } from '../../state/history';
 import { schedulePersist } from '../../persistence';
 import { postToHost } from '../../vscode';
@@ -17,7 +17,7 @@ import { computeEdgeResets, computeSelectionEdgeResets, movedNames } from './edg
 export async function runSmartLayout(mode: SmartLayoutMode): Promise<void> {
   const s = store.getState();
   if (s.schema.tables.length === 0) return;
-  if (s.mergeConflicts) return; // blocking conflict mode (spec 14): the layout is read-only
+  if (isCanvasReadOnly(s)) return; // blocking merge / git overlay (spec 14/16): the layout is read-only
 
   const colCount = new Map<QualifiedName, number>();
   for (const t of s.schema.tables) colCount.set(t.name, t.columns.length);

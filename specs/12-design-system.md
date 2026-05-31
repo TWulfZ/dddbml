@@ -337,7 +337,11 @@ Solución: una capa de primitivos en `src/webview/ui/`, siguiendo el **patrón s
   `zoom`→`.ddd-zoom__btn`, `toolbar`→`.ddd-edge-toolbar__btn`. `size="icon"` = cuadrado
   solo-ícono. Hay además una variante **nueva sin equivalente legacy**: `subtle` = botón
   solo-ícono **sin borde** (a diferencia de `ghost`, que muestra borde en hover; `subtle` solo
-  cambia el fondo en hover). La usa el panel DiagramView (`groupPanel`). Son utilidades Tailwind
+  cambia el fondo en hover). La usa el panel DiagramView (`groupPanel`). Y una variante `danger`
+  (acciones destructivas/irreversibles): outline en `--ddd-danger` (borde + texto danger sobre fondo
+  transparente, así lee como peligro en ambos temas sin depender de un token de fondo-danger; la usa
+  el confirm de "Revertir cambios" del `GitPanel`, ver [`16-git-integration.md`](16-git-integration.md)).
+  Son utilidades Tailwind
   de valor arbitrario sobre `--ddd-*` / `--vscode-*`. **Punto de reversión:** para volver a CSS
   plano se cambia cada string de variante por su clase `.ddd-*` legacy — la API de `<Button>` no
   cambia.
@@ -399,6 +403,18 @@ real** (≥2 call sites):
   (preview), así que salir del trigger la cierra; el positioner se centra en el trigger y se
   **clampa al viewport** (`MAX_CARD_WIDTH`) para no recortarse. API: `<HoverCard content placement?>`.
   Migrado: icono info de LOD en `settingsPanel`.
+- **`render/appMenu.tsx`** — menú de aplicación (esquina sup-izq, estilo Excalidraw; spec 15).
+  **No** es un primitivo `ui/` sino chrome de `render/`: compone `<Button variant="toolbar"
+  size="tool">` + `<Tooltip label="Menu">` (que aporta el `aria-label`) para el trigger, y
+  **reusa el idiom de `render/contextMenu.tsx`** para el popover — dismiss diferido
+  (outside-click + Escape), `createPortal` a `<body>`, posición desde el rect del trigger con
+  `clampMenuAnchor`. **Contraparte interactiva de `HoverCard`:** HoverCard es hover/focus y *no
+  interactivo* (cierra al salir del trigger, usa la Popover API para vivir sobre el `<dialog>`);
+  AppMenu es **click + interactivo** (el puntero entra al popover para elegir fila), por eso sigue
+  el idiom de ContextMenu (portal a `<body>`, `z-index: 30`) y no la Popover API. Trigger surface
+  `z-index: 5` (como `.ddd-zoom`). Motion: `@keyframes ddd-menu-in` (fade + `translateY(-4px)`) en
+  `var(--ddd-duration-fast)` — reduced-motion vía la regla CSS global. Las filas **re-disparan los
+  modales existentes** (`setSettingsPanelOpen`/`setExportPromptOpen`) — sin lógica duplicada.
 
 Se dejan nativos: los radios clásicos de *Scope* en exportModal (`.ddd-radio` con
 contadores + disabled, uso único) y los controles estructurales ya citados.

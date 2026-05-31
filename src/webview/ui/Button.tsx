@@ -54,6 +54,12 @@ const buttonVariants = cva(
           'rounded-[var(--ddd-radius-sm)] border border-[color:var(--ddd-accent)] px-[var(--ddd-space-5)] py-[var(--ddd-space-2)] ' +
           'text-[length:var(--ddd-text-base)] font-medium bg-[var(--ddd-accent)] text-[color:var(--ddd-fg-on-accent)] active:scale-[0.97] ' +
           'hover:bg-[var(--ddd-accent-hover)] hover:border-[color:var(--ddd-accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed',
+        // destructive (irreversible) actions: outline so it reads as danger in both themes without
+        // relying on a danger-bg token (errorForeground is a text color). Mirrors `secondary` geometry.
+        danger:
+          'rounded-[var(--ddd-radius-sm)] border border-[color:var(--ddd-danger)] px-[var(--ddd-space-5)] py-[var(--ddd-space-2)] ' +
+          'text-[length:var(--ddd-text-base)] font-medium bg-transparent text-[color:var(--ddd-danger)] active:scale-[0.97] ' +
+          'hover:bg-[var(--ddd-surface-hover)] disabled:opacity-50 disabled:cursor-not-allowed',
         zoom:
           'rounded-[var(--ddd-radius-sm)] border-none ' +
           'bg-transparent text-[color:var(--ddd-fg)] hover:bg-[var(--ddd-surface-hover)]',

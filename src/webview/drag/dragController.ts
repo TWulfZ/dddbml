@@ -1,4 +1,4 @@
-import { store } from '../state/store';
+import { store, isCanvasReadOnly } from '../state/store';
 import { buildEdgeStyleCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle } from '../state/history';
 import { schedulePersist } from '../persistence';
 import { slideSegment, notchAtQuarter, deleteNotch, type EdgeRoute } from '../render/edgeRouter';
@@ -24,7 +24,7 @@ let active = false;
 export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement): void {
   if (active || e.button !== 0) return;
   const state = store.getState();
-  if (state.mergeConflicts) return; // read-only during conflict resolution (spec 14); belt to the CSS lock
+  if (isCanvasReadOnly(state)) return; // read-only during merge / git overlay (spec 14/16); belt to the CSS lock
   const pos = state.positions.get(tableName);
   if (!pos) return;
 

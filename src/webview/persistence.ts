@@ -1,4 +1,4 @@
-import { store, toTableLayoutRecord } from './state/store';
+import { store, toTableLayoutRecord, isCanvasReadOnly } from './state/store';
 import { postToHost } from './vscode';
 import type { EdgeLayout } from '../shared/types';
 
@@ -14,9 +14,9 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const PERSIST_DEBOUNCE_MS = 300;
 
 export function schedulePersist(): void {
-  // Blocking conflict mode (spec 14): the layout shown is provisional (ours-biased) and must
-  // NOT be written until the user resolves + applies. Drop every persist while resolving.
-  if (store.getState().mergeConflicts) return;
+  // Read-only canvas (spec 14/16): a merge shows a provisional layout that must NOT be written
+  // until applied; a git overlay (time-travel/diff) shows a past/other revision. Drop every persist.
+  if (isCanvasReadOnly(store.getState())) return;
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;

@@ -33,7 +33,14 @@ export type IconName =
   | 'info'
   | 'layout'
   | 'zoom-in'
-  | 'export';
+  | 'export'
+  | 'menu'
+  | 'source-control'
+  | 'git-commit'
+  | 'git-branch'
+  | 'history'
+  | 'diff'
+  | 'archive';
 
 interface IconProps {
   size?: number;
@@ -88,3 +95,10 @@ export const IconInfo = make('info');
 export const IconLayout = make('layout');
 export const IconZoom = make('zoom-in');
 export const IconExport = make('export');
+export const IconMenu = make('menu');
+export const IconGit = make('source-control');
+export const IconGitCommit = make('git-commit');
+export const IconGitBranch = make('git-branch');
+export const IconHistory = make('history');
+export const IconDiff = make('diff');
+export const IconStash = make('archive');

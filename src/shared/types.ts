@@ -128,6 +128,87 @@ export interface SerializableMergeConflict {
   theirs: TableLayout | GroupLayout | EdgeLayout | null;
 }
 
+/* ----- Git integration (see specs/16) ----- */
+
+/** Working-tree status of one diagram file. Mirrors the host `GitFileStatus`. */
+export type GitFileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed';
+
+export interface GitPathStatus {
+  /** Repo-relative, forward-slash path. */
+  relpath: string;
+  status: GitFileStatus;
+}
+
+/** One commit touching the diagram files. */
+export interface GitCommitMeta {
+  sha: string;
+  shortSha: string;
+  author: string;
+  date: string;
+  subject: string;
+}
+
+/** One stash entry. `ref` = `stash@{N}`, `index` = N. */
+export interface GitStashEntry {
+  ref: string;
+  index: number;
+  message: string;
+}
+
+/** A git write op whose result is reported back so the webview can clear its busy state. */
+export type GitOp = 'restore' | 'stashPush' | 'stashApply' | 'stashPop';
+
+/* --- Schema diff overlay (spec 16, Phase 4) --- */
+
+export type TableDiffStatus = 'added' | 'removed' | 'modified';
+export type ColumnDiffStatus = 'added' | 'removed' | 'changed';
+export type RefDiffStatus = 'added' | 'removed';
+
+export interface ColumnDiffEntry {
+  name: string;
+  status: ColumnDiffStatus;
+  /** Base column type — present for 'removed' so the synthetic ghost row can render; null otherwise. */
+  type: string | null;
+}
+
+export interface TableDiff {
+  table: QualifiedName;
+  status: TableDiffStatus;
+  /** Per-column diffs for 'modified' tables. Empty for added; for removed the ghost uses `base`. */
+  columns: ColumnDiffEntry[];
+  /** Full base table — present only for 'removed' (the ghost renders it). Null otherwise. */
+  base: Table | null;
+  /** Base world position from the base sidecar — present only for 'removed' (ghost placement). */
+  pos: { x: number; y: number } | null;
+}
+
+export interface RefDiff {
+  /** Stable ref id (matches `Ref.id`). */
+  id: string;
+  status: RefDiffStatus;
+  source: QualifiedName;
+  target: QualifiedName;
+}
+
+/** Serializable structural diff between two revisions. Only changed entities are listed. */
+export interface SchemaDiff {
+  tables: TableDiff[];
+  refs: RefDiff[];
+}
+
+/**
+ * Live git status of the diagram files, pushed to the webview on hydrate and on every
+ * dbml/sidecar change. `files` lists only CHANGED files (a clean repo => empty), so
+ * `dirty === files.length > 0`. All scoped to the diagram files only.
+ */
+export interface GitStatusSummary {
+  inRepo: boolean;
+  /** Current branch, or null when detached / not a repo. */
+  branch: string | null;
+  files: GitPathStatus[];
+  dirty: boolean;
+}
+
 /* ----- Settings ----- */
 
 export type UiDensity = 'compact' | 'cozy' | 'comfortable';
@@ -196,6 +277,14 @@ export type HostToWebview =
   | { type: 'settings:loaded'; payload: AppSettings }
   | { type: 'merge:begin'; payload: { conflicts: SerializableMergeConflict[] } }
   | { type: 'merge:done' }
+  | { type: 'git:status'; payload: GitStatusSummary }
+  | { type: 'git:commitResult'; payload: { ok: boolean; message?: string } }
+  | { type: 'git:stashes'; payload: { stashes: GitStashEntry[] } }
+  | { type: 'git:opResult'; payload: { op: GitOp; ok: boolean; message?: string } }
+  | { type: 'git:commits'; payload: { commits: GitCommitMeta[] } }
+  | { type: 'git:timeTravel:enter'; payload: { rev: string; label: string; schema: Schema; layout: Layout } }
+  | { type: 'git:timeTravel:exit' }
+  | { type: 'git:diff:enter'; payload: { baseLabel: string; headLabel: string; diff: SchemaDiff } }
   | { type: 'export:prompt' };
 
 /* ----- Protocol: Webview → Host ----- */
@@ -208,6 +297,17 @@ export type WebviewToHost =
   | { type: 'command:export'; payload: ExportCommandPayload }
   | { type: 'settings:update'; payload: Partial<FlatSettingsPatch> }
   | { type: 'merge:resolve'; payload: { decisions: Record<string, 'ours' | 'theirs'> } }
+  | { type: 'git:requestStatus' }
+  | { type: 'git:commit'; payload: { message: string } }
+  | { type: 'git:requestStashes' }
+  | { type: 'git:restore' }
+  | { type: 'git:stashPush'; payload: { message?: string } }
+  | { type: 'git:stashApply'; payload: { ref: string } }
+  | { type: 'git:stashPop'; payload: { ref: string } }
+  | { type: 'git:requestCommits' }
+  | { type: 'git:timeTravel:enter'; payload: { sha: string; label: string } }
+  | { type: 'git:timeTravel:exit' }
+  | { type: 'git:diff:enter' }
   | { type: 'error:log'; payload: { message: string; stack?: string } };
 
 /**

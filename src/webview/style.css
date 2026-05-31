@@ -304,7 +304,8 @@
   .ddd-banner {
     position: absolute;
     top: var(--ddd-space-4);
-    left: var(--ddd-space-4);
+    /* Clear the top-left app-menu trigger (≈ space-8 wide) so they never overlap. */
+    left: calc(var(--ddd-space-4) + var(--ddd-space-8) + var(--ddd-space-4));
     right: var(--ddd-space-4);
     padding: var(--ddd-space-3) var(--ddd-space-5);
     background: var(--vscode-inputValidation-errorBackground, rgba(200, 40, 40, 0.20));
@@ -831,6 +832,73 @@
     cursor: default;
   }
   .ddd-context-menu__separator {
+    border: none;
+    border-top: 1px solid var(--ddd-border-subtle);
+    margin: var(--ddd-space-2) 0;
+  }
+
+  /* ---- App menu (top-left, Excalidraw-style) ---- */
+  /* Always-visible trigger surface; matches the bottom-corner chrome (.ddd-zoom). */
+  .ddd-app-menu {
+    position: absolute;
+    top: var(--ddd-space-4);
+    left: var(--ddd-space-4);
+    z-index: 5;
+    display: flex;
+    background: var(--ddd-surface-raised);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    padding: var(--ddd-space-1);
+    box-shadow: var(--ddd-shadow-md);
+  }
+  /* Click-opened popover, portaled to <body> and anchored under the trigger.
+     Mirrors .ddd-context-menu but with icon rows + trigger-source motion. */
+  .ddd-app-menu__popover {
+    position: fixed;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    padding: var(--ddd-space-2) 0;
+    font-size: var(--ddd-text-base);
+    color: var(--ddd-fg);
+    animation: ddd-menu-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-app-menu__item {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-4);
+    width: 100%;
+    padding: var(--ddd-space-3) var(--ddd-space-5);
+    background: transparent;
+    color: inherit;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--ddd-text-base);
+    transition: background var(--ddd-duration-instant);
+  }
+  .ddd-app-menu__item:hover:not(:disabled) {
+    background: var(--ddd-surface-hover);
+  }
+  .ddd-app-menu__item:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .ddd-app-menu__label {
+    flex: 1;
+  }
+  /* Trailing affordance — Git row signals a future submenu/panel. */
+  .ddd-app-menu__chevron {
+    display: inline-flex;
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-app-menu__separator {
     border: none;
     border-top: 1px solid var(--ddd-border-subtle);
     margin: var(--ddd-space-2) 0;
@@ -1426,6 +1494,267 @@
     color: var(--ddd-accent);
   }
 
+  /* ----- Git panel (spec 16) — shares the two-pane shell above ----- */
+  .ddd-git-branch {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-git-branch__name {
+    color: var(--ddd-fg-strong);
+    font-weight: var(--ddd-weight-medium);
+  }
+  .ddd-git-branch__sep { opacity: 0.6; }
+  .ddd-git-empty {
+    margin: 0;
+    font-size: var(--ddd-text-base);
+    color: var(--ddd-fg-muted);
+    line-height: 1.5;
+  }
+  .ddd-git-empty code {
+    font-family: var(--vscode-editor-font-family, monospace);
+    background: var(--ddd-surface-hover);
+    padding: 0 var(--ddd-space-2);
+    border-radius: var(--ddd-radius-sm);
+  }
+  .ddd-git-files {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-1);
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .ddd-git-file {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ddd-space-4);
+    padding: var(--ddd-space-2) var(--ddd-space-3);
+    border-radius: var(--ddd-radius-sm);
+    background: var(--ddd-surface-raised);
+  }
+  .ddd-git-file__name {
+    font-size: var(--ddd-text-base);
+    color: var(--ddd-fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-git-pill {
+    flex-shrink: 0;
+    font-size: var(--ddd-text-sm);
+    padding: 0 var(--ddd-space-3);
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-git-pill.is-modified { color: var(--ddd-warning); }
+  .ddd-git-pill.is-added,
+  .ddd-git-pill.is-untracked { color: var(--ddd-success); }
+  .ddd-git-pill.is-deleted { color: var(--ddd-danger); }
+  .ddd-git-pill.is-renamed { color: var(--ddd-accent); }
+  .ddd-git-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--ddd-space-3);
+  }
+  .ddd-git-warn {
+    margin: 0 0 var(--ddd-space-4);
+    font-size: var(--ddd-text-base);
+    color: var(--ddd-fg);
+    line-height: 1.5;
+  }
+  .ddd-git-warn strong { color: var(--ddd-danger); }
+  .ddd-git-stash__ref {
+    font-family: var(--vscode-editor-font-family, monospace);
+    color: var(--ddd-fg-muted);
+    font-size: var(--ddd-text-sm);
+  }
+  .ddd-git-stash__ops {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-1);
+    flex-shrink: 0;
+  }
+  .ddd-git-commits {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-1);
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .ddd-git-commit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-1);
+    width: 100%;
+    text-align: left;
+    padding: var(--ddd-space-3) var(--ddd-space-4);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--ddd-radius-sm);
+    color: var(--ddd-fg);
+    font: inherit;
+    cursor: pointer;
+    transition: background var(--ddd-duration-instant), border-color var(--ddd-duration-instant);
+  }
+  .ddd-git-commit:hover {
+    background: var(--ddd-surface-hover);
+    border-color: var(--ddd-border);
+  }
+  .ddd-git-commit__subject {
+    font-size: var(--ddd-text-base);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-git-commit__meta {
+    display: flex;
+    gap: var(--ddd-space-4);
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-git-commit__sha {
+    font-family: var(--vscode-editor-font-family, monospace);
+    color: var(--ddd-accent);
+  }
+
+  /* ----- Git canvas bar (time-travel / diff overlay; spec 16) ----- */
+  .ddd-git-bar {
+    position: absolute;
+    top: var(--ddd-space-5);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-4);
+    max-width: calc(100% - var(--ddd-space-8) * 2);
+    padding: var(--ddd-space-3) var(--ddd-space-5);
+    background: var(--ddd-surface-raised);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    color: var(--ddd-fg);
+    font-size: var(--ddd-text-base);
+    animation: ddd-menu-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-git-bar__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-git-bar__label strong { color: var(--ddd-fg-strong); }
+  .ddd-git-bar__nav {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+  }
+  .ddd-git-bar__count {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    min-width: 44px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .ddd-git-bar__check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  /* ----- Diff overlay (spec 16) — table markers, focus/blur, hover card, edges ----- */
+  .ddd-table.is-diff-added { outline: 2px solid var(--ddd-success); outline-offset: 1px; }
+  .ddd-table.is-diff-modified { outline: 2px solid var(--ddd-warning); outline-offset: 1px; }
+  .ddd-table.is-diff-removed { outline: 2px dashed var(--ddd-danger); outline-offset: 1px; }
+  /* Background (non-diff) tables: dimmed + blurred so the changes stand out. */
+  .ddd-table.is-diff-dimmed {
+    opacity: 0.32;
+    filter: blur(1.5px) saturate(0.6);
+    transition: opacity var(--ddd-duration-fast) var(--ddd-ease-out), filter var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  /* Transparent hover targets over each diff table (exempt from the read-only belt). */
+  .ddd-diff-hit-layer { position: absolute; inset: 0; pointer-events: none; }
+  .ddd-diff-hit { pointer-events: auto; cursor: help; }
+
+  /* Previous | Current comparison card (peek, pointer-transparent). */
+  .ddd-diff-card {
+    position: fixed;
+    z-index: 45;
+    pointer-events: none;
+    background: var(--ddd-surface-raised);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    padding: var(--ddd-space-4);
+    animation: ddd-menu-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-diff-card__title {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    margin-bottom: var(--ddd-space-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-diff-card__panes { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ddd-space-4); }
+  .ddd-diff-card__pane-head {
+    font-size: var(--ddd-text-sm);
+    font-weight: var(--ddd-weight-semibold);
+    color: var(--ddd-fg-strong);
+    padding-bottom: var(--ddd-space-2);
+    border-bottom: 1px solid var(--ddd-border-subtle);
+    margin-bottom: var(--ddd-space-2);
+  }
+  .ddd-diff-card__empty { margin: 0; font-size: var(--ddd-text-sm); color: var(--ddd-fg-muted); font-style: italic; }
+  .ddd-diff-card__cols { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+  .ddd-diff-card__col {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--ddd-space-3);
+    font-size: var(--ddd-text-sm);
+    padding: 1px var(--ddd-space-2);
+    border-radius: var(--ddd-radius-sm);
+  }
+  .ddd-diff-card__col-type { color: var(--ddd-fg-muted); }
+  .ddd-diff-card__col.is-diff-added { background: color-mix(in srgb, var(--ddd-success) 18%, transparent); }
+  .ddd-diff-card__col.is-diff-removed { background: color-mix(in srgb, var(--ddd-danger) 16%, transparent); text-decoration: line-through; }
+  .ddd-diff-card__col.is-diff-changed { background: color-mix(in srgb, var(--ddd-warning) 18%, transparent); }
+
+  .ddd-edge.is-diff-added { stroke: var(--ddd-success); stroke-width: 2.5; }
+  .ddd-edge.is-diff-removed { stroke: var(--ddd-danger); stroke-dasharray: 5 4; }
+  /* Removed-table ghost card (no live node exists). */
+  .ddd-diff-ghost {
+    opacity: 0.7;
+    outline: 2px dashed var(--ddd-danger);
+    outline-offset: 1px;
+    filter: saturate(0.8);
+  }
+  .ddd-diff-ghost__header { border-top-color: var(--ddd-danger); }
+  .ddd-diff-ghost__tag {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-danger);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .ddd-diff-ghost-line {
+    stroke: var(--ddd-danger);
+    stroke-width: 2;
+    stroke-dasharray: 5 4;
+    opacity: 0.8;
+  }
+
   /* ----- Form ----- */
   .ddd-field {
     display: flex;
@@ -1507,8 +1836,9 @@
   }
 
   /* ----- Collaborative-merge conflict UI (spec 14 §Tier-3) ----- */
-  /* Blocking mode: everything in the world is read-only (pan/zoom only) EXCEPT the ghost layer. */
-  .ddd-world.is-merge-locked > *:not(.ddd-merge-ghost-layer) {
+  /* Blocking mode: everything in the world is read-only (pan/zoom only) EXCEPT the ghost layer and
+     the diff hit-layer (spec 16), which stays hoverable so the Previous|Current card can open. */
+  .ddd-world.is-merge-locked > *:not(.ddd-merge-ghost-layer):not(.ddd-diff-hit-layer) {
     pointer-events: none;
   }
   .ddd-merge-ghost-layer {
@@ -1956,6 +2286,12 @@
 /* Staggered tool entrance when the floating action bar expands. */
 @keyframes ddd-tool-in {
   from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* App menu — fade + slight drop from the trigger source. */
+@keyframes ddd-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 

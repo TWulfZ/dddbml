@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { store, useAppStore } from './state/store';
+import { store, useAppStore, isCanvasReadOnly } from './state/store';
 import { autoLayout, estimateSize } from './layout/autoLayout';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
@@ -9,6 +9,7 @@ import { CollapsedGroupNode } from './render/collapsedGroupNode';
 import { GroupContainer } from './render/groupContainer';
 import { ZoomButtons } from './render/zoomButtons';
 import { ActionsPanel } from './render/actionsPanel';
+import { AppMenu } from './render/appMenu';
 import { schedulePersist } from './persistence';
 import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
@@ -17,7 +18,12 @@ import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
 import { SettingsPanel } from './render/settingsPanel';
-import type { QualifiedName, Ref, Table, WebviewToHost } from '../shared/types';
+import { GitPanel } from './render/gitPanel';
+import { GitBanner } from './render/gitBanner';
+import { DiffGhosts } from './render/diffGhosts';
+import { DiffHoverCard } from './render/diffHoverCard';
+import { DiffHitLayer, type DiffTarget } from './render/diffHitLayer';
+import type { QualifiedName, Ref, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
 
 interface AppProps {
   post: (msg: WebviewToHost) => void;
@@ -43,6 +49,14 @@ export function App(_props: AppProps) {
   const tableColors = useAppStore((s) => s.tableColors);
   const selection = useAppStore((s) => s.selection);
   const mergeConflicts = useAppStore((s) => s.mergeConflicts);
+  const gitView = useAppStore((s) => s.gitView);
+  const readOnly = mergeConflicts != null || gitView != null;
+  const diffByTable = useAppStore((s) => s.diffByTable);
+  const refDiff = useAppStore((s) => s.refDiff);
+  const diffGhosts = useAppStore((s) => s.diffGhosts);
+  const diffRemovedRefs = useAppStore((s) => s.diffRemovedRefs);
+  const diffBlurBackground = useAppStore((s) => s.diffBlurBackground);
+  const diffActive = gitView?.kind === 'diff';
   const lodThresholds = useAppStore((s) => s.settings.lod);
   const density = useAppStore((s) => s.settings.ui.density);
   const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
@@ -173,12 +187,16 @@ export function App(_props: AppProps) {
 
     const effectiveRefs: Ref[] = [];
     const seen = new Set<string>();
+    // Maps each ref's STABLE id (Ref.id from the parser) to the composite edge key used by the edge
+    // layer — lets the diff overlay tint a newly-added ref by its stable id (spec 16).
+    const refKeyByStableId = new Map<string, string>();
     for (const r of schema.refs) {
       const srcM = mapEndpoint(r.source.table);
       const tgtM = mapEndpoint(r.target.table);
       if (srcM == null || tgtM == null) continue;
       if (srcM === tgtM) continue;
       const key = `${srcM}::${r.source.columns.join(',')}|${tgtM}::${r.target.columns.join(',')}`;
+      refKeyByStableId.set(r.id, key);
       if (seen.has(key)) continue;
       seen.add(key);
       effectiveRefs.push({
@@ -189,7 +207,7 @@ export function App(_props: AppProps) {
       });
     }
 
-    return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs };
+    return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs, refKeyByStableId };
   }, [schema, positions, groupState, individuallyHidden, density]);
 
   const spatialIndex = useMemo(() => {
@@ -256,7 +274,7 @@ export function App(_props: AppProps) {
         return;
       }
       if (e.button === 0) {
-        if (store.getState().mergeConflicts) return; // conflict mode: no marquee/selection
+        if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no marquee/selection
         // Only start marquee if click landed on empty viewport (not on a table / group / etc).
         const target = e.target as HTMLElement;
         if (target !== el && !target.classList.contains('ddd-world') && !target.classList.contains('ddd-group-container')) {
@@ -338,7 +356,7 @@ export function App(_props: AppProps) {
       // Skip when typing inside an input/textarea/contenteditable (e.g. color popup).
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      if (store.getState().mergeConflicts) return; // conflict mode: no undo/redo (layout is read-only)
+      if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no undo/redo (read-only)
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const k = e.key.toLowerCase();
@@ -439,6 +457,40 @@ export function App(_props: AppProps) {
   const mergeTableKeys = new Set<QualifiedName>();
   if (mergeConflicts) for (const c of mergeConflicts) if (c.section === 'tables') mergeTableKeys.add(c.key);
 
+  // Diff overlay (spec 16): translate added refs' stable ids to the edge layer's composite keys so
+  // the matching edges can be tinted. Removed refs are drawn by DiffGhosts, not here.
+  let edgeRefDiff: Map<string, RefDiffStatus> | null = null;
+  if (refDiff) {
+    edgeRefDiff = new Map();
+    for (const [stableId, status] of refDiff) {
+      if (status !== 'added') continue;
+      const key = derived.refKeyByStableId.get(stableId);
+      if (key) edgeRefDiff.set(key, status);
+    }
+  }
+
+  // Diff change targets (changed live tables + removed ghosts) — feed the hover hit-layer and the
+  // banner's prev/next camera navigation. Sorted for a stable step order.
+  const diffTargets: DiffTarget[] = [];
+  if (diffActive) {
+    if (diffByTable) {
+      for (const [name] of diffByTable) {
+        const p = positions.get(name);
+        const t = tablesByName.get(name);
+        if (!p || !t) continue;
+        const s = estimateSize(t.columns.length);
+        diffTargets.push({ name, x: p.x, y: p.y, w: s.width, h: s.height });
+      }
+    }
+    if (diffGhosts) {
+      for (const g of diffGhosts) {
+        const s = estimateSize(g.table.columns.length);
+        diffTargets.push({ name: g.table.name, x: g.pos.x, y: g.pos.y, w: s.width, h: s.height });
+      }
+    }
+    diffTargets.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   const renderedTables = schema.tables.filter(
     (t) => !derived.hiddenTables.has(t.name) && !derived.collapsedTables.has(t.name),
   );
@@ -450,7 +502,7 @@ export function App(_props: AppProps) {
     <>
       <div class="ddd-viewport" ref={viewportRef} tabIndex={0}>
         {ready && schema.tables.length > 0 ? (
-          <div class={mergeConflicts ? 'ddd-world is-merge-locked' : 'ddd-world'} style={{ transform: worldTransform }}>
+          <div class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'} style={{ transform: worldTransform }}>
             {snapToGrid ? (
               <div
                 class="ddd-grid"
@@ -474,6 +526,7 @@ export function App(_props: AppProps) {
               tablesByName={tablesByName}
               groupSizes={derived.collapsedNodes}
               worldBbox={worldBbox}
+              refDiff={edgeRefDiff}
             />
             {renderedTables.map((t) => {
               if (visibleNames && !visibleNames.has(t.name)) return null;
@@ -492,6 +545,8 @@ export function App(_props: AppProps) {
                   selected={selection.has(t.name)}
                   color={tColor}
                   fkColumns={fkColumnsByTable.get(t.name)}
+                  diffStatus={diffByTable?.get(t.name)}
+                  dimmed={diffActive && diffBlurBackground && !diffByTable?.has(t.name)}
                 />
               );
             })}
@@ -511,6 +566,17 @@ export function App(_props: AppProps) {
               );
             })}
             {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} /> : null}
+            {diffActive ? (
+              <>
+                <DiffGhosts
+                  ghosts={diffGhosts ?? []}
+                  removedRefs={diffRemovedRefs ?? []}
+                  positions={positions}
+                  tablesByName={tablesByName}
+                />
+                <DiffHitLayer targets={diffTargets} />
+              </>
+            ) : null}
           </div>
         ) : null}
         {marquee ? (
@@ -528,10 +594,12 @@ export function App(_props: AppProps) {
         {ready && schema.tables.length === 0 && !parseError ? (
           <div class="ddd-empty">empty DBML — define a Table to see it here.</div>
         ) : null}
+        {ready ? <AppMenu /> : null}
         {ready ? <GroupPanel /> : null}
         {ready ? <ZoomButtons /> : null}
-        {ready && !mergeConflicts ? <ActionsPanel /> : null}
+        {ready && !readOnly ? <ActionsPanel /> : null}
         {ready && mergeConflicts ? <MergePanel /> : null}
+        {ready && gitView ? <GitBanner diffTargets={diffTargets} /> : null}
       </div>
       {parseError ? (
         <div class="ddd-banner" title={parseError.message}>
@@ -546,8 +614,10 @@ export function App(_props: AppProps) {
         </div>
       ) : null}
       <Tooltip />
+      {diffActive ? <DiffHoverCard /> : null}
       <ExportModal />
       <SettingsPanel />
+      <GitPanel />
     </>
   );
 }

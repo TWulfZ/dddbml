@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
-import type { QualifiedName, Ref, Schema } from '../../shared/types';
+import type { QualifiedName, Ref, RefDiffStatus, Schema } from '../../shared/types';
 import { columnCenterY, estimateSize } from '../layout/autoLayout';
 import { routeRefs, isDipRun, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
@@ -32,6 +32,8 @@ interface EdgeLayerProps {
   tablesByName: Map<QualifiedName, Schema['tables'][number]>;
   groupSizes?: GroupSize[];
   worldBbox: { x: number; y: number; w: number; h: number };
+  /** Diff overlay (spec 16): composite edge key → status. Tints added refs. Null = not diffing. */
+  refDiff?: Map<string, RefDiffStatus> | null;
 }
 
 const GROUP_PREFIX = '__group__:';
@@ -58,7 +60,7 @@ interface HoverState {
   near: number;
 }
 
-export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, groupSizes, worldBbox }: EdgeLayerProps) {
+export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, groupSizes, worldBbox, refDiff }: EdgeLayerProps) {
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -240,9 +242,11 @@ export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, g
         </defs>
         {visibleRoutes.map((r) => {
           const color = edgeLayouts.get(r.id)?.color;
+          const diff = refDiff?.get(r.id);
+          const diffCls = diff ? ` is-diff-${diff}` : '';
           if (lowZoom) {
             // Bird's-eye: straight port-to-port line, no crow's-foot, no direction dots.
-            return <path key={r.id} d={straightPath(r)} class="ddd-edge" style={color ? { stroke: color } : undefined} />;
+            return <path key={r.id} d={straightPath(r)} class={`ddd-edge${diffCls}`} style={color ? { stroke: color } : undefined} />;
           }
           const ref = refById.get(r.id);
           const startMarker = ref?.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)';
@@ -251,7 +255,7 @@ export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, g
             <g key={r.id} style={color ? { color } : undefined}>
               <path
                 d={r.d}
-                class="ddd-edge"
+                class={`ddd-edge${diffCls}`}
                 style={color ? { stroke: color } : undefined}
                 marker-start={startMarker}
                 marker-end={endMarker}

@@ -100,7 +100,10 @@ Default inicial = `defaultSettings()` para que el render funcione antes de que `
 ## UI del Settings panel (implementado)
 
 Botón gear en `ActionsPanel` → `setSettingsPanelOpen(true)`. Abre un `Modal` (`<dialog>`)
-con layout **dos paneles** (`src/webview/render/settingsPanel.tsx`):
+con layout **dos paneles** (`src/webview/render/settingsPanel.tsx`). Desde **v0.2.7** Settings
+es además accesible desde el **menú de aplicación** (esquina sup-izq, spec 15): la fila
+*Settings* dispara el mismo `setSettingsPanelOpen(true)` — acceso multi-punto deliberado, sin
+duplicar el panel.
 
 - **Rail de categorías** (izquierda, `role="tablist"` vertical) con icono + label:
   **Interface** (`layout`), **Viewport** (`zoom-in`), **Level of Detail** (`eye`),

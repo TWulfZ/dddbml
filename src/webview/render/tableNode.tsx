@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import type { Column, Table } from '../../shared/types';
+import type { Column, Table, TableDiffStatus } from '../../shared/types';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag } from '../drag/dragController';
@@ -21,9 +21,14 @@ interface TableNodeProps {
   selected: boolean;
   color?: string;
   fkColumns?: Set<string>;
+  /** Git diff overlay status for this table — a border marker (spec 16). Detail lives in the
+   *  Previous|Current hover card, so no per-column tints are rendered inline. */
+  diffStatus?: TableDiffStatus;
+  /** True in diff mode for tables NOT in the diff, when "Blur background tables" is on. */
+  dimmed?: boolean;
 }
 
-export function TableNode({ table, x, y, lod, selected, color, fkColumns }: TableNodeProps) {
+export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed }: TableNodeProps) {
   const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
   const selection = useAppStore((s) => s.selection);
@@ -68,6 +73,10 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
   ) : null;
 
   const selClass = selected ? ' is-selected' : '';
+  // Diff marker (border) + background-dim. Hover detection lives in a separate hit-layer (DiffHitLayer)
+  // so it survives the read-only `pointer-events:none` belt; here we only paint.
+  const diffClass = (diffStatus ? ` is-diff-${diffStatus}` : '') + (dimmed ? ' is-diff-dimmed' : '');
+
   const headerStyle: Record<string, string> = color
     ? { background: withAlpha(color, 0.22), borderTopColor: color }
     : {};
@@ -76,7 +85,7 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
     return (
       <>
         <div
-          class={`ddd-table ddd-table--rect${selClass}`}
+          class={`ddd-table ddd-table--rect${selClass}${diffClass}`}
           data-id={table.name}
           onPointerDown={onPointerDown}
           onDblClick={onDblClick}
@@ -99,7 +108,7 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
     return (
       <>
         <div
-          class={`ddd-table ddd-table--header-only${selClass}`}
+          class={`ddd-table ddd-table--header-only${selClass}${diffClass}`}
           data-id={table.name}
           onPointerDown={onPointerDown}
           onDblClick={onDblClick}
@@ -124,7 +133,7 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
   return (
     <>
       <div
-        class={`ddd-table${selClass}`}
+        class={`ddd-table${selClass}${diffClass}`}
         data-id={table.name}
         onPointerDown={onPointerDown}
         onDblClick={onDblClick}

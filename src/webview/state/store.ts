@@ -1,6 +1,6 @@
 import { createStore } from 'zustand/vanilla';
 import { useEffect, useReducer } from 'preact/hooks';
-import type { AppSettings, EdgeLayout, GroupLayout, Layout, ParseError, QualifiedName, Schema, SerializableMergeConflict, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
+import type { AppSettings, ColumnDiffEntry, EdgeLayout, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
 import { defaultSettings } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
@@ -11,6 +11,22 @@ export interface TooltipState {
   body: string;
   x: number;
   y: number;
+}
+
+/**
+ * Non-editing canvas overlays driven by git (spec 16). Mutually exclusive with each other and with
+ * merge mode. Both make the canvas read-only via {@link isCanvasReadOnly}.
+ *   - `timeTravel`: showing a past commit's schema/layout (read via `git show`, never the work tree).
+ *   - `diff`: overlaying an added/removed/modified diff between two revisions.
+ */
+export type GitView =
+  | { kind: 'timeTravel'; rev: string; label: string }
+  | { kind: 'diff'; baseLabel: string; headLabel: string };
+
+/** A table removed vs the diff base — rendered as a ghost at its base position (no live node exists). */
+export interface DiffGhost {
+  table: Table;
+  pos: { x: number; y: number };
 }
 
 export interface AppState {
@@ -36,6 +52,8 @@ export interface AppState {
   exportPromptOpen: boolean;
   /** When true, the Settings panel is open. */
   settingsPanelOpen: boolean;
+  /** When true, the top-left application menu popover is open (spec 15). */
+  appMenuOpen: boolean;
   /** When true, the Diagram Views panel is expanded (was local to GroupPanel; lifted so the
    *  toolbar's search button can open it). */
   viewsPanelOpen: boolean;
@@ -60,6 +78,37 @@ export interface AppState {
   mergeCursor: number;
   /** Shared hover (ghost ↔ stepper button cross-highlight), keyed by conflict id + side. */
   mergeHover: { id: string; side: 'ours' | 'theirs' } | null;
+  /** Live git status of the diagram files (spec 16). Null until the host first reports. */
+  gitStatus: GitStatusSummary | null;
+  /** When true, the Git panel modal is open. */
+  gitPanelOpen: boolean;
+  /** True while a git write op (commit/stash/restore) is in flight — disables the action buttons. */
+  gitBusy: boolean;
+  /** Repo-global stash entries, newest first (spec 16). */
+  gitStashes: GitStashEntry[];
+  /** Commits touching the diagram files (History pane), newest first. */
+  gitCommits: GitCommitMeta[];
+  /** Active git canvas overlay (time-travel / diff), or null. Drives the read-only gate. */
+  gitView: GitView | null;
+  /** Diff overlay (null unless `gitView.kind === 'diff'`). Per-table status for live (added/modified)
+   *  tables; removed tables live in `diffGhosts`. */
+  diffByTable: Map<QualifiedName, TableDiffStatus> | null;
+  /** Per-table column diffs for modified tables (keyed by table → column name → entry). */
+  columnDiffByTable: Map<QualifiedName, Map<string, ColumnDiffEntry>> | null;
+  /** Removed tables to render as ghosts at their base positions. */
+  diffGhosts: DiffGhost[] | null;
+  /** Ref (FK) diff keyed by stable ref id. Added refs tint live edges; removed refs draw as ghosts. */
+  refDiff: Map<string, RefDiffStatus> | null;
+  /** Removed refs (endpoints) for the ghost connector overlay. */
+  diffRemovedRefs: RefDiff[] | null;
+  /** Previous (base) full table for changed tables — feeds the Previous|Current hover card. */
+  diffBaseByTable: Map<QualifiedName, Table> | null;
+  /** When true (default), tables NOT in the diff are dimmed/blurred to focus the changes. */
+  diffBlurBackground: boolean;
+  /** Table currently hovered in diff mode (+ its screen anchor) — drives the Previous|Current card. */
+  diffHover: { name: QualifiedName; anchor: { left: number; top: number; right: number; bottom: number } } | null;
+  /** Index into the change list for the banner's prev/next camera navigation. */
+  diffCursor: number;
 }
 
 export interface AppActions {
@@ -87,6 +136,7 @@ export interface AppActions {
   setExporters(list: ExporterMeta[]): void;
   setExportPromptOpen(open: boolean): void;
   setSettingsPanelOpen(open: boolean): void;
+  setAppMenuOpen(open: boolean): void;
   setViewsPanelOpen(open: boolean): void;
   openViewsAndFocusSearch(): void;
   pushMoveCommand(cmd: MoveCommand): void;
@@ -105,6 +155,17 @@ export interface AppActions {
   mergeStep(delta: number): void;
   setMergeHover(hover: { id: string; side: 'ours' | 'theirs' } | null): void;
   endMerge(): void;
+  setGitStatus(status: GitStatusSummary): void;
+  setGitPanelOpen(open: boolean): void;
+  setGitBusy(busy: boolean): void;
+  setGitStashes(stashes: GitStashEntry[]): void;
+  setGitCommits(commits: GitCommitMeta[]): void;
+  enterTimeTravel(rev: string, label: string): void;
+  enterDiff(baseLabel: string, headLabel: string, diff: SchemaDiff): void;
+  exitGitView(): void;
+  setDiffBlurBackground(on: boolean): void;
+  setDiffHover(hover: AppState['diffHover']): void;
+  setDiffCursor(index: number): void;
 }
 
 const initial: AppState = {
@@ -126,6 +187,7 @@ const initial: AppState = {
   exporters: [],
   exportPromptOpen: false,
   settingsPanelOpen: false,
+  appMenuOpen: false,
   viewsPanelOpen: true,
   viewsSearchFocusNonce: 0,
   past: [],
@@ -137,7 +199,28 @@ const initial: AppState = {
   mergeView: 'all',
   mergeCursor: 0,
   mergeHover: null,
+  gitStatus: null,
+  gitPanelOpen: false,
+  gitBusy: false,
+  gitStashes: [],
+  gitCommits: [],
+  gitView: null,
+  diffByTable: null,
+  columnDiffByTable: null,
+  diffGhosts: null,
+  refDiff: null,
+  diffRemovedRefs: null,
+  diffBaseByTable: null,
+  diffBlurBackground: true,
+  diffHover: null,
+  diffCursor: 0,
 };
+
+/** The canvas is read-only (pan/zoom only) during a merge OR any git overlay (time-travel / diff).
+ *  Single predicate so every edit gate honors all three without scattering `||` checks (spec 14/16). */
+export function isCanvasReadOnly(s: AppState): boolean {
+  return s.mergeConflicts !== null || s.gitView !== null;
+}
 
 export const store = createStore<AppState & AppActions>((set, _get) => ({
   ...initial,
@@ -326,6 +409,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   setSettingsPanelOpen(open) {
     set({ settingsPanelOpen: open });
   },
+  setAppMenuOpen(open) {
+    set({ appMenuOpen: open });
+  },
   setViewsPanelOpen(open) {
     set({ viewsPanelOpen: open });
   },
@@ -346,7 +432,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   undo() {
     set((s) => {
-      if (s.mergeConflicts) return s; // read-only during conflict resolution (spec 14)
+      if (isCanvasReadOnly(s)) return s; // read-only during conflict resolution / git overlay (spec 14/16)
       if (s.past.length === 0) return s;
       const cmd = s.past[s.past.length - 1]!;
       const patch = applyCommand(s, cmd, 'undo');
@@ -359,7 +445,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   redo() {
     set((s) => {
-      if (s.mergeConflicts) return s; // read-only during conflict resolution (spec 14)
+      if (isCanvasReadOnly(s)) return s; // read-only during conflict resolution / git overlay (spec 14/16)
       if (s.future.length === 0) return s;
       const cmd = s.future[s.future.length - 1]!;
       const patch = applyCommand(s, cmd, 'redo');
@@ -375,7 +461,8 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   beginMerge(conflicts) {
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
-    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null });
+    // A host merge always wins over a git overlay, so clear gitView too.
+    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffHover: null, diffCursor: 0 });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -413,6 +500,85 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   endMerge() {
     set({ mergeConflicts: null, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null });
+  },
+  setGitStatus(status) {
+    set({ gitStatus: status });
+  },
+  setGitPanelOpen(open) {
+    set({ gitPanelOpen: open });
+  },
+  setGitBusy(busy) {
+    set({ gitBusy: busy });
+  },
+  setGitStashes(stashes) {
+    set({ gitStashes: stashes });
+  },
+  setGitCommits(commits) {
+    set({ gitCommits: commits });
+  },
+  enterTimeTravel(rev, label) {
+    // Read-only preview of a past commit; drop selection so nothing edits behind the gate.
+    set({ gitView: { kind: 'timeTravel', rev, label }, selection: new Set(), selectedEdgeId: null });
+  },
+  enterDiff(baseLabel, headLabel, diff) {
+    const diffByTable = new Map<QualifiedName, TableDiffStatus>();
+    const columnDiffByTable = new Map<QualifiedName, Map<string, ColumnDiffEntry>>();
+    const diffBaseByTable = new Map<QualifiedName, Table>();
+    const ghosts: DiffGhost[] = [];
+    for (const t of diff.tables) {
+      if (t.status === 'removed') {
+        if (t.base && t.pos) ghosts.push({ table: t.base, pos: t.pos });
+        continue;
+      }
+      diffByTable.set(t.table, t.status);
+      if (t.base) diffBaseByTable.set(t.table, t.base); // Previous version for the hover card
+      if (t.columns.length > 0) {
+        const m = new Map<string, ColumnDiffEntry>();
+        for (const c of t.columns) m.set(c.name, c);
+        columnDiffByTable.set(t.table, m);
+      }
+    }
+    const refDiff = new Map<string, RefDiffStatus>();
+    const removedRefs: RefDiff[] = [];
+    for (const r of diff.refs) {
+      refDiff.set(r.id, r.status);
+      if (r.status === 'removed') removedRefs.push(r);
+    }
+    set({
+      gitView: { kind: 'diff', baseLabel, headLabel },
+      diffByTable,
+      columnDiffByTable,
+      diffBaseByTable,
+      diffGhosts: ghosts,
+      refDiff,
+      diffRemovedRefs: removedRefs,
+      diffHover: null,
+      diffCursor: 0,
+      selection: new Set(),
+      selectedEdgeId: null,
+    });
+  },
+  exitGitView() {
+    set({
+      gitView: null,
+      diffByTable: null,
+      columnDiffByTable: null,
+      diffBaseByTable: null,
+      diffGhosts: null,
+      refDiff: null,
+      diffRemovedRefs: null,
+      diffHover: null,
+      diffCursor: 0,
+    });
+  },
+  setDiffBlurBackground(on) {
+    set({ diffBlurBackground: on });
+  },
+  setDiffHover(hover) {
+    set({ diffHover: hover });
+  },
+  setDiffCursor(index) {
+    set({ diffCursor: index });
   },
 }));
 
