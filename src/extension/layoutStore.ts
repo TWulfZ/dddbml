@@ -9,21 +9,58 @@ export function emptyLayout(): Layout {
   return { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
 }
 
-export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
-  const uri = sidecarUri(dbmlUri);
-  try {
-    const bytes = await vscode.workspace.fs.readFile(uri);
-    const text = new TextDecoder('utf-8').decode(bytes);
-    return parseLayout(text);
-  } catch {
-    return emptyLayout();
+/** Raised by `readLayout` when the sidecar still holds unresolved git conflict markers.
+ *  Callers route this to the 3-way merge resolver instead of silently wiping the layout. */
+export class LayoutConflictError extends Error {
+  constructor(public readonly conflictedText: string) {
+    super('dddbml: layout sidecar contains unresolved git conflict markers');
+    this.name = 'LayoutConflictError';
   }
 }
 
-export async function writeLayout(dbmlUri: vscode.Uri, layout: Layout): Promise<string> {
+// `<<<<<<<`, `|||||||` (diff3 base), `=======`, `>>>>>>>` — never valid at the start of a JSON line.
+const CONFLICT_MARKER_RE = /^(<{7}|={7}|>{7}|\|{7})/m;
+
+export function hasConflictMarkers(text: string): boolean {
+  return CONFLICT_MARKER_RE.test(text);
+}
+
+/**
+ * Merges a `layout:persist` partial onto the current layout. The webview sends a partial; a key
+ * it omits must keep its current value — never drop a sub-object. `edges` is included here on
+ * purpose: leaving it out is what silently wiped persisted waypoints/colors/sides to `{}`.
+ */
+export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
+  return {
+    version: 1,
+    viewport: payload.viewport ?? current.viewport,
+    tables: payload.tables ?? current.tables,
+    groups: payload.groups ?? current.groups,
+    edges: payload.edges ?? current.edges ?? {},
+  };
+}
+
+export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
+  const uri = sidecarUri(dbmlUri);
+  let text: string;
+  try {
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    text = new TextDecoder('utf-8').decode(bytes);
+  } catch {
+    return emptyLayout(); // missing/unreadable sidecar → treat as empty
+  }
+  // Do NOT feed conflict-marker soup to JSON.parse: it throws and the old catch wiped the
+  // layout to empty. Signal the conflict so the caller can run the 3-way merge instead.
+  if (hasConflictMarkers(text)) throw new LayoutConflictError(text);
+  return parseLayout(text);
+}
+
+/** Writes the Git-tracked sidecar. Always the SHARED form — per-user view-state
+ *  (viewport, hidden/collapsed) lives in the local view-state file, never here. */
+export async function writeSharedLayout(dbmlUri: vscode.Uri, layout: Layout): Promise<string> {
   const layoutUri = sidecarUri(dbmlUri);
   const tmpUri = layoutUri.with({ path: layoutUri.path + '.tmp' });
-  const serialized = serializeLayout(layout);
+  const serialized = serializeSharedLayout(layout);
   const bytes = new TextEncoder().encode(serialized);
   await vscode.workspace.fs.writeFile(tmpUri, bytes);
   await vscode.workspace.fs.rename(tmpUri, layoutUri, { overwrite: true });
@@ -67,7 +104,10 @@ function toEdges(raw: unknown): Record<string, EdgeLayout> {
     // Legacy fields: read for back-compat. Webview migrates to waypoints on next persist.
     if (typeof vv.dx === 'number' && Number.isFinite(vv.dx)) e.dx = Math.round(vv.dx);
     if (typeof vv.dy === 'number' && Number.isFinite(vv.dy)) e.dy = Math.round(vv.dy);
-    if (e.waypoints || e.dx !== undefined || e.dy !== undefined) out[k] = e;
+    if (typeof vv.color === 'string' && vv.color.length > 0) e.color = vv.color;
+    if (vv.sourceSide === 'left' || vv.sourceSide === 'right') e.sourceSide = vv.sourceSide;
+    if (vv.targetSide === 'left' || vv.targetSide === 'right') e.targetSide = vv.targetSide;
+    if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) out[k] = e;
   }
   return out;
 }
@@ -128,21 +168,40 @@ function numeric(v: unknown, fallback: number, asInt: boolean): number {
  *   - compact object-on-one-line for leaves (tables/groups)
  */
 export function serializeLayout(layout: Layout): string {
+  return serializeLayoutImpl(layout, false);
+}
+
+/**
+ * Git-tracked serialization: shared design ONLY. Omits all per-user view-state
+ * (`viewport`, table `hidden`, group `collapsed`/`hidden`) and any group entry with
+ * no `color`. The sidecar therefore never diffs on pan/zoom or personal show/hide —
+ * it carries only what the team collaborates on (positions, colors, edge routing).
+ */
+export function serializeSharedLayout(layout: Layout): string {
+  return serializeLayoutImpl(layout, true);
+}
+
+function serializeLayoutImpl(layout: Layout, shared: boolean): string {
   const tableKeys = Object.keys(layout.tables).sort();
-  const groupKeys = Object.keys(layout.groups).sort();
+  const groupKeys = (shared
+    ? Object.keys(layout.groups).filter((k) => !!layout.groups[k]!.color)
+    : Object.keys(layout.groups)
+  ).sort();
 
   const lines: string[] = [];
   lines.push('{');
   lines.push(`  "version": ${layout.version},`);
-  const vp = layout.viewport;
-  lines.push(`  "viewport": { "x": ${Math.round(vp.x)}, "y": ${Math.round(vp.y)}, "zoom": ${Math.round(vp.zoom * 1000) / 1000} },`);
+  if (!shared) {
+    const vp = layout.viewport;
+    lines.push(`  "viewport": { "x": ${Math.round(vp.x)}, "y": ${Math.round(vp.y)}, "zoom": ${Math.round(vp.zoom * 1000) / 1000} },`);
+  }
 
   lines.push('  "tables": {');
   tableKeys.forEach((k, i) => {
     const v = layout.tables[k]!;
     const comma = i < tableKeys.length - 1 ? ',' : '';
     const parts = [`"x": ${Math.round(v.x)}`, `"y": ${Math.round(v.y)}`];
-    if (v.hidden) parts.push('"hidden": true');
+    if (!shared && v.hidden) parts.push('"hidden": true');
     if (v.color) parts.push(`"color": ${JSON.stringify(v.color)}`);
     lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
   });
@@ -152,8 +211,8 @@ export function serializeLayout(layout: Layout): string {
   groupKeys.forEach((k, i) => {
     const v = layout.groups[k]!;
     const parts: string[] = [];
-    if (v.collapsed) parts.push('"collapsed": true');
-    if (v.hidden) parts.push('"hidden": true');
+    if (!shared && v.collapsed) parts.push('"collapsed": true');
+    if (!shared && v.hidden) parts.push('"hidden": true');
     if (v.color) parts.push(`"color": ${JSON.stringify(v.color)}`);
     const body = parts.length > 0 ? ` ${parts.join(', ')} ` : '';
     const comma = i < groupKeys.length - 1 ? ',' : '';
@@ -161,7 +220,9 @@ export function serializeLayout(layout: Layout): string {
   });
 
   const edgeEntries = Object.entries(layout.edges ?? {}).filter(([, v]) =>
-    (v.waypoints && v.waypoints.length > 0) || v.dx !== undefined || v.dy !== undefined,
+    (v.waypoints && v.waypoints.length > 0) ||
+    v.color !== undefined || v.sourceSide !== undefined || v.targetSide !== undefined ||
+    v.dx !== undefined || v.dy !== undefined,
   );
   if (edgeEntries.length === 0) {
     lines.push('  },');
@@ -172,21 +233,28 @@ export function serializeLayout(layout: Layout): string {
     edgeEntries.sort(([a], [b]) => a.localeCompare(b));
     edgeEntries.forEach(([k, v], i) => {
       const comma = i < edgeEntries.length - 1 ? ',' : '';
-      if (v.waypoints && v.waypoints.length > 0) {
-        // Multi-line array. Waypoints prevail over legacy dx/dy.
+      const hasWaypoints = !!(v.waypoints && v.waypoints.length > 0);
+      // Scalar fields in deterministic key order. Waypoints prevail over legacy dx/dy.
+      const scalars: string[] = [];
+      if (v.color) scalars.push(`"color": ${JSON.stringify(v.color)}`);
+      if (v.sourceSide) scalars.push(`"sourceSide": ${JSON.stringify(v.sourceSide)}`);
+      if (v.targetSide) scalars.push(`"targetSide": ${JSON.stringify(v.targetSide)}`);
+      if (!hasWaypoints) {
+        if (v.dx !== undefined) scalars.push(`"dx": ${Math.round(v.dx)}`);
+        if (v.dy !== undefined) scalars.push(`"dy": ${Math.round(v.dy)}`);
+      }
+      if (hasWaypoints) {
         lines.push(`    ${JSON.stringify(k)}: {`);
+        for (const part of scalars) lines.push(`      ${part},`);
         lines.push('      "waypoints": [');
-        v.waypoints.forEach((w, j) => {
+        v.waypoints!.forEach((w, j) => {
           const wc = j < v.waypoints!.length - 1 ? ',' : '';
           lines.push(`        { "x": ${Math.round(w.x)}, "y": ${Math.round(w.y)} }${wc}`);
         });
         lines.push('      ]');
         lines.push(`    }${comma}`);
       } else {
-        const parts: string[] = [];
-        if (v.dx !== undefined) parts.push(`"dx": ${Math.round(v.dx)}`);
-        if (v.dy !== undefined) parts.push(`"dy": ${Math.round(v.dy)}`);
-        lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
+        lines.push(`    ${JSON.stringify(k)}: { ${scalars.join(', ')} }${comma}`);
       }
     });
     lines.push('  }');

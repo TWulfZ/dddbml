@@ -92,7 +92,7 @@ Find what you're touching, read that spec, navigate those files via codegraph.
 | Exporters (TypeORM / dialects) | `specs/09-exporters.md` | `src/extension/exporters/**`, `src/shared/exporters/types.ts` |
 | Settings | `specs/10-settings.md` | `src/extension/settings.ts`, `src/webview/render/settingsPanel.tsx`, `package.json` → `contributes.configuration` |
 | Undo / redo / action history | `specs/11-action-history.md` | `src/webview/state/{history,store}.ts` |
-| Design system / CSS / density | `specs/12-design-system.md` | `src/webview/style.css`, `src/webview/layout/density.ts`, `src/webview/groups/bcPalette.ts` |
+| Design system / CSS / density / UI primitives | `specs/12-design-system.md` | `src/webview/style.css`, `src/webview/ui/` (`Button`, `Modal`, `Field`, `RadioGroup`, `Search`, `cn`), `src/webview/layout/density.ts`, `src/webview/groups/bcPalette.ts` |
 | Host↔webview protocol / lifecycle | `specs/01-architecture.md` | `src/extension/{extension,panel}.ts`, `src/webview/{main,vscode}.ts`, `src/shared/types.ts` |
 
 `specs/00-overview.md` (goals, anti-goals, success criteria) and
@@ -102,14 +102,15 @@ Find what you're touching, read that spec, navigate those files via codegraph.
 
 | Concern | Choice |
 |---|---|
-| UI | **Preact 10** (not React; aliased in `vite.config.ts`) |
+| UI | **Preact 10** (not React; aliased in `vite.config.mts`) + in-house primitives in `src/webview/ui/` |
+| Styling | **Tailwind v4** (`@tailwindcss/vite`) — arbitrary-value utilities over the `--ddd-*`/`--vscode-*` token layer; **shadcn-style** primitives via `cva` + `clsx` (no `tailwind-merge`). `@layer` order kept; preflight off |
 | State | **Zustand 5** vanilla store + `useAppStore(selector)` |
 | DBML parsing | `@dbml/core` 3.9 — **host only** |
 | Auto-layout | `@dagrejs/dagre` 3 |
-| Webview build | **Vite** → `dist/webview/webview.js` (IIFE); CSS inlined via `?inline` |
+| Webview build | **Vite** (`vite.config.mts`, ESM — the Tailwind plugin is ESM-only) → `dist/webview/webview.js` (IIFE); `style.css` inlined via `?inline`, Tailwind compiled into it |
 | Extension build | **esbuild** → `dist/extension/.../extension.js` (CJS) |
 | Tests | **Vitest 2**, colocated `*.test.ts` |
-| Package manager | **pnpm 10** — never `npm` / `yarn` |
+| Package manager | **pnpm 11** (pinned via `packageManager`) — never `npm` / `yarn`. Build scripts are gated; approvals live in `pnpm-workspace.yaml` |
 | TypeScript | **strict**, `noUncheckedIndexedAccess`, `noImplicitOverride` |
 
 ## Hard rules (guardrails)
@@ -130,8 +131,20 @@ them; if a task seems to require it, surface that to the user.
 - **Git-friendly layout writer.** The sidecar writer keeps keys sorted, omits
   default flags, uses integer coords, and writes atomically (temp + rename).
   Preserve these invariants or you ruin reviewable diffs (`layoutStore.ts`).
-- **Design tokens only.** No magic px or hex in components. Use density tokens,
-  the BC palette, and the CSS `@layer` order. See `references/code-rules.md`.
+- **Design tokens only — via Tailwind utilities or the `<Button>` primitive.**
+  No magic px/hex in components. Style with **Tailwind v4 arbitrary-value
+  utilities that reference the tokens** (e.g. `bg-[var(--ddd-surface-hover)]`,
+  `text-[color:var(--ddd-fg)]`), never hardcoded values. `--ddd-*` stays the
+  **single source of truth** (Tailwind only references it; it does not replace
+  it); keep the `@layer` order and the `data-density` contract; **preflight stays
+  off** (it would clobber the reset + `--vscode-*` inheritance). For buttons,
+  reuse the `<Button>` primitive — don't hand-write button class strings. See
+  `references/code-rules.md`.
+- **Author variants conflict-free; no `tailwind-merge`.** Because Tailwind has no
+  specificity control, stateful variants (`active`/`off`) put their colors in
+  **mutually-exclusive `compoundVariants`** so two utilities never target the same
+  property at once. This is deliberate — it kept the bundle lean (no ~16 KB-gz
+  `tailwind-merge`). Don't reintroduce it to "fix" a conflict; restructure instead.
 - **pnpm + strict TS, no `any`.** Match the existing strictness.
 
 ## Reusable extension points — use these, don't reinvent
@@ -154,6 +167,47 @@ Verified seams in the code. Extending them keeps the diff small and consistent.
   `state/store.ts`; don't create a second store.
 - **Colors / spacing** → `bcIndex`/`bcColorFor` (`groups/bcPalette.ts`) and
   density metrics (`layout/density.ts`).
+- **A button (any kind)** → reuse the `<Button>` primitive
+  (`src/webview/ui/Button.tsx`): `variant` (`ghost | secondary | primary | action
+  | history | zoom | toolbar`) × `size` (`sm | md | icon`) + `active`/`off` toggle
+  props; native attrs pass through. The 7 variants already map the former 7
+  `.ddd-*-btn` families — don't add a new button class.
+- **A UI primitive** — first check `ui/`: `Modal` (native `<dialog>`), `Field`
+  /`TextField`/`NumberField`/`SelectField`/`Checkbox`, `RadioGroup`, `Search`
+  already exist; reuse them. For a **new** one, pick the tier (both read `--ddd-*`):
+  - *Simple stateful micro-component* (like `Button`) → co-located `cva()` config
+    exported as `xVariants` + Tailwind utilities + `cn`; conflict-free
+    `compoundVariants` for toggle states.
+  - *Structural/animated* (like `Modal`/`Field`) → a typed component that **wraps
+    the existing `.ddd-*` `@layer` classes** via `cn`. Don't re-derive
+    `@keyframes`/`::backdrop`/`focus-within`/`min()`-layout CSS as utilities.
+  Prefer native elements — `<dialog>` for modals (the `Modal` primitive does this).
+
+## Using the `ui-ux-pro-max` skill here (efficiently, not generically)
+
+That skill is a generic web/mobile design oracle. Its default stack is **React
+Native**, which does **not** apply to this Preact VS Code webview — so most of it
+is noise unless you aim it. When you invoke it for dddbml:
+
+- **Never run `--stack react-native`** (or any `--stack`). Wrong runtime; the
+  guidance won't fit Preact + a webview.
+- **Skip `--design-system` / `--persist`.** They scaffold a whole product design
+  system (landing/dashboard archetypes). dddbml's design system already exists in
+  `specs/12-design-system.md` + the `--ddd-*` tokens — re-deriving it is wasted
+  tokens and risks divergence.
+- **Query its actual value — the UX rule database** — with the Python CLI it
+  ships (path printed when the skill loads; form:
+  `python3 <skill>/scripts/search.py "<keywords>" --domain ux`). Use `--domain ux`
+  for accessibility / interaction states / animation timing / focus /
+  reduced-motion, and `--domain style|color|typography` **only as input to map
+  onto existing tokens** — never to introduce raw hex/px.
+- **Funnel every recommendation back into our system:** a color → a
+  `--vscode-*`/`--ddd-*` token; a spacing/radius/motion value → an existing
+  `--ddd-*` token (add to `@layer tokens` + spec 12 if missing, don't inline); a
+  component → the `<Button>` primitive or a new `cva` primitive in `ui/`.
+- **Non-negotiables it must respect:** works in dark themes via live `--vscode-*`
+  vars; honors `prefers-reduced-motion`; icon-only buttons keep a `title` /
+  `aria-label`; no per-frame class churn on the 5000-table render path.
 
 ## Reference files — read on demand
 

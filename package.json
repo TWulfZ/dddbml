@@ -2,7 +2,7 @@
   "name": "dddbml",
   "displayName": "dddbml — DBML Diagram with Git-friendly Layout",
   "description": "Interactive DBML diagram renderer for VSCode with per-table position persistence, TableGroup collapse for DDD contexts, and viewport culling for large schemas (5000+ tables).",
-  "version": "0.2.0",
+  "version": "0.2.6",
   "publisher": "TWulfZ",
   "icon": "docs/icon.png",
   "engines": {
@@ -21,7 +21,7 @@
     "ddd"
   ],
   "main": "./dist/extension/extension/extension.js",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.4.0",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,7 +36,8 @@
       {
         "command": "dddbml.openDiagram",
         "title": "dddbml: Open Diagram",
-        "category": "dddbml"
+        "category": "dddbml",
+        "icon": "$(type-hierarchy-sub)"
       },
       {
         "command": "dddbml.resetLayout",
@@ -51,6 +52,11 @@
       {
         "command": "dddbml.exportSchema",
         "title": "dddbml: Export Schema…",
+        "category": "dddbml"
+      },
+      {
+        "command": "dddbml.autoArrange",
+        "title": "dddbml: Auto-arrange Diagram…",
         "category": "dddbml"
       },
       {
@@ -158,19 +164,12 @@
           "maximum": 16,
           "description": "Maximum allowed zoom level (1 = 100%)."
         },
-        "dddbml.lod.mediumThreshold": {
-          "type": "number",
-          "default": 0.6,
-          "minimum": 0.05,
-          "maximum": 1,
-          "description": "Below this zoom level, tables render in header-only LOD (name only, no columns)."
-        },
         "dddbml.lod.lowThreshold": {
           "type": "number",
           "default": 0.3,
           "minimum": 0.01,
           "maximum": 1,
-          "description": "Below this zoom level, tables render as colored rectangles (no text). Must be lower than mediumThreshold."
+          "description": "Below this zoom level, tables render as colored rectangles (name shown on hover); at or above it, full columns render."
         },
         "dddbml.ui.density": {
           "type": "string",
@@ -186,6 +185,25 @@
             "Roomy rows and wide tables. Best for small focused views."
           ],
           "description": "Visual density of tables and rows. Controls table width, row height, padding, and font size."
+        },
+        "dddbml.ui.snapToGrid": {
+          "type": "boolean",
+          "default": false,
+          "description": "Magnet mode: snap table positions and edge bend vertices to the grid, and show a dotted grid background."
+        },
+        "dddbml.ui.gridSize": {
+          "type": "number",
+          "default": 16,
+          "minimum": 2,
+          "maximum": 128,
+          "description": "World-unit spacing of the snap grid used when magnet mode (ui.snapToGrid) is on."
+        },
+        "dddbml.ui.layoutSpacing": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.4,
+          "maximum": 2.5,
+          "description": "Smart auto-layout density. Below 1 packs tables and groups tighter; above 1 spreads them out. Applied on the next auto-arrange."
         },
         "dddbml.export.defaultFormat": {
           "type": "string",
@@ -230,7 +248,7 @@
     "watch:extension": "esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --sourcemap --watch",
     "watch:webview": "vite build --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:gen": "mkdir -p test/fixtures && node scripts/gen-small-fixture.mjs > test/fixtures/small.dbml && node scripts/gen-huge-fixture.mjs > test/fixtures/huge.dbml",
+    "test:gen": "mkdir -p test/fixtures && node scripts/gen-fixtures.mjs small > test/fixtures/small.dbml && node scripts/gen-fixtures.mjs huge > test/fixtures/huge.dbml && node scripts/gen-fixtures.mjs merge 3 && node scripts/gen-fixtures.mjs merge 20",
     "test": "vitest run",
     "test:watch": "vitest",
     "package": "vsce package --no-dependencies",
@@ -239,14 +257,19 @@
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
     "@dbml/core": "^3.9.0",
+    "@vscode/codicons": "^0.0.45",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "preact": "^10.22.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.28.0",
+    "tailwindcss": "^4.3.0",
     "typescript": "^5.4.0",
     "vite": "^5.3.0",
     "vitest": "^2.0.0"

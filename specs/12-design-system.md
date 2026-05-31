@@ -12,14 +12,20 @@ VSCode sigue siendo dueño del tema (colores base, contraste de focus, hover). E
 2. **Cascada por capas** (`@layer reset, tokens, base, surfaces, components, state, utilities`) que permita extender o sobreescribir sin pelear con la especificidad.
 3. **Tres modos de densidad** (`compact | cozy | comfortable`) seleccionables vía `data-density` en la raíz; persistidos como setting de VSCode `dddbml.ui.density`.
 4. **Paleta Bounded Context** curada de 12 colores, color-blind safe y tuneada para modo oscuro, sustituye al `hsl(hash, 55%, 60%)` actual.
-5. **Cero churn de JSX**: todas las clases `ddd-*` existentes se preservan; solo cambian sus reglas y se añaden modificadores/variables.
+5. **Churn de JSX acotado**: las clases `ddd-*` existentes se preservan a nivel CSS. *Actualizado*: se introduce una capa de **primitivos Preact** en `src/webview/ui/` que encapsula esas clases tras componentes tipados (`<Button>`); los call sites migran su markup pero el lenguaje visual no cambia — ver [Capa de componentes](#capa-de-componentes--primitivos-preact).
 6. **Reduced motion**: `prefers-reduced-motion: reduce` neutraliza las animaciones de UI.
 7. **Spec-first**: este documento es la fuente de verdad. Cualquier cambio futuro a colores, tamaños o sombras se documenta aquí antes de tocar el CSS.
 
 ## Non-goals
 
 - Light theme y High-Contrast themes (deferred — la mayoría de usuarios DDD usan tema oscuro; ver Roadmap).
-- Tailwind o un framework de utilidades (rompería la coherencia con `--vscode-*`).
+- ~~Tailwind o un framework de utilidades (rompería la coherencia con `--vscode-*`)~~ →
+  **REVISADO** (ver [Integración Tailwind v4](#integración-tailwind-v4--trial-incremental)).
+  La objeción técnica original resultó parcialmente desactualizada: el CSP del panel ya
+  permite estilos (`style-src … 'unsafe-inline'`) y Tailwind v4 enlaza variables de tema
+  en vivo vía `@theme inline`. Se adopta Tailwind v4 de forma **incremental y reversible**;
+  `--ddd-*` sigue siendo la fuente de verdad semántica y las utilidades solo referencian
+  esos tokens (valores arbitrarios), no los reemplazan.
 - Per-file theming (mismo `.dbml` no debe tener diseño distinto por carpeta).
 - Stereotypes DDD (aggregate-root border, value-object dashed, etc.) — segundo round.
 - Splitting de `style.css` en archivos por componente — la arquitectura `@layer` cubre la separación lógica sin un build extra.
@@ -135,9 +141,17 @@ Bajo `@media (prefers-reduced-motion: reduce)`, las tres `duration-{fast,medium,
 | `--ddd-danger` | `--vscode-errorForeground` | borrar, error |
 | `--ddd-warning` | `--vscode-editorWarning-foreground` | note icon |
 | `--ddd-success` | `#4ec9b0` | confirmación |
+| `--ddd-merge-current` | `--vscode-merge-currentHeaderBackground` | lado *current* (HEAD) del merge resolver |
+| `--ddd-merge-incoming` | `--vscode-merge-incomingHeaderBackground` | lado *incoming* del merge resolver |
 | `--ddd-edge` | `--vscode-charts-blue` | relación FK |
 | `--ddd-edge-hover` | `--vscode-charts-foreground` | edge highlight |
 | `--ddd-edge-selected` | `--vscode-focusBorder` | edge selected |
+| `--ddd-edge-handle` | `--ddd-fg-muted` | borde sutil del handle de segmento (slide) |
+| `--ddd-edge-ghost-r` / `-hover` | `4` / `7` | radio del nodo fantasma ¼/¾ y su crecimiento en hover (sin cambio de color) |
+| `--ddd-edge-flow-width` | `3.9` | diámetro del punto del flujo; con `stroke-dasharray: 0 gap` + cap redondo, cada punto es un círculo de este diámetro → subirlo agranda sin volverse rectángulo ni tocar el espaciado (+30% = ×1.3) |
+| `--ddd-edge-flow-gap` | `42` | espaciado centro-a-centro del flujo = período del dash; el offset del `@keyframes` debe = `-gap` (literal, el keyframe no admite `var`) |
+| `--ddd-edge-flow-duration` | `1.4s` | duración de un loop (menor = más rápido) |
+| `--ddd-edge-bloom-flow` / `-selected` | drop-shadow ×2 / ×1 | glow del flujo (pronunciado) y de la línea seleccionada (sutil) |
 
 ---
 
@@ -236,11 +250,13 @@ Inventario de modificadores `.is-*`. Cada uno se aplica en `@layer state` con re
 - **Tooltips, context menus, color popup, modal overlay**: fade-in `var(--ddd-duration-fast) var(--ddd-ease-out)`.
 - **Modal panel**: fade + translateY(8px) → 0, `var(--ddd-duration-medium)`.
 - **Group panel slide**: ancho/altura `var(--ddd-duration-slow) var(--ddd-ease-out)`.
-- **Botones**: hover transition `background var(--ddd-duration-instant)`, press `transform: scale(0.97) var(--ddd-ease-spring)`.
+- **Botones**: transición conjunta `color/background/border/scale var(--ddd-duration-instant) var(--ddd-ease-out)` en la clase base; press = `active:scale-[0.97]` (cierra el drift previo: el spec lo documentaba pero solo `secondary`/`primary` lo tenían — ahora **todas** las variantes). La geometría del scale usa la propiedad CSS `scale` (no `transform`), independiente de las animaciones de entrada que animan `transform`.
+- **Tip de botón** (`ui/Tooltip`): fade + rise `translateY(4px)→0` (`ddd-tip-in`, `var(--ddd-duration-fast) var(--ddd-ease-out)`). El elemento externo posiciona (`translate(-50%, …)`); el interno anima — separación de propiedades para no colisionar el transform.
+- **Barra de acciones (entrada escalonada)**: al expandir, cada tool entra con `ddd-tool-in` (fade + `translateY(6px)→0`, `var(--ddd-duration-medium) var(--ddd-ease-out)`) con `animation-delay` por `nth-child` (25ms de paso). `backwards` mantiene el estado inicial antes del delay.
 
 Nada que afecte `width`/`height`/`top`/`left` directo dentro del viewport (el render usa `transform`, ya cumple).
 
-Reduce-motion (`@media (prefers-reduced-motion: reduce)`): `--ddd-duration-fast/medium/slow` → `0ms`. No se desactivan las animaciones del drag (son interacciones directas, no decorativas).
+Reduce-motion (`@media (prefers-reduced-motion: reduce)`): `--ddd-duration-fast/medium/slow` → `0ms` **y** `animation-delay: 0ms !important` (para que la entrada escalonada no secuencie). No se desactivan las animaciones del drag (son interacciones directas, no decorativas).
 
 ---
 
@@ -286,7 +302,7 @@ Cada magic value en `style.css` actual → su reemplazo.
 4. Color popup → seleccionar chip de paleta BC → header de tabla se actualiza sin flicker; reset → vuelve al color del group.
 5. Estados visualmente distintos: hover de fila, selección de tabla (`outline` accent), columna PK (color accent), columna FK (sin fondo extra, alineación correcta), drag en curso (cursor grabbing global), context menu danger item (color danger).
 6. DevTools → Rendering → `prefers-reduced-motion: reduce`: el modal aparece sin transición, los tooltips no hacen fade.
-7. LOD: zoom-out hasta `lowThreshold` → tabla en modo `rect` muestra fill del BC surface; entre `low` y `medium` → modo `header` mantiene la franja superior con el border BC.
+7. LOD: zoom-out por debajo de `lowThreshold` → tabla en modo `rect` muestra fill del BC surface y revela su nombre al hover; a partir de `lowThreshold` → modo `full` con columnas (sin nivel `header` intermedio).
 8. Color popup muestra los 12 chips BC + input hex custom.
 
 ### Visual baselines
@@ -299,6 +315,231 @@ Capturar antes/después en `docs/screenshots/` para README:
 Este spec debe actualizarse en el mismo PR que cualquier cambio futuro a tokens, paleta BC, o densidad — siguiendo la regla del README.
 
 ---
+
+## Capa de componentes — primitivos Preact
+
+Antes existían **7 familias de clases de botón** (`.ddd-btn`/`--primary`, `.ddd-icon-btn`,
+`.ddd-actions-btn`, `.ddd-hist-btn`, `.ddd-group-btn`, `.ddd-zoom__btn`,
+`.ddd-edge-toolbar__btn`) y cada call site elegía a mano el string de clase + uniones ad-hoc
+de estado (`${hidden ? 'is-off' : ''}`). Esto no permitía expresar una variante (p. ej.
+`ghost`, sin borde) como prop reutilizable.
+
+Solución: una capa de primitivos en `src/webview/ui/`, siguiendo el **patrón shadcn**
+(config de variantes co-localizada en el componente, exportada como `buttonVariants`):
+
+- `Button.tsx` — único primitivo de botón, basado en `JSX.IntrinsicElements['button']` (hereda
+  todos los atributos nativos: `onClick`, `title`, `disabled`, `aria-*`; `type` por defecto
+  `"button"`). La config de variantes vive **dentro del componente** vía `cva()`
+  (class-variance-authority), exportada como `buttonVariants`. API: `variant` ×
+  `size: sm | md | icon | tool` + props de toggle `active` / `off`. Las **7 variantes mapean 1:1 a las
+  7 familias legacy**: `ghost`→`.ddd-icon-btn`, `secondary`→`.ddd-btn`,
+  `primary`→`.ddd-btn--primary`, `action`→`.ddd-actions-btn`, `history`→`.ddd-hist-btn`,
+  `zoom`→`.ddd-zoom__btn`, `toolbar`→`.ddd-edge-toolbar__btn`. `size="icon"` = cuadrado
+  solo-ícono. Hay además una variante **nueva sin equivalente legacy**: `subtle` = botón
+  solo-ícono **sin borde** (a diferencia de `ghost`, que muestra borde en hover; `subtle` solo
+  cambia el fondo en hover). La usa el panel DiagramView (`groupPanel`). Y una variante `danger`
+  (acciones destructivas/irreversibles): outline en `--ddd-danger` (borde + texto danger sobre fondo
+  transparente, así lee como peligro en ambos temas sin depender de un token de fondo-danger; la usa
+  el confirm de "Revertir cambios" del `GitPanel`, ver [`16-git-integration.md`](16-git-integration.md)).
+  Son utilidades Tailwind
+  de valor arbitrario sobre `--ddd-*` / `--vscode-*`. **Punto de reversión:** para volver a CSS
+  plano se cambia cada string de variante por su clase `.ddd-*` legacy — la API de `<Button>` no
+  cambia.
+- **Estados de toggle sin conflicto:** `active`/`off` son variantes booleanas (= legacy
+  `.is-on`/`.is-active`/`.is-off`). Para las variantes que togglean (`ghost`/`action`/`history`)
+  los colores bg/text/border en reposo viven en `compoundVariants` keyed por `active` — así idle
+  y active **nunca** fijan la misma propiedad a la vez. Esto evita overrides dependientes del
+  orden (Tailwind no tiene control de especificidad) **sin** necesitar `tailwind-merge`.
+- `cn.ts` — helper de clases (shadcn `cn`), aquí = solo `clsx` (sin `tailwind-merge`).
+  **Decisión:** se evaluó `tailwind-merge` (lo usa shadcn para deduplicar utilidades en
+  conflicto) pero añadía **~15.8 KB gzip** al bundle — desproporcionado (el CSS a mano son
+  6.9 KB) y solo para deduplicar strings. Al autorear las variantes libres de conflicto, `clsx`
+  basta. Deps añadidas: `class-variance-authority` + `clsx` (~3 KB raw); **no** `tailwind-merge`.
+
+**Estado de migración:** los 6 call sites están migrados a `<Button>` (`groupPanel`,
+`actionsPanel`, `zoomButtons`, `exportModal`, `settingsPanel`, `edgeLayer`). Se dejan como
+markup nativo los controles que **no** son de la familia botón: `.ddd-group-chevron`,
+`.ddd-group-panel__handle`, `.ddd-actions-panel__handle` (estructurales, uso único) y
+`.ddd-radio-group__option` (es un radiogroup, no un botón). Las **7 familias `.ddd-*-btn`
+legacy fueron retiradas** de `style.css` (confirmado el look por el owner) — incluida
+`.ddd-group-btn`, que ya estaba huérfana. El trial Tailwind queda **adoptado**; revertir a
+CSS plano ya no es un swap de strings sino un `git revert` de este cambio.
+
+### Primitivos adicionales (Modal, formularios, búsqueda)
+
+Más allá de `<Button>`, `ui/` añade primitivos para superficies con **duplicación
+real** (≥2 call sites):
+
+- **`Modal.tsx`** — `<dialog>` nativo. `open` dispara `showModal()`/`close()` vía
+  ref+effect; gratis: trampa de foco, **Esc para cerrar**, top-layer (escapa
+  z-index/overflow) y scrim `::backdrop` (reemplaza el div `.ddd-modal-overlay`).
+  API: `<Modal open onClose title wide footer>`. Migrados: `exportModal`,
+  `settingsPanel`.
+- **`Field.tsx`** — familia de formulario: `Field` (wrapper label+hint+control) +
+  `TextField` / `NumberField` / `SelectField` / `Checkbox`. Reemplaza los `Row*`
+  (settingsPanel) y `FieldEditor` (exportModal) que cada archivo reimplementaba.
+- **`RadioGroup.tsx`** — control segmentado (`.ddd-radio-group`), genérico
+  `<T extends string>`. Migrado: densidad en settingsPanel.
+- **`Search.tsx`** — input con ícono (`.ddd-search`). Migrado: groupPanel. Acepta
+  `inputRef` opcional para enfocar el input imperativamente (lo usa el botón Search de la barra).
+- **`Tooltip.tsx`** — tip ligero para botones solo-ícono (distinto del tooltip rico de
+  canvas en `render/tooltip.tsx`). **Clona** su único hijo para inyectarle los handlers
+  hover/focus + `aria-label`/`aria-describedby` (la metadata a11y cae en el `<button>` real y
+  se elimina el `title` nativo → sin doble tooltip del SO). Se muestra en **hover y focus de
+  teclado**, con delay de apertura (~400ms) y cierre instantáneo; se descarta con Escape.
+  Portaleado a `<body>` (escapa `overflow`), posicionado desde el rect del trigger. API:
+  `<Tooltip label shortcut? placement?>`. Migrado: barra de acciones, zoom, header de Diagram
+  Views, edge toolbar. **Las filas densas (group/table rows) siguen con `title` nativo** — son
+  listas, no menús; evita el coste de un wrapper por fila.
+- **`HoverCard.tsx`** — **tercer tier de tooltip** (rico). Distinto de `ui/Tooltip` (texto) y de
+  `render/tooltip.tsx` (tooltip de canvas dirigido por store): renderiza **contenido arbitrario**
+  (`content: ComponentChildren`) desde un trigger ícono. Clona su hijo focusable e inyecta
+  hover/focus + `aria-describedby` (igual patrón que `Tooltip`); abre con delay (~300ms) en hover
+  **y** focus de teclado, cierra en pointer-leave / blur / Escape; reduced-motion vía la regla CSS
+  global. **Diferencia clave de implementación:** se dispara desde DENTRO del `<dialog showModal>`
+  de Settings (top-layer); un portal a `<body>` quedaría *detrás* del modal, así que la card usa la
+  **Popover API** (`popover="manual"` + `showPopover()` imperativo en un effect) para promoverse al
+  top-layer por encima del modal sin pelear `z-index`/`overflow`. La card no es interactiva
+  (preview), así que salir del trigger la cierra; el positioner se centra en el trigger y se
+  **clampa al viewport** (`MAX_CARD_WIDTH`) para no recortarse. API: `<HoverCard content placement?>`.
+  Migrado: icono info de LOD en `settingsPanel`.
+- **`render/appMenu.tsx`** — menú de aplicación (esquina sup-izq, estilo Excalidraw; spec 15).
+  **No** es un primitivo `ui/` sino chrome de `render/`: compone `<Button variant="toolbar"
+  size="tool">` + `<Tooltip label="Menu">` (que aporta el `aria-label`) para el trigger, y
+  **reusa el idiom de `render/contextMenu.tsx`** para el popover — dismiss diferido
+  (outside-click + Escape), `createPortal` a `<body>`, posición desde el rect del trigger con
+  `clampMenuAnchor`. **Contraparte interactiva de `HoverCard`:** HoverCard es hover/focus y *no
+  interactivo* (cierra al salir del trigger, usa la Popover API para vivir sobre el `<dialog>`);
+  AppMenu es **click + interactivo** (el puntero entra al popover para elegir fila), por eso sigue
+  el idiom de ContextMenu (portal a `<body>`, `z-index: 30`) y no la Popover API. Trigger surface
+  `z-index: 5` (como `.ddd-zoom`). Motion: `@keyframes ddd-menu-in` (fade + `translateY(-4px)`) en
+  `var(--ddd-duration-fast)` — reduced-motion vía la regla CSS global. Las filas **re-disparan los
+  modales existentes** (`setSettingsPanelOpen`/`setExportPromptOpen`) — sin lógica duplicada.
+
+Se dejan nativos: los radios clásicos de *Scope* en exportModal (`.ddd-radio` con
+contadores + disabled, uso único) y los controles estructurales ya citados.
+
+### Estrategia de estilo (dos tiers, ambos leen `--ddd-*`)
+
+- **Micro-componentes simples y stateful** (Button) → **utilidades Tailwind** vía
+  `cva`; su CSS legacy se retira.
+- **Primitivos estructurales/animados** (Modal, Field, RadioGroup, Search) →
+  **envuelven las clases `.ddd-*` existentes** del `@layer` (vía `cn`). Su CSS
+  (animaciones `@keyframes`, `::backdrop`, `focus-within`, anchos `min()/calc()`,
+  layout) **se queda** — convertirlo a utilidades sería verboso, frágil y sin
+  valor; `.ddd-field*` / `.ddd-radio*` / `.ddd-search*` / `.ddd-modal*` son la
+  implementación de estos primitivos, no se retiran.
+
+Regla: utilidades cuando son más limpias; envuelve la clase cuando el CSS es
+pesado en layout/animación. En ambos casos el componente tipado es la API y
+`--ddd-*` la fuente de verdad.
+
+Contrato de rendimiento: los primitivos emiten clases **estáticas**; el estado visual por nodo
+(selección/hover/LOD a 5000 tablas) sigue en `data-*` + variables CSS + una sola clase estática,
+nunca alternando muchas clases por frame. La capa de culling/LOD y el presupuesto no se tocan.
+
+## Integración Tailwind v4 — trial incremental
+
+Adopción **experimental y reversible** (decisión del owner): se validó sobre `groupPanel.tsx`
+primero (confirmado idéntico) y luego se migraron los 6 call sites. Si en algún momento no
+convence, se revierte cambiando los strings de variante en `buttonVariants` (`Button.tsx`) por
+las clases `.ddd-*` legacy — sin perder el componente `<Button>` ni tocar los call sites.
+
+Setup (verificado, build OK):
+
+- `@tailwindcss/vite` en `vite.config.mts` (el config se renombró de `.ts` a `.mts` porque el
+  plugin es ESM-only y el proyecto es CommonJS).
+- En `style.css`, **solo** se importan las capas `theme` + `utilities` (preflight **omitido** a
+  propósito: pisaría `@layer reset`/`base` y la herencia de `--vscode-*`):
+  ```css
+  @layer theme, reset, tokens, base, surfaces, components, state, utilities;
+  @import 'tailwindcss/theme.css' layer(theme);
+  @import 'tailwindcss/utilities.css' layer(utilities);
+  ```
+- Las utilidades usan **valores arbitrarios** sobre los tokens existentes
+  (`bg-[var(--ddd-surface-hover)]`, `text-[var(--ddd-fg)]`, `w-[24px]`…). No se registra un
+  `@theme` de colores ni se reemplaza `--ddd-*`: Tailwind solo referencia la capa semántica.
+- Inyección CSS: `main.tsx` hace `import styleSource from './style.css?inline'` e inyecta un
+  `<style>`. **Verificado** que `@tailwindcss/vite` transforma ese import `?inline` (las
+  utilidades y los marcadores `--tw-*` aparecen en `dist/webview/webview.js`). Por eso **no** se
+  necesitó el fallback de emitir CSS como asset + `<link asWebviewUri>` (el CSP ya lo permitiría
+  si hiciera falta). Costo de bundle observado: +13 KB sin minify (247 → 260 KB; gzip 57.9 KB).
+
+## Botón de ícono canónico + barra de acciones flotante (UI polish)
+
+Pase de pulido de UI ("componentes premium"): la barra de acciones se sentía **anclada** al
+borde y mezclaba botones ícono / ícono+texto / solo-texto de ancho variable. Decisiones tomadas
+con el owner (ver plan):
+
+- **Geometría en `size`, color/estado en `variant`.** Las variantes solo-ícono (`history`,
+  `zoom`, `toolbar`) **ya no traen ancho/alto**; la geometría vive en `size`. Se añade
+  `size="tool"` = **un único cuadrado fijo (28×28, `--ddd-radius-sm`)** para todos los botones de
+  barra/menú flotante (barra de acciones, zoom, header de Diagram Views, edge toolbar). Las filas
+  densas conservan `size="icon"` (24×22). Regla: *un* botón de ícono para los menús, consistente.
+  Como Tailwind no controla especificidad, separar geometría (size) de color (variant) mantiene
+  las utilidades **libres de conflicto** sin `tailwind-merge`.
+- **Barra de acciones flotante y colapsable** (`render/actionsPanel.tsx`, `.ddd-actions-bar`):
+  despega del borde (`bottom: var(--ddd-space-4)`), con borde completo + `--ddd-shadow-md` +
+  `--ddd-radius-md` en ambos estados (se elimina el look anclado `border-bottom:none`/sombra
+  removida). Colapsada = un solo handle (chevron). Expandida = una fila de botones solo-ícono
+  (Auto-arrange · Grid/snap · Search · Export · Settings) con entrada escalonada. Auto-arrange
+  abre un **popover** reusando `ContextMenu` (`render/contextMenu.tsx`) con sus 3 ámbitos
+  (all/new/selection).
+- **Reubicaciones:** Undo/Redo → el cluster de **zoom** (la navegación de historial acompaña a la
+  de viewport; `.ddd-zoom__divider` los separa). El filtro **PK/FK** → **Diagram Views** como
+  *View options* (es una opción de vista). El botón Search de la barra abre y enfoca el buscador
+  de Diagram Views (`openViewsAndFocusSearch` en el store).
+- **Diferido:** "Seleccionar todas las relaciones" requiere un modelo de selección **multi-edge**
+  (hoy solo existe `selectedEdgeId: string | null`); queda como comando futuro.
+
+State conventions nuevas: `.ddd-actions-bar.is-collapsed` / `.is-expanded`.
+
+## Settings: panel dos-paneles + preview de LOD
+
+Pase de organización del panel de Settings (ver spec 10 para el comportamiento):
+
+- **Superficie dos-paneles `.ddd-settings`** (`@layer components`): `.ddd-settings__rail`
+  (tablist vertical, ítems `.ddd-settings__rail-item` + `.is-active` con `surface-selected`) y
+  `.ddd-settings__content` (panels `.ddd-settings__panel` con `.ddd-settings__panel-head`). El
+  rail-item es `<button role="tab">` nativo — es un tablist, no la familia botón (mismo criterio
+  que `.ddd-radio-group__option`). Solo tokens, sin px/hex crudos.
+- **`.ddd-settings__info`**: trigger ícono del `HoverCard` de LOD (`cursor: help`, hover/focus →
+  `surface-hover` + `accent`).
+- **Preview de LOD `.ddd-lod-preview`** (`render/lodPreview.tsx`): renderiza el **`TableNode` real**
+  una vez por nivel (`full`/`header`/`rect`) sobre una tabla dummy, para que el usuario vea el modo
+  sin hacer zoom-out. **No se toca `TableNode`** (está en el hot-path de 5000 tablas): la
+  interacción se neutraliza solo en CSS — `.ddd-lod-preview { pointer-events: none }` (los handlers
+  de drag/context/gear quedan inertes) y un override de la posición inline absoluta que escribe
+  `TableNode` (`position: static !important; transform: none !important`, scope-ado a
+  `.ddd-lod-preview`) para que las tres tablas fluyan en fila. La densidad se reduce sobreescribiendo
+  los tokens `--ddd-table-*` en `.ddd-lod-preview` (3-up compacto); el modo `rect` (cuyo tamaño es
+  inline desde `estimateSize`) se fuerza con `width/height !important`. El color usa `bcColorFor` +
+  `withAlpha` (paleta BC), sin hex.
+- **Iconos nuevos** (`icons.tsx`, codicons ya cargados por `panel.ts`): `info` (`IconInfo`),
+  `layout` (`IconLayout`), `zoom-in` (`IconZoom`), `export` (`IconExport`). El reset reusa
+  `discard` (`IconReset`) y la categoría LOD reusa `eye` (`IconEye`).
+
+## Preguntas abiertas (Open Questions)
+
+5. ~~Pulido de UI: barra flotante + botones solo-ícono + tooltips~~ **RESUELTO** (este cambio):
+   barra colapsable flotante, `size="tool"` canónico (geometría en size, color en variant),
+   primitivo `Tooltip` reutilizable (hover + focus, a11y, reduced-motion), reubicación de
+   undo/redo → zoom y PK/FK → Diagram Views, motion con tokens existentes. "Select all relations"
+   diferido (necesita selección multi-edge).
+
+1. ~~Validación visual + decisión continuar/revertir~~ **RESUELTO**: el owner confirmó el look,
+   se migraron los 6 call sites, se adoptó el patrón shadcn (`cva` co-localizado) y se retiraron
+   las 7 familias `.ddd-*-btn` legacy. Tailwind v4 queda adoptado para la capa de botones.
+2. ~~¿`clsx` vs `cx()` local? ¿CVA?~~ **RESUELTO**: se adoptó el patrón shadcn → `cva` +
+   `clsx` (config co-localizada en `Button.tsx`). Se **descartó `tailwind-merge`** por peso
+   (~15.8 KB gzip) autorando las variantes libres de conflicto. Se eliminó el test de strings
+   `variants.test.ts` (verificaba que el config se repite a sí mismo — bajo valor; lo cubren el
+   typecheck de las uniones + el build + la verificación visual).
+3. **¿Activar `minify` en el build del webview?** Hoy `minify: false` (260 KB). Es la mayor
+   reducción de tamaño disponible y es ortogonal a esta decisión. *No bloqueante.*
+4. **Light / High-Contrast**: sigue diferido. La auditoría de fallbacks `--vscode-*` (mapear
+   `surface-hover/active/selected`, `--ddd-success`, `--ddd-fg-on-accent`) se hace de forma
+   perezosa al tocar cada superficie; la paleta BC y las sombras permanecen literales.
 
 ## Roadmap (deferred)
 

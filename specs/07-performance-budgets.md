@@ -49,21 +49,37 @@ requestAnimationFrame(tick);
 
 ## Bundle size budget
 
-| Artefacto | Budget | Actual (M3) |
+| Artefacto | Budget | Actual |
 |---|---|---|
-| `dist/webview/webview.js` (gzipped) | < 40kb | ~29kb post-M2 |
-| `dist/webview/webview.js` (uncompressed) | < 200kb | ~106kb post-M2 |
+| `dist/webview/webview.js` (gzipped) | < 40kb (objetivo histórico) | ~29kb post-M2 · **~88kb** (sin ELK, con smart-layout dagre) |
+| `dist/webview/webview.js` (uncompressed) | < 200kb (objetivo histórico) | ~106kb post-M2 · ~410kb |
 | `dist/extension/**` (uncompressed) | < 50kb | tbd |
+
+> **ELK eliminado — motor de layout = dagre dos niveles (v0.3.x, 2026-05-31).** El smart
+> auto-layout usaba `elkjs` (compound) como motor de geometría. `elkjs` pesaba ~468kb gz (~71%
+> del webview). Se **eliminó** y se reemplazó por un motor **dagre de dos niveles** (dagre interno
+> por clúster + dagre externo sobre los clústeres como meta-nodos; ver `specs/13`). `dagre` ya
+> estaba en el bundle (fallback `autoLayout()`), así que el nuevo motor **no agrega bytes**. El
+> cerebro de BD (classify/cluster/radial/columnAlign/collisionGuard) es agnóstico del motor y se
+> conservó intacto. Motivo: ELK sólo daba ~10% más de compacidad sobre dagre dos-niveles en
+> esquemas agrupados (verificado por el usuario) — no justifica 468kb. La densidad vs ELK es un
+> factor constante en las separaciones, ahora **configurable por el usuario** (`spacing`, ver
+> `specs/13` y `specs/10`). Esto revierte la "excepción consciente de bundle (ELK)" anterior.
+> *(Intentos intermedios descartados en la misma sesión: lazy-load de ELK como asset aparte —
+> innecesario una vez que el motor se reemplaza.)*
 
 Librerías pesadas (cuidado):
 - `@dbml/core` corre sólo en host → no afecta webview.
-- `@dagrejs/dagre` corre en webview (auto-layout) → ~30kb gzipped. Aceptable v1. Migrar a Web Worker si se nota jank en auto-layout inicial (v1.1).
+- `@dagrejs/dagre` corre en webview (fallback `autoLayout()`) → ~30kb gzipped, bundleado (se usa siempre).
+- `elkjs` corre en webview (smart auto-layout) → ~468kb gzipped, **lazy asset aparte** (arriba), fuera del parse inicial. Layout medido en huge.dbml ~2.57s < 3s. Si se nota jank, mover a Web Worker (v1.1, `elkjs` worker build + `worker-src` en CSP).
 
 ## Regresiones conocidas a vigilar
 
 - **Re-render en cada pan frame**: síntoma = FPS cae a <30 durante pan. Check: `React DevTools Profiler` (o `preact/devtools`), identificar componentes que re-renderizan sin necesidad. Memoize con `useMemo`.
 - **Spatial index rebuild en pan**: `useEffect` deps incluye `viewport` por error. Check: effect de `idx.clear()` debe depender sólo de `schema` y `positions`, nunca viewport.
-- **Edge overlay sin culling**: si se dibujan 1000 paths SVG innecesarios, perf cae. Check: `visibleRefs.length` en statusbar con diagrama grande.
+- **Edge overlay sin culling**: si se dibujan 1000 paths SVG innecesarios, perf cae. Check: refs visibles (`visibleRefIds`) en statusbar con diagrama grande.
+- **Routing de aristas en el render path**: síntoma = FPS cae al panear con muchas relaciones. Check: `routeRefs` debe estar memoizado por geometría (`useMemo`), nunca llamado en el cuerpo del render; pan/zoom y hover/selección no deben invalidar el memo (ver spec 05 §8).
+- **Overlay de aristas con hit-DOM por segmento**: si cada arista visible monta `<line>` hit por segmento, el conteo de nodos explota. Check: sólo la arista **seleccionada** monta handles por-segmento; el resto, un único `path.ddd-edge-hit`.
 - **Dagre call en render path**: auto-layout sólo en effect post-schema-change, nunca en render puro.
 
 ## Notas de ingeniería

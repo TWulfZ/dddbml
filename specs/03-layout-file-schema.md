@@ -14,42 +14,58 @@ Convención: `<nombre>.dbml` → `<nombre>.dbml.layout.json`.
 
 Razón de naming visible en lugar de carpeta oculta: usuario explicitó querer ver los cambios de layout en `git status` y code review sin filtros especiales.
 
-## Schema
+> **El sidecar versionado guarda SÓLO diseño compartido** (posiciones, colores,
+> ruteo de aristas). El estado de vista personal y efímero —`viewport`,
+> grupos `hidden`/`collapsed`, tablas `hidden`— **NO se versiona**: vive en un
+> archivo local fuera del repo (ver *Estado de vista local* abajo). Esto evita
+> los conflictos de merge garantizados en cada commit que generaba mezclar
+> ambas cosas. La fusión de conflictos reales del sidecar se documenta en
+> `specs/14-collaborative-merge.md`.
+
+## Schema (sidecar versionado — sólo diseño compartido)
 
 ```json
 {
   "$schema": "./dddbml-layout.schema.json",
   "version": 1,
-  "viewport": { "x": 0, "y": 0, "zoom": 1.0 },
   "tables": {
     "public.orders": { "x": 480, "y": 80 },
-    "public.users":  { "x": 120, "y": 80 }
+    "public.users":  { "x": 120, "y": 80, "color": "#D0E8FF" }
   },
   "groups": {
-    "billing":  { "collapsed": false, "hidden": false, "color": "#D0E8FF" },
-    "identity": { "collapsed": true,  "hidden": false }
-  }
+    "billing": { "color": "#D0E8FF" }
+  },
+  "edges": {}
 }
 ```
+
+`viewport`, `groups.*.collapsed`, `groups.*.hidden` y `tables.*.hidden` **ya no se
+escriben aquí**. Un grupo sin `color` no produce entrada (no hay nada compartido
+que guardar). El lector sigue tolerando archivos viejos que aún los contengan:
+`toViewport(undefined)` rinde `{0,0,1}` y los flags se ignoran al cargar (se
+re-derivan del estado de vista local), y al siguiente persist se "soft-strip".
 
 ### Campos
 
 | Campo | Tipo | Default | Notas |
 |---|---|---|---|
 | `$schema` | string | opcional | Referencia a JSON schema formal (publicar en v1.1). |
-| `version` | integer | `1` | Bump en breaking changes. Host rechaza versiones mayores a la soportada. |
-| `viewport.x` | integer | `0` | Desplazamiento en X en coords de mundo. |
-| `viewport.y` | integer | `0` | Desplazamiento en Y. |
-| `viewport.zoom` | number | `1.0` | Factor de zoom. Redondeado a 3 decimales al persistir. |
+| `version` | integer | `1` | Bump en breaking changes. Host rechaza versiones mayores a la soportada. **No se bumpeará por sacar el view-state** (rompería equipos con versiones mixtas: una extensión vieja rechazaría v2). |
+| ~~`viewport.*`~~ | — | — | **Movido a estado de vista local** (no versionado). Ver sección abajo. |
 | `tables` | object | `{}` | Keys = nombre qualified (`schema.tableName`). |
 | `tables.*.x` | integer | — | Requerido. Coord de mundo (enteros para evitar ruido subpixel). |
 | `tables.*.y` | integer | — | Requerido. |
-| `groups` | object | `{}` | Keys = nombre del `TableGroup` en DBML. |
-| `groups.*.collapsed` | boolean | `false` | Si `true`, renderiza como nodo caja único. |
-| `groups.*.hidden` | boolean | `false` | Si `true`, tablas del grupo no se renderizan. |
-| `groups.*.color` | string | opcional | CSS color hex. Si ausente, se usa color derivado del nombre (hash estable). |
+| `tables.*.color` | string | opcional | Color custom por tabla. Compartido. |
+| ~~`tables.*.hidden`~~ | — | — | **Movido a estado de vista local** (visibilidad personal). |
+| `groups` | object | `{}` | Keys = nombre del `TableGroup` en DBML. Sólo entradas con `color`. |
+| ~~`groups.*.collapsed`~~ | — | — | **Movido a estado de vista local** (colapso personal). |
+| ~~`groups.*.hidden`~~ | — | — | **Movido a estado de vista local** (ocultamiento personal). |
+| `groups.*.color` | string | opcional | CSS color hex. Si ausente, se usa color derivado del nombre (hash estable). Único campo compartido del grupo. |
 | `edges` | object | `{}` | Keys = ref id (`<srcTable>::<srcCols>\|<tgtTable>::<tgtCols>`). |
 | `edges.*.waypoints` | array | opcional | Lista ordenada de puntos `{ x, y }` en coords absolutas world-space por los que pasa la línea (ruteo Manhattan multi-segmento, ver spec 05). |
+| `edges.*.color` | string | opcional | Color de trazo por arista (valor de paleta BC o hex custom). Ausente = color de tema. Ver spec 05 §5. |
+| `edges.*.sourceSide` | string | opcional | `"left"` \| `"right"`. Override del lado de puerto origen elegido por `chooseSides`. Ver spec 05 §4. |
+| `edges.*.targetSide` | string | opcional | `"left"` \| `"right"`. Override del lado de puerto destino. Ver spec 05 §4. |
 | `edges.*.dx` | integer | opcional | **Legacy v1.** Offset del midX para H-V-H simple. Soft-migrate a `waypoints` en el siguiente persist. |
 | `edges.*.dy` | integer | opcional | **Legacy v1.** Ver `dx`. |
 
@@ -71,11 +87,18 @@ Reglas:
 - Cada waypoint en su propia línea, claves alfabéticas (`x` antes que `y`), enteros.
 - Si `waypoints` está presente y no vacío, `dx`/`dy` se omiten (los waypoints son la fuente de verdad).
 - Si `waypoints` está vacío o ausente y `dx`/`dy` están presentes, se preservan tal cual (legacy).
-- Entrada `edges[id]` se omite por completo si no hay `waypoints`, `dx`, ni `dy`.
+- Entrada `edges[id]` se omite por completo si no tiene ningún campo con datos: ni `waypoints`, `color`, `sourceSide`, `targetSide`, `dx`, ni `dy`.
 
 ## Reglas de serialización Git-friendly
 
 Objetivo: `git diff` después de mover 3 tablas muestra sólo 3 líneas cambiadas (más delimitadores), no reescribe el archivo entero.
+
+El writer del sidecar es **`serializeSharedLayout`** (`layoutStore.ts`): misma forma
+git-friendly que `serializeLayout` pero **omite todo view-state** (sin `viewport`,
+sin `hidden`/`collapsed`, sin grupos color-less). El host además aplica un
+**churn-guard**: en `flushPersist` no reescribe el sidecar si la serialización
+compartida no cambió, de modo que un pan/zoom (que sólo toca el view-state local)
+nunca ensucia el archivo versionado.
 
 Reglas del writer:
 
@@ -86,9 +109,59 @@ Reglas del writer:
 5. **Enteros, no floats** para coords. Redondeo con `Math.round()` al persistir. Zoom redondeado a 3 decimales.
 6. **Omitir keys con valor default**:
    - `color: null` o no definido → no se escribe.
-   - `collapsed: false`, `hidden: false` → se escriben explícitos sólo si alguna vez fueron `true` (para preservar intención); el writer los omite si nunca se tocaron.
+   - `collapsed`/`hidden` (tabla y grupo) **nunca** se escriben en el sidecar: son
+     view-state local (ver sección abajo).
+   - Una entrada de grupo sin `color` se omite por completo (no hay nada compartido).
 7. **Objetos inline en una sola línea** cuando caben < 80 chars (JSON pretty-print tiene modo compacto para hojas; implementar custom serializer o usar `json-stringify-pretty-compact`).
 8. **No comentarios** (JSON puro; si el usuario quiere anotaciones, va en otro archivo).
+
+## Estado de vista local (no versionado)
+
+El estado de vista personal vive **fuera del repo**, en
+`context.globalStorageUri/view-state/<sha256(dbmlUri)>.json` (`viewStateStore.ts`).
+Escritura atómica (temp + rename) igual que el sidecar; formato libre (no es
+git-friendly porque nadie lo diffea).
+
+```json
+{
+  "source": "file:///…/schema.dbml",
+  "viewport": { "x": -120, "y": -80, "zoom": 0.75 },
+  "tables": { "public.users": { "hidden": true } },
+  "groups": { "identity": { "hidden": true }, "catalog": { "collapsed": true } }
+}
+```
+
+Flujo host (`panel.ts`):
+
+- **Carga** (`loadFullLayout`): lee el sidecar compartido + el view-state local y
+  reconstruye el `Layout` completo (`applyViewState`) antes de postear al webview.
+  El webview **no cambia**: sigue recibiendo y enviando un `Layout` completo.
+- **Persist** (`flushPersist`): parte el `Layout` entrante en dos destinos —
+  `writeSharedLayout` (git, con churn-guard) y `writeViewState`
+  (`extractViewState` → archivo local).
+- Keyed por `sha256(dbmlUri.toString())`. Archivos huérfanos (al renombrar/borrar el
+  `.dbml`) se acumulan; GC diferido (ver Preguntas abiertas).
+
+## Seguridad ante marcadores de conflicto
+
+`readLayout` detecta marcadores git (`<<<<<<<`/`=======`/`>>>>>>>`/`|||||||`) **antes**
+de `JSON.parse` y lanza `LayoutConflictError` en vez de devolver `emptyLayout()`
+(que **borraba el layout en silencio** — bug corregido). El caller enruta a la
+fusión 3-way de `specs/14-collaborative-merge.md`.
+
+## Merge de persistencia parcial (host)
+
+El webview envía `layout:persist` con un **`Partial<Layout>`**. El host hace
+merge contra `currentLayout` con la regla **"payload gana, si no se conserva el
+actual"** (`mergeLayout` en `layoutStore.ts`), nunca un reemplazo total.
+
+- Cada top-level key (`viewport`, `tables`, `groups`, `edges`) se reemplaza si
+  viene en el payload; si se omite, **se conserva la del layout actual**.
+- Invariante crítico: **omitir una key no debe borrar su sub-objeto.** Olvidar
+  `edges` en el merge fue la causa de que waypoints/colores/sides se vaciaran a
+  `"edges": {}` en cada persist (regresión cubierta por `layoutStore.merge.test.ts`).
+- El merge es por-key, no deep-merge: el payload de `tables`/`edges` es el set
+  completo de esa key (el webview serializa todo su estado, no un delta).
 
 ## Escritura atómica
 
@@ -125,10 +198,11 @@ Cuando `version` cambie:
 
 ## Ejemplo completo (proyecto e-commerce DDD)
 
+Sidecar versionado (`schema.dbml.layout.json`) — sólo diseño compartido:
+
 ```json
 {
   "version": 1,
-  "viewport": { "x": -120, "y": -80, "zoom": 0.75 },
   "tables": {
     "billing.invoices":      { "x": 1200, "y": 400 },
     "billing.payments":      { "x": 1200, "y": 640 },
@@ -140,18 +214,32 @@ Cuando `version` cambie:
     "orders.orders":         { "x": 1800, "y": 400 }
   },
   "groups": {
-    "billing":  { "collapsed": false, "hidden": false, "color": "#D0E8FF" },
-    "catalog":  { "collapsed": true,                    "color": "#E8F5D0" },
-    "identity": { "collapsed": false, "hidden": true,   "color": "#FFE4A0" },
-    "orders":   { "collapsed": false, "hidden": false, "color": "#FFD4E4" }
-  }
+    "billing":  { "color": "#D0E8FF" },
+    "catalog":  { "color": "#E8F5D0" },
+    "identity": { "color": "#FFE4A0" },
+    "orders":   { "color": "#FFD4E4" }
+  },
+  "edges": {}
+}
+```
+
+View-state local (en `globalStorage`, **no** en el repo) — del mismo proyecto:
+
+```json
+{
+  "source": "file:///…/schema.dbml",
+  "viewport": { "x": -120, "y": -80, "zoom": 0.75 },
+  "tables": {},
+  "groups": { "catalog": { "collapsed": true }, "identity": { "hidden": true } }
 }
 ```
 
 Observaciones:
-- `identity.hidden: true` → sus tablas no se renderizan; edges a/desde otros grupos se omiten (v1) o se dibujan como "dangling" (futuro).
-- `catalog.collapsed: true` → se renderiza como nodo caja "catalog (2 tablas)" en la posición promedio de sus tablas; edges se agregan al grupo.
-- `billing` y `orders` visibles normalmente con color custom.
+- `identity.hidden: true` y `catalog.collapsed: true` son **decisiones de vista
+  personales** → viven en el archivo local; el compañero puede tener otras sin
+  generar diff.
+- `billing` y `orders` con color custom en el sidecar → diseño compartido, sí
+  versionado.
 
 ## Test de roundtrip
 
@@ -166,3 +254,17 @@ it('roundtrip preserves byte-identical output', () => {
 ```
 
 Este test es crítico: garantiza que re-guardar un archivo sin cambios no produce diff en Git.
+
+> Tras el split, el roundtrip relevante para el sidecar usa `serializeSharedLayout`:
+> `serializeSharedLayout(parseLayout(x)) === serializeSharedLayout(parseLayout(serializeSharedLayout(parseLayout(x))))`.
+> El test byte-stable existente sobre `serializeLayout` (forma completa) sigue válido
+> sin cambios.
+
+## Preguntas abiertas
+
+- **GC de view-state huérfano.** Archivos en `globalStorage` keyed por hash del URI
+  se acumulan al renombrar/borrar el `.dbml`. ¿Comando `dddbml: Prune view-state` vs
+  barrido en `activate` por `lastSeen`? Diferido; severidad baja (JSON minúsculos).
+- **Decisión bloqueada:** `viewport` se omite **por completo** del sidecar (no línea
+  congelada) — el lector ya defaultea `{0,0,1}` y el viewport real sale del archivo
+  local.

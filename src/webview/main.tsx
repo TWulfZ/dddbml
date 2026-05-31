@@ -4,6 +4,7 @@ import styleSource from './style.css?inline';
 import { store } from './state/store';
 import { postToHost } from './vscode';
 import { fitToContent, resetView, zoomAtCenter } from './render/viewport';
+import { runSmartLayout } from './layout/smartLayout';
 import type { HostToWebview } from '../shared/types';
 
 {
@@ -50,6 +51,44 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
       }
       return;
     }
+    case 'command:autoArrange':
+      void runSmartLayout(msg.payload.mode);
+      return;
+    case 'merge:begin':
+      state.beginMerge(msg.payload.conflicts);
+      return;
+    case 'merge:done':
+      state.endMerge();
+      return;
+    case 'git:status':
+      state.setGitStatus(msg.payload);
+      return;
+    case 'git:commitResult':
+      state.setGitBusy(false);
+      return;
+    case 'git:stashes':
+      state.setGitStashes(msg.payload.stashes);
+      return;
+    case 'git:opResult':
+      state.setGitBusy(false);
+      return;
+    case 'git:commits':
+      state.setGitCommits(msg.payload.commits);
+      return;
+    case 'git:timeTravel:enter':
+      // Swap in the past revision's schema + layout, then flip to read-only time-travel mode.
+      state.setSchema(msg.payload.schema, null);
+      state.setLayout(msg.payload.layout);
+      state.enterTimeTravel(msg.payload.rev, msg.payload.label);
+      return;
+    case 'git:timeTravel:exit':
+      // Leave read-only mode; the host re-sends the working schema:update + layout:loaded after this.
+      state.exitGitView();
+      return;
+    case 'git:diff:enter':
+      // Keep the current (working) schema on screen; overlay the diff and enter read-only.
+      state.enterDiff(msg.payload.baseLabel, msg.payload.headLabel, msg.payload.diff);
+      return;
   }
 });
 

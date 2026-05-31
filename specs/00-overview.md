@@ -8,8 +8,8 @@ El editor de texto es VSCode mismo. La extensión sólo **lee** el `.dbml`, rend
 
 ## Problema que resuelve
 
-- **dbdiagram.io** es SaaS, no hay versionado Git nativo del layout.
-- Extensiones VSCode existentes (bocovo, peaktech, liger, rizkykurniawan, dbdiagram) renderizan el diagrama pero **no persisten posiciones** entre sesiones ni las versionan.
+- Las herramientas SaaS de diagramas ERD no tienen versionado Git nativo del layout.
+- Extensiones VSCode existentes (bocovo, peaktech, liger, rizkykurniawan) renderizan el diagrama pero **no persisten posiciones** entre sesiones ni las versionan.
 - Ninguna soporta **colapso por TableGroup**, crítico para navegar proyectos DDD con decenas de bounded contexts.
 - Ninguna está diseñada para **5000+ tablas** (típico de monolitos legacy o ERPs grandes).
 

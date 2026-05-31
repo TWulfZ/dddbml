@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { store, useAppStore } from './state/store';
+import { store, useAppStore, isCanvasReadOnly } from './state/store';
 import { autoLayout, estimateSize } from './layout/autoLayout';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
+import { MergeGhosts } from './render/mergeGhosts';
+import { MergePanel } from './render/mergePanel';
 import { CollapsedGroupNode } from './render/collapsedGroupNode';
 import { GroupContainer } from './render/groupContainer';
 import { ZoomButtons } from './render/zoomButtons';
 import { ActionsPanel } from './render/actionsPanel';
+import { AppMenu } from './render/appMenu';
 import { schedulePersist } from './persistence';
 import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
@@ -15,7 +18,10 @@ import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
 import { SettingsPanel } from './render/settingsPanel';
-import type { QualifiedName, Ref, Table, WebviewToHost } from '../shared/types';
+import { GitPanel } from './render/gitPanel';
+import { GitBanner, type DiffTarget } from './render/gitBanner';
+import { DiffGhosts } from './render/diffGhosts';
+import type { QualifiedName, Ref, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
 
 interface AppProps {
   post: (msg: WebviewToHost) => void;
@@ -40,8 +46,24 @@ export function App(_props: AppProps) {
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
   const tableColors = useAppStore((s) => s.tableColors);
   const selection = useAppStore((s) => s.selection);
+  const panMode = useAppStore((s) => s.panMode);
+  const spacePan = useAppStore((s) => s.spacePan);
+  const panActive = panMode || spacePan;
+  const mergeConflicts = useAppStore((s) => s.mergeConflicts);
+  const gitView = useAppStore((s) => s.gitView);
+  const readOnly = mergeConflicts != null || gitView != null;
+  const diffByTable = useAppStore((s) => s.diffByTable);
+  const columnDiffByTable = useAppStore((s) => s.columnDiffByTable);
+  const diffBaseByTable = useAppStore((s) => s.diffBaseByTable);
+  const refDiff = useAppStore((s) => s.refDiff);
+  const diffGhosts = useAppStore((s) => s.diffGhosts);
+  const diffRemovedRefs = useAppStore((s) => s.diffRemovedRefs);
+  const focusDimming = useAppStore((s) => s.focusDimming);
+  const diffActive = gitView?.kind === 'diff';
   const lodThresholds = useAppStore((s) => s.settings.lod);
   const density = useAppStore((s) => s.settings.ui.density);
+  const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
+  const gridSize = useAppStore((s) => s.settings.ui.gridSize);
 
   useEffect(() => {
     document.body.dataset.density = density;
@@ -168,12 +190,16 @@ export function App(_props: AppProps) {
 
     const effectiveRefs: Ref[] = [];
     const seen = new Set<string>();
+    // Maps each ref's STABLE id (Ref.id from the parser) to the composite edge key used by the edge
+    // layer — lets the diff overlay tint a newly-added ref by its stable id (spec 16).
+    const refKeyByStableId = new Map<string, string>();
     for (const r of schema.refs) {
       const srcM = mapEndpoint(r.source.table);
       const tgtM = mapEndpoint(r.target.table);
       if (srcM == null || tgtM == null) continue;
       if (srcM === tgtM) continue;
       const key = `${srcM}::${r.source.columns.join(',')}|${tgtM}::${r.target.columns.join(',')}`;
+      refKeyByStableId.set(r.id, key);
       if (seen.has(key)) continue;
       seen.add(key);
       effectiveRefs.push({
@@ -184,7 +210,7 @@ export function App(_props: AppProps) {
       });
     }
 
-    return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs };
+    return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs, refKeyByStableId };
   }, [schema, positions, groupState, individuallyHidden, density]);
 
   const spatialIndex = useMemo(() => {
@@ -241,7 +267,14 @@ export function App(_props: AppProps) {
     let marqueeStart = { x: 0, y: 0 };
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.button === 1) {
+      const target = e.target as HTMLElement;
+      // "Canvas" = the viewport background or anything inside the world (tables / groups / edges).
+      // The floating chrome (zoom bar, app menu, panels) lives OUTSIDE `.ddd-world`, so panning must
+      // NOT start on it — otherwise the pan tool would steal clicks from its own toggle and the menus.
+      const onCanvas = target === el || target.closest('.ddd-world') != null;
+      // Pan on the middle button, or the left button while the hand tool is active (toggle / Space).
+      const panActive = store.getState().panMode || store.getState().spacePan;
+      if (onCanvas && (e.button === 1 || (e.button === 0 && panActive))) {
         e.preventDefault();
         panning = true;
         lastX = e.clientX;
@@ -251,8 +284,8 @@ export function App(_props: AppProps) {
         return;
       }
       if (e.button === 0) {
+        if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no marquee/selection
         // Only start marquee if click landed on empty viewport (not on a table / group / etc).
-        const target = e.target as HTMLElement;
         if (target !== el && !target.classList.contains('ddd-world') && !target.classList.contains('ddd-group-container')) {
           return;
         }
@@ -260,6 +293,7 @@ export function App(_props: AppProps) {
         marqueeActive = true;
         marqueeStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
         setMarquee({ x0: marqueeStart.x, y0: marqueeStart.y, x1: marqueeStart.x, y1: marqueeStart.y });
+        store.getState().setSelectedEdge(null);
         if (!e.shiftKey) store.getState().clearSelection();
         el.setPointerCapture(e.pointerId);
       }
@@ -325,11 +359,19 @@ export function App(_props: AppProps) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         store.getState().clearSelection();
+        store.getState().setSelectedEdge(null);
         return;
       }
       // Skip when typing inside an input/textarea/contenteditable (e.g. color popup).
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // Hold Space → temporary pan (a navigation gesture, so allowed even in read-only overlays).
+      if (e.key === ' ' && !e.repeat) {
+        e.preventDefault();
+        store.getState().setSpacePan(true);
+        return;
+      }
+      if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no undo/redo (read-only)
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const k = e.key.toLowerCase();
@@ -346,12 +388,29 @@ export function App(_props: AppProps) {
       }
     };
 
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ') store.getState().setSpacePan(false);
+    };
+    // Releasing focus while Space is held (alt-tab) would otherwise leave pan stuck on.
+    const onBlur = () => store.getState().setSpacePan(false);
+    // Keyboard (Space-pan, undo/redo, Escape) is bound on `window`, which only gets keys while the
+    // webview iframe is focused. Merely hovering the canvas doesn't focus it, so hold-Space did
+    // nothing. Focus the viewport when the pointer enters it — unless a field/dialog owns focus.
+    const onPointerEnter = () => {
+      const a = document.activeElement as HTMLElement | null;
+      if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+      if (a !== el) el.focus({ preventScroll: true });
+    };
+
     el.addEventListener('wheel', onWheel, { passive: false });
     el.addEventListener('pointerdown', onPointerDown);
     el.addEventListener('pointermove', onPointerMove);
     el.addEventListener('pointerup', onPointerUp);
     el.addEventListener('pointercancel', onPointerUp);
+    el.addEventListener('pointerenter', onPointerEnter);
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
 
     return () => {
       el.removeEventListener('wheel', onWheel);
@@ -359,7 +418,10 @@ export function App(_props: AppProps) {
       el.removeEventListener('pointermove', onPointerMove);
       el.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('pointercancel', onPointerUp);
+      el.removeEventListener('pointerenter', onPointerEnter);
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
     };
   }, [ready, spatialIndex]);
 
@@ -373,6 +435,17 @@ export function App(_props: AppProps) {
     };
     return spatialIndex.query(worldBbox);
   }, [spatialIndex, viewport, viewportRect, ready]);
+
+  // Visible edge ids (≥ 1 endpoint visible). Memoized so EdgeLayer can route ALL refs once
+  // (route-all-then-cull, spec 05 §8) and just filter the resulting routes by this set.
+  const visibleRefIds = useMemo(() => {
+    if (!visibleNames) return null;
+    const ids = new Set<string>();
+    for (const r of derived.effectiveRefs) {
+      if (visibleNames.has(r.source.table) || visibleNames.has(r.target.table)) ids.add(r.id);
+    }
+    return ids;
+  }, [visibleNames, derived.effectiveRefs]);
 
   const positionsEffective = useMemo(() => {
     const m = new Map<QualifiedName, { x: number; y: number }>();
@@ -414,9 +487,44 @@ export function App(_props: AppProps) {
 
   const lod = lodForZoom(viewport.zoom, lodThresholds);
   const worldTransform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
-  const visibleRefs = visibleNames
-    ? derived.effectiveRefs.filter((r) => visibleNames.has(r.source.table) || visibleNames.has(r.target.table))
-    : derived.effectiveRefs;
+
+  // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
+  const mergeTableKeys = new Set<QualifiedName>();
+  if (mergeConflicts) for (const c of mergeConflicts) if (c.section === 'tables') mergeTableKeys.add(c.key);
+
+  // Diff overlay (spec 16): translate added refs' stable ids to the edge layer's composite keys so
+  // the matching edges can be tinted. Removed refs are drawn by DiffGhosts, not here.
+  let edgeRefDiff: Map<string, RefDiffStatus> | null = null;
+  if (refDiff) {
+    edgeRefDiff = new Map();
+    for (const [stableId, status] of refDiff) {
+      if (status !== 'added') continue;
+      const key = derived.refKeyByStableId.get(stableId);
+      if (key) edgeRefDiff.set(key, status);
+    }
+  }
+
+  // Diff change targets (changed live tables + removed ghosts) — feed the hover hit-layer and the
+  // banner's prev/next camera navigation. Sorted for a stable step order.
+  const diffTargets: DiffTarget[] = [];
+  if (diffActive) {
+    if (diffByTable) {
+      for (const [name] of diffByTable) {
+        const p = positions.get(name);
+        const t = tablesByName.get(name);
+        if (!p || !t) continue;
+        const s = estimateSize(t.columns.length);
+        diffTargets.push({ name, x: p.x, y: p.y, w: s.width, h: s.height });
+      }
+    }
+    if (diffGhosts) {
+      for (const g of diffGhosts) {
+        const s = estimateSize(g.table.columns.length);
+        diffTargets.push({ name: g.table.name, x: g.pos.x, y: g.pos.y, w: s.width, h: s.height });
+      }
+    }
+    diffTargets.sort((a, b) => a.name.localeCompare(b.name));
+  }
 
   const renderedTables = schema.tables.filter(
     (t) => !derived.hiddenTables.has(t.name) && !derived.collapsedTables.has(t.name),
@@ -427,21 +535,37 @@ export function App(_props: AppProps) {
 
   return (
     <>
-      <div class="ddd-viewport" ref={viewportRef} tabIndex={0}>
+      <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} ref={viewportRef} tabIndex={0}>
         {ready && schema.tables.length > 0 ? (
-          <div class="ddd-world" style={{ transform: worldTransform }}>
+          <div class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'} style={{ transform: worldTransform }}>
+            {snapToGrid ? (
+              <div
+                class="ddd-grid"
+                style={{
+                  left: `${worldBbox.x}px`,
+                  top: `${worldBbox.y}px`,
+                  width: `${worldBbox.w}px`,
+                  height: `${worldBbox.h}px`,
+                  backgroundSize: `${gridSize}px ${gridSize}px`,
+                }}
+              />
+            ) : null}
             {derived.containers.map((c) => (
               <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} />
             ))}
             <EdgeLayer
-              refs={visibleRefs}
+              refs={derived.effectiveRefs}
+              visibleRefIds={visibleRefIds}
+              lod={lod}
               positions={positionsEffective}
               tablesByName={tablesByName}
               groupSizes={derived.collapsedNodes}
               worldBbox={worldBbox}
+              refDiff={edgeRefDiff}
             />
             {renderedTables.map((t) => {
               if (visibleNames && !visibleNames.has(t.name)) return null;
+              if (mergeTableKeys.has(t.name)) return null; // shown as ghosts during conflict resolution
               const pos = positions.get(t.name);
               if (!pos) return null;
               const groupColor = t.groupName ? (groupState[t.groupName]?.color ?? colorForGroup(t.groupName)) : undefined;
@@ -456,6 +580,10 @@ export function App(_props: AppProps) {
                   selected={selection.has(t.name)}
                   color={tColor}
                   fkColumns={fkColumnsByTable.get(t.name)}
+                  diffStatus={diffByTable?.get(t.name)}
+                  diffBase={diffBaseByTable?.get(t.name)}
+                  columnDiff={columnDiffByTable?.get(t.name)}
+                  dimmed={focusDimming && ((diffActive && !diffByTable?.has(t.name)) || (mergeConflicts != null && !mergeTableKeys.has(t.name)))}
                 />
               );
             })}
@@ -474,6 +602,15 @@ export function App(_props: AppProps) {
                 />
               );
             })}
+            {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} /> : null}
+            {diffActive ? (
+              <DiffGhosts
+                ghosts={diffGhosts ?? []}
+                removedRefs={diffRemovedRefs ?? []}
+                positions={positions}
+                tablesByName={tablesByName}
+              />
+            ) : null}
           </div>
         ) : null}
         {marquee ? (
@@ -491,9 +628,12 @@ export function App(_props: AppProps) {
         {ready && schema.tables.length === 0 && !parseError ? (
           <div class="ddd-empty">empty DBML — define a Table to see it here.</div>
         ) : null}
+        {ready ? <AppMenu /> : null}
         {ready ? <GroupPanel /> : null}
         {ready ? <ZoomButtons /> : null}
-        {ready ? <ActionsPanel /> : null}
+        {ready && !readOnly ? <ActionsPanel /> : null}
+        {ready && mergeConflicts ? <MergePanel /> : null}
+        {ready && gitView ? <GitBanner diffTargets={diffTargets} /> : null}
       </div>
       {parseError ? (
         <div class="ddd-banner" title={parseError.message}>
@@ -510,6 +650,7 @@ export function App(_props: AppProps) {
       <Tooltip />
       <ExportModal />
       <SettingsPanel />
+      <GitPanel />
     </>
   );
 }

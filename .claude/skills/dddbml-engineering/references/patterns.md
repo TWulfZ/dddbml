@@ -75,11 +75,19 @@ it in `exporters/index.ts`. Update `specs/09-exporters.md`.
 Spec: `specs/12-design-system.md`. File: `src/webview/style.css` (imported
 `?inline`). Mirror for TS-side math: `src/webview/layout/density.ts`.
 
-- **CSS `@layer` order:** `reset, tokens, base, surfaces, components, state,
-  utilities`. Component rules read tokens — **no raw hex, no magic px.**
+- **CSS `@layer` order:** `theme, reset, tokens, base, surfaces, components,
+  state, utilities`. Hand-written rules **and Tailwind v4 utilities** both read
+  `--ddd-*` tokens — **no raw hex, no magic px.** Tailwind's `theme`+`utilities`
+  layers are imported in `style.css` (preflight omitted on purpose); utilities
+  use arbitrary values like `bg-[var(--ddd-surface-hover)]`,
+  `text-[color:var(--ddd-fg)]`.
 - **Tokens** are `--ddd-*` custom properties (spacing 4pt scale, radii, type,
   shadows, motion, semantic surfaces/fg/border/accent that fall back to
-  `--vscode-*` theme vars).
+  `--vscode-*` theme vars). Tailwind references them; it never replaces them.
+- **Component primitives** live in `src/webview/ui/` (shadcn-style). `Button.tsx`
+  holds a co-located `cva()` config (`buttonVariants`) — 7 variants × `size` +
+  `active`/`off` — and `cn.ts` (= `clsx`) joins. Stateful variants use
+  **conflict-free `compoundVariants`** so no `tailwind-merge` is needed.
 - **BC palette:** 12 bounded-context colors `--ddd-bc-N-surface` /
   `--ddd-bc-N-border`. Assign deterministically with `bcIndex(name)` →
   `bcColorFor(name)` (`src/webview/groups/bcPalette.ts`), not by hand.
@@ -88,6 +96,9 @@ Spec: `specs/12-design-system.md`. File: `src/webview/style.css` (imported
   math where you can't read the DOM (auto-layout, edge routing), use
   `densityMetrics(density)` from `density.ts` — keep the two in sync.
 
-**Add a styled component:** add tokens if a value is new, write rules in the
-right `@layer`, reference tokens only. For a new bounded-context color, add a
+**Add a styled element:** prefer Tailwind arbitrary-value utilities over `--ddd-*`
+tokens inline; add a token (`@layer tokens` + spec 12) if the value is genuinely
+new. For a button, reuse `<Button>`; for another reusable widget, add a `cva`
+primitive in `ui/` (utilities over tokens, `cn` to join, conflict-free
+`compoundVariants` for state). For a new bounded-context color, add a
 `--ddd-bc-N-*` pair and bump the palette size used by `bcIndex`.

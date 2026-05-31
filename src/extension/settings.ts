@@ -13,11 +13,13 @@ export function loadSettings(): AppSettings {
     zoomMin: numberOr(cfg.get<number>('zoomMin'), defaults.zoomMin),
     zoomMax: numberOr(cfg.get<number>('zoomMax'), defaults.zoomMax),
     lod: {
-      mediumThreshold: numberOr(cfg.get<number>('lod.mediumThreshold'), defaults.lod.mediumThreshold),
       lowThreshold: numberOr(cfg.get<number>('lod.lowThreshold'), defaults.lod.lowThreshold),
     },
     ui: {
       density: uiDensityOr(cfg.get<string>('ui.density'), defaults.ui.density),
+      snapToGrid: boolOr(cfg.get<boolean>('ui.snapToGrid'), defaults.ui.snapToGrid),
+      gridSize: numberOr(cfg.get<number>('ui.gridSize'), defaults.ui.gridSize),
+      layoutSpacing: numberOr(cfg.get<number>('ui.layoutSpacing'), defaults.ui.layoutSpacing),
     },
     export: {
       defaultFormat: stringOr(cfg.get<string>('export.defaultFormat'), defaults.export.defaultFormat),

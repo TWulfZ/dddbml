@@ -38,15 +38,42 @@ Cuando un group está collapsed, todas sus tablas se sustituyen por el nodo-caja
 - **Drag**: NO soportado en v1. Para mover un group, expandir → arrastrar tablas → colapsar.
 - **Double-click** en el group-box → expande (toggle collapsed off).
 
-## UI: Group Panel
+## Label de nombre al hover en zoom bajo
 
-Panel flotante top-right dentro del viewport. Lista alfabética de groups con:
-- swatch de color
-- nombre + count de tablas
-- botón toggle hidden (●/◌)
-- botón toggle collapsed (▦/□)
+A `lod === 'rect'` (zoom `< lowThreshold`) el render del grupo no cambia de calidad,
+pero su label world-space queda diminuto. Igual que las tablas (spec 04), al hacer
+hover se revela el nombre del grupo como label en screen-space (`setTooltip`):
+- **Nodo colapsado** → handler en el nodo entero.
+- **Contenedor expandido** → handler **sólo en la franja-label** (el cuerpo es
+  `pointer-events: none`), para no competir con el hover de las tablas internas.
 
-Toggle disparar `schedulePersist()` para guardar estado en layout file.
+La condición `lodForZoom(...) === 'rect'` se evalúa dentro del handler. El slot único
+`tooltip` garantiza que nunca se muestren dos labels a la vez (ver spec 04, "Regla de
+un solo label").
+
+## UI: Diagram Views panel
+
+Panel flotante top-right dentro del viewport (título **"Diagram Views"**), colapsable a un handle
+"Views". Contiene, de arriba a abajo:
+
+- **Header**: título + acciones de header (hide-all / collapse-all — solo si hay groups — y cerrar),
+  como botones solo-ícono `size="tool"` con `Tooltip` (ver spec 12).
+- **View options**: toggles de vista globales. Hoy: **PK/FK columns only** (`showOnlyPkFk`). Es una
+  opción de *vista* (no de grupo), por eso vive aquí y no en la barra de acciones.
+- **Search**: input con ícono; filtra groups y tablas por nombre. Expone `inputRef` para enfoque
+  imperativo.
+- **Lista**: groups en orden alfabético, cada fila con swatch de color, nombre + count, y botones
+  solo-ícono (`size="icon"`, filas densas) de toggle hidden / collapsed / configurar color.
+
+Toggles disparan `schedulePersist()` para guardar estado en el layout file.
+
+**Cambios de comportamiento (UI polish):**
+- El panel **se renderiza siempre que el diagrama esté listo**, no solo cuando hay groups — porque
+  ahora aloja View options globales y el buscador. Sin groups, la lista muestra "No groups defined".
+- El estado **abierto/cerrado vive en el store** (`viewsPanelOpen`), no local al componente, para
+  que el **botón Search de la barra de acciones** pueda abrir el panel y enfocar su buscador
+  (`openViewsAndFocusSearch()` → set `viewsPanelOpen=true` + bump `viewsSearchFocusNonce`; el panel
+  observa el nonce y enfoca vía `inputRef`).
 
 ## Color default
 

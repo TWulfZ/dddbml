@@ -1,6 +1,7 @@
 import { store } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { withAlpha } from '../groups/bcPalette';
+import { lodForZoom } from './lod';
 
 interface GroupContainerProps {
   name: string;
@@ -13,7 +14,7 @@ interface GroupContainerProps {
 
 /**
  * Visual container behind the member tables of a non-collapsed, non-hidden group.
- * Mirrors dbdiagram's group rendering: dashed border rect with a colored label on top.
+ * Standard ERD group rendering: dashed border rect with a colored label on top.
  *
  * Interaction:
  *   - Body is pointer-events: none so pan / wheel pass through to the viewport
@@ -25,6 +26,18 @@ export function GroupContainer({ name, x, y, w, h, color }: GroupContainerProps)
     e.stopPropagation();
     store.getState().setGroup(name, { collapsed: true });
     schedulePersist();
+  };
+  // At low zoom (`rect` LOD) the scaled-down label is hard to read, so hovering it
+  // surfaces the group name as a screen-space label — same shared tooltip slot the
+  // tables use, so a table-inside-a-group hover and a group hover never collide.
+  const onLabelEnter = (e: Event) => {
+    const s = store.getState();
+    if (lodForZoom(s.viewport.zoom, s.settings.lod) !== 'rect') return;
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    s.setTooltip({ title: name, body: '', x: r.left, y: r.top });
+  };
+  const onLabelLeave = () => {
+    if (store.getState().tooltip) store.getState().setTooltip(null);
   };
   return (
     <div
@@ -43,6 +56,8 @@ export function GroupContainer({ name, x, y, w, h, color }: GroupContainerProps)
         class="ddd-group-container__label"
         style={{ background: color }}
         onDblClick={onLabelDblClick}
+        onMouseEnter={onLabelEnter}
+        onMouseLeave={onLabelLeave}
         title={`${name} (double-click label to collapse)`}
       >
         {name}

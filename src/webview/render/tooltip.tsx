@@ -15,7 +15,7 @@ export function Tooltip() {
         <span class="ddd-tooltip__title">{tooltip.title}</span>
         {tooltip.subtitle ? <span class="ddd-tooltip__subtitle">{tooltip.subtitle}</span> : null}
       </div>
-      <div class="ddd-tooltip__body">{tooltip.body}</div>
+      {tooltip.body ? <div class="ddd-tooltip__body">{tooltip.body}</div> : null}
     </div>
   );
 }

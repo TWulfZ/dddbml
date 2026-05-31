@@ -49,8 +49,8 @@ describe('history slice', () => {
     for (const c of cmds) store.getState().pushMoveCommand(c);
     const past = store.getState().past;
     expect(past).toHaveLength(3);
-    expect(past[0]!.from[0]![0]).toBe('c');
-    expect(past[2]!.from[0]![0]).toBe('e');
+    expect((past[0]! as MoveCommand).from[0]![0]).toBe('c');
+    expect((past[2]! as MoveCommand).from[0]![0]).toBe('e');
   });
 
   it('undo applies `from` positions and moves cmd to future', () => {

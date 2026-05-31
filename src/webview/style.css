@@ -7,7 +7,17 @@
  * All component rules read from tokens. No raw hex, no magic px.
  * =========================================================================== */
 
-@layer reset, tokens, base, surfaces, components, state, utilities;
+@layer theme, reset, tokens, base, surfaces, components, state, utilities;
+
+/* ----------------------------------------------------------------------------
+ * Tailwind v4 — incremental trial (see specs/12-design-system.md).
+ * Import theme + utilities ONLY; preflight is intentionally omitted so it does
+ * not clobber `@layer reset`/`base` or the inherited --vscode-* base styling.
+ * Utilities reference existing --ddd-* / --vscode-* vars via arbitrary values,
+ * so --ddd-* stays the single source of truth.
+ * -------------------------------------------------------------------------- */
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
 
 /* ============================================================================
  * @layer reset
@@ -100,11 +110,39 @@
     --ddd-danger: var(--vscode-errorForeground, #f48771);
     --ddd-warning: var(--vscode-editorWarning-foreground, #cca700);
     --ddd-success: #4ec9b0;
+    /* Git-style merge sides — reuse the editor's current/incoming colors so users map the picks to
+       <<<<<<< current / >>>>>>> incoming (same mental model as a conflict in the editor). */
+    --ddd-merge-current: var(--vscode-merge-currentHeaderBackground, #3b6ea5);
+    --ddd-merge-incoming: var(--vscode-merge-incomingHeaderBackground, #3f8f5b);
+    /* Inline diff rows — reuse the editor's diff colors so a schema diff matches VS Code's diff view. */
+    --ddd-diff-add-bg: var(--vscode-diffEditor-insertedLineBackground, var(--vscode-diffEditor-insertedTextBackground, rgba(78, 201, 176, 0.18)));
+    --ddd-diff-add-fg: var(--vscode-gitDecoration-addedResourceForeground, var(--ddd-success));
+    --ddd-diff-del-bg: var(--vscode-diffEditor-removedLineBackground, var(--vscode-diffEditor-removedTextBackground, rgba(244, 135, 113, 0.18)));
+    --ddd-diff-del-fg: var(--vscode-gitDecoration-deletedResourceForeground, var(--ddd-danger));
 
     /* ----- Edges ----- */
     --ddd-edge: var(--vscode-charts-blue, #4a9eff);
     --ddd-edge-hover: var(--vscode-charts-foreground, #e8e8e8);
     --ddd-edge-selected: var(--ddd-accent);
+    --ddd-edge-handle: var(--ddd-fg-muted); /* subtle border of the segment-midpoint drag handle */
+    /* Ghost (¼/¾) knob radius — grows on hover (no colour change). Tune both freely. */
+    --ddd-edge-ghost-r: 4;
+    --ddd-edge-ghost-r-hover: 5;
+    /* Marching-dot flow (all var()-safe — they live in normal properties, not the keyframe):
+       • --ddd-edge-flow-width = dot DIAMETER. With `stroke-dasharray: 0 …` + round caps, each dash is
+         a perfect circle of this diameter — so changing it stays ROUND (never a rectangle) and never
+         affects spacing. Bigger dots = raise this only. (+30% = ×1.3, i.e. 3 → 3.9.)
+       • --ddd-edge-flow-gap = dot SPACING (centre-to-centre) = the dash period.
+       • --ddd-edge-flow-duration = one loop (lower = faster).
+       Spacing caveat: the @keyframes offset MUST equal -(--ddd-edge-flow-gap). It can't read the var
+       (Chromium freezes a stroke-dashoffset keyframe that contains var/calc), so it's a hand-synced
+       literal — if you change the gap, change that number too (see @keyframes ddd-edge-flow). */
+    --ddd-edge-flow-width: 4;
+    --ddd-edge-flow-gap: 42;
+    --ddd-edge-flow-duration: 1.2s;
+    /* Bloom (glow). Flow = pronounced; selected line = subtle. */
+    --ddd-edge-bloom-flow: drop-shadow(0 0 3px var(--ddd-edge-selected)) drop-shadow(0 0 7px var(--ddd-edge-selected));
+    --ddd-edge-bloom-selected: drop-shadow(0 0 2px var(--ddd-edge-selected));
 
     /* ----- Bounded-context palette (12 colors, color-blind safer, dark-tuned) ----- */
     --ddd-bc-1-surface: #1e3a5f;   --ddd-bc-1-border: #5b9be8;
@@ -231,10 +269,14 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
-    cursor: grab;
+    cursor: default;
     background: var(--ddd-surface-canvas);
   }
   .ddd-viewport.is-panning { cursor: grabbing; }
+  /* Pan tool armed (toggle / Space held): the whole canvas, tables included, reads as grab. */
+  .ddd-viewport.is-pan-mode,
+  .ddd-viewport.is-pan-mode .ddd-table { cursor: grab; }
+  .ddd-viewport.is-pan-mode.is-panning { cursor: grabbing; }
 
   .ddd-world {
     position: absolute;
@@ -246,6 +288,17 @@
 
   .ddd-edges {
     pointer-events: none;
+  }
+
+  /* Magnet-mode dotted grid. Lives inside .ddd-world so it pans/zooms with the diagram;
+     background-size (world units) is set inline from the gridSize setting. */
+  .ddd-grid {
+    position: absolute;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.18;
+    background-image: radial-gradient(circle, var(--ddd-fg-muted) 1px, transparent 1.2px);
+    background-position: 0 0;
   }
 
   .ddd-marquee {
@@ -260,7 +313,8 @@
   .ddd-banner {
     position: absolute;
     top: var(--ddd-space-4);
-    left: var(--ddd-space-4);
+    /* Clear the top-left app-menu trigger (≈ space-8 wide) so they never overlap. */
+    left: calc(var(--ddd-space-4) + var(--ddd-space-8) + var(--ddd-space-4));
     right: var(--ddd-space-4);
     padding: var(--ddd-space-3) var(--ddd-space-5);
     background: var(--vscode-inputValidation-errorBackground, rgba(200, 40, 40, 0.20));
@@ -313,7 +367,9 @@
     color: var(--ddd-fg);
     box-shadow: var(--ddd-shadow-sm);
     user-select: none;
-    cursor: grab;
+    /* Idle cursor stays normal — the "hand" appears only with the pan tool (see .is-pan-mode).
+       While actually dragging a table, body.ddd-is-dragging / :active still show `grabbing`. */
+    cursor: default;
     touch-action: none;
     transition: box-shadow var(--ddd-duration-fast) var(--ddd-ease-out);
   }
@@ -327,9 +383,6 @@
   .ddd-table--rect {
     box-shadow: var(--ddd-shadow-sm);
     border-radius: var(--ddd-radius-sm);
-  }
-  .ddd-table--header-only {
-    overflow: hidden;
   }
 
   .ddd-table__header {
@@ -454,6 +507,13 @@
   }
 
   /* ----- Edges (SVG) ----- */
+  /* Edges are secondary: faded by default, revealed to full opacity when their table or the edge is
+     focused (hover/selection). The base + dots ride a wrapper group so opacity applies once. */
+  .ddd-edges .ddd-edge-group {
+    opacity: 0.4;
+    transition: opacity var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-edges .ddd-edge-group.is-focused { opacity: 1; }
   .ddd-edges path.ddd-edge {
     stroke: var(--ddd-edge);
     stroke-width: 1.6;
@@ -465,33 +525,127 @@
   }
   .ddd-edges path.ddd-edge:hover {
     stroke: var(--ddd-edge-hover);
-    stroke-width: 2;
+    stroke-width: 1.6;
+  }
+  .ddd-edges path.ddd-edge.is-selected {
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 1.6; /* same thickness — the selection cue is the subtle bloom, not a thicker line */
+    filter: var(--ddd-edge-bloom-selected);
   }
   .ddd-edges line.ddd-edge-segment-handle {
     stroke: transparent;
     pointer-events: stroke;
-    cursor: copy;
+    cursor: pointer;
   }
   .ddd-edges line.ddd-edge-segment-handle:hover {
     stroke: var(--ddd-accent);
     stroke-opacity: 0.18;
   }
-  .ddd-edges circle.ddd-edge-waypoint {
-    fill: var(--ddd-edge);
-    stroke: var(--ddd-surface-raised);
-    stroke-width: 1.5;
+  /* When the edge is selected, an editable run is grabbable along its whole length and shows the
+     axis-aware resize cursor (drag a horizontal run vertically, a vertical run horizontally). */
+  .ddd-edges line.ddd-edge-segment-handle.is-h { cursor: ns-resize; }
+  .ddd-edges line.ddd-edge-segment-handle.is-v { cursor: ew-resize; }
+  /* Non-selected edges get ONE transparent fat hit-path (width set via the stroke-width attr =
+     SEGMENT_HOVER_THICKNESS) instead of a hit-line per segment: select-on-click + hover-flow with a
+     flat node/listener count at thousands of relations. Per-segment handles exist only once the
+     edge is selected. See spec 05 §8.3. */
+  .ddd-edges path.ddd-edge-hit {
+    stroke: transparent;
+    fill: none;
+    pointer-events: stroke;
+    cursor: pointer;
+  }
+  /* Two-tier control handles (dbdiagram smart-edge model):
+     - `.ddd-edge-handle` = the REAL vertex at each editable run's centre (blue ring, always shown
+       while selected). Drag it (or the run) to SLIDE the whole run perpendicular (1-DOF).
+     - `.ddd-edge-ghost` = the two intermediate GHOST knobs at ¼ / ¾, shown only on hover (grey
+       ring). Drag one to carve a local symmetric notch — a NEW vertex (turns blue on release).
+     Corners are rounded turns with NO handle. The hovered centre handle (`.is-hot`) grows. */
+  .ddd-edges circle.ddd-edge-handle {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 1.6;
+    opacity: 0.95;
     pointer-events: auto;
-    cursor: grab;
-    transition: fill var(--ddd-duration-fast), r var(--ddd-duration-fast);
   }
-  .ddd-edges circle.ddd-edge-waypoint:hover {
-    fill: var(--ddd-accent);
-    r: 6;
+  .ddd-edges circle.ddd-edge-handle.is-h { cursor: ns-resize; }
+  .ddd-edges circle.ddd-edge-handle.is-v { cursor: ew-resize; }
+  .ddd-edges circle.ddd-edge-handle.is-hot,
+  .ddd-edges circle.ddd-edge-handle:hover {
+    stroke-width: 1.8;
+    stroke: var(--ddd-edge-selected);
+    opacity: 1;
   }
-  .ddd-edges circle.ddd-edge-waypoint--ghost {
-    fill: var(--ddd-accent);
-    opacity: 0.5;
+  .ddd-edges circle.ddd-edge-ghost {
+    r: var(--ddd-edge-ghost-r);
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge-handle);
+    stroke-width: 1.5;
+    opacity: 0.85;
+    pointer-events: auto;
+    transition: r var(--ddd-duration-fast) var(--ddd-ease-out), opacity var(--ddd-duration-fast);
+  }
+  .ddd-edges circle.ddd-edge-ghost.is-h { cursor: ns-resize; }
+  .ddd-edges circle.ddd-edge-ghost.is-v { cursor: ew-resize; }
+  /* Hovering the ghost knob ONLY grows it (no colour change) so you know which node you're pointing at. */
+  .ddd-edges circle.ddd-edge-ghost:hover {
+    r: var(--ddd-edge-ghost-r-hover);
+    opacity: 1;
+  }
+  /* Interactive handle overlay: above tables so handles stay grabbable over a table. */
+  .ddd-edges-overlay {
+    z-index: 6;
+  }
+  /* Direction dots (visual only): origin (PK) solid, destination (FK) ringed. */
+  .ddd-edges circle.ddd-edge-end-dot {
     pointer-events: none;
+  }
+  .ddd-edges circle.ddd-edge-end-dot.is-source {
+    fill: var(--ddd-edge);
+  }
+  .ddd-edges circle.ddd-edge-end-dot.is-target {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge);
+    stroke-width: 1.5;
+  }
+  /* Flowing dots along the relation (source -> target), shown on hover/selected. The loop offset
+     (keyframe) and the duration both derive from the dash period (dot+gap), so it never jumps at the
+     wrap and the perceived speed is constant — tune via the --ddd-edge-flow-* tokens. Pronounced bloom. */
+  .ddd-edges path.ddd-edge-flow {
+    fill: none;
+    stroke: var(--ddd-edge-selected);
+    stroke-width: var(--ddd-edge-flow-width);      /* = dot diameter */
+    stroke-linecap: round;                         /* round caps turn each 0-length dash into a circle */
+    stroke-dasharray: 0 var(--ddd-edge-flow-gap);  /* 0 = a round dot; gap = spacing = dash period */
+    animation: ddd-edge-flow var(--ddd-edge-flow-duration) linear infinite;
+    filter: var(--ddd-edge-bloom-flow);
+    pointer-events: none;
+  }
+  /* Endpoint handles flip the port side (left <-> right) when dragged across the table. */
+  .ddd-edges circle.ddd-edge-endpoint {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 2;
+    pointer-events: auto;
+    cursor: ew-resize;
+  }
+  .ddd-edges circle.ddd-edge-endpoint:hover {
+    fill: var(--ddd-edge-selected);
+  }
+
+  /* Floating edge toolbar (Reset line): portal to body, fixed at the edge midpoint. */
+  .ddd-edge-toolbar {
+    position: fixed;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+    transform: none;
+    padding: var(--ddd-space-2) var(--ddd-space-3);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
   }
 
   /* ----- Tooltip ----- */
@@ -534,6 +688,128 @@
     word-wrap: break-word;
   }
 
+  /* ----- Tip (lightweight button tooltip; see ui/Tooltip.tsx) ----- */
+  /* Outer holds placement transform so the inner can own the entrance animation conflict-free. */
+  .ddd-tip-pos {
+    position: fixed;
+    z-index: 1000;
+    pointer-events: none;
+  }
+  .ddd-tip--top { transform: translate(-50%, -100%); }
+  .ddd-tip--bottom { transform: translate(-50%, 0); }
+  .ddd-tip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-3);
+    white-space: nowrap;
+    padding: var(--ddd-space-2) var(--ddd-space-4);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-sm);
+    color: var(--ddd-fg);
+    font-size: var(--ddd-text-sm);
+    line-height: var(--ddd-leading-tight);
+    box-shadow: var(--ddd-shadow-md);
+    animation: ddd-tip-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-tip__key {
+    font-family: var(--ddd-font-mono);
+    font-size: var(--ddd-text-xs);
+    color: var(--ddd-fg-muted);
+    background: var(--ddd-surface-active);
+    border: 1px solid var(--ddd-border-subtle);
+    border-radius: var(--ddd-radius-xs);
+    padding: 0 var(--ddd-space-2);
+  }
+
+  /* ----- Hover card (rich info preview, top-layer via Popover API) ----- */
+  .ddd-hovercard-pos {
+    position: fixed;
+    z-index: 1000;
+    margin: 0;
+    inset: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .ddd-hovercard--top {
+    transform: translate(-50%, -100%);
+  }
+  .ddd-hovercard--bottom {
+    transform: translate(-50%, 0);
+  }
+  .ddd-hovercard {
+    max-width: 460px;
+    padding: var(--ddd-space-5);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    color: var(--ddd-fg);
+    animation: ddd-tip-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+
+  /* ----- LOD mode preview (settings hover card) ----- */
+  .ddd-lod-preview {
+    /* the real TableNode renders here; neutralize interaction + shrink to a 3-up preview */
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-4);
+    --ddd-table-w: 130px;
+    --ddd-table-row-h: 15px;
+    --ddd-table-header-h: 19px;
+    --ddd-table-pad-x: 6px;
+    --ddd-table-pad-y: 1px;
+    --ddd-text-table: 9px;
+  }
+  .ddd-lod-preview__title {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-lod-preview__row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ddd-space-5);
+  }
+  .ddd-lod-preview__cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ddd-space-3);
+    margin: 0;
+  }
+  .ddd-lod-preview__stage {
+    position: relative;
+  }
+  /* TableNode writes position/transform inline; override so the previews flow statically. */
+  .ddd-lod-preview .ddd-table {
+    position: static !important;
+    transform: none !important;
+    box-shadow: none;
+  }
+  .ddd-lod-preview .ddd-table--rect {
+    width: 130px !important;
+    height: 52px !important;
+  }
+  .ddd-lod-preview__caption {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: var(--ddd-leading-tight);
+  }
+  .ddd-lod-preview__mode {
+    font-size: var(--ddd-text-sm);
+    font-weight: var(--ddd-weight-semibold);
+    color: var(--ddd-fg-strong);
+  }
+  .ddd-lod-preview__hint {
+    font-size: var(--ddd-text-xs);
+    color: var(--ddd-fg-muted);
+  }
+
   /* ----- Context menu ----- */
   .ddd-context-menu {
     position: fixed;
@@ -571,6 +847,73 @@
     cursor: default;
   }
   .ddd-context-menu__separator {
+    border: none;
+    border-top: 1px solid var(--ddd-border-subtle);
+    margin: var(--ddd-space-2) 0;
+  }
+
+  /* ---- App menu (top-left, Excalidraw-style) ---- */
+  /* Always-visible trigger surface; matches the bottom-corner chrome (.ddd-zoom). */
+  .ddd-app-menu {
+    position: absolute;
+    top: var(--ddd-space-4);
+    left: var(--ddd-space-4);
+    z-index: 5;
+    display: flex;
+    background: var(--ddd-surface-raised);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    padding: var(--ddd-space-1);
+    box-shadow: var(--ddd-shadow-md);
+  }
+  /* Click-opened popover, portaled to <body> and anchored under the trigger.
+     Mirrors .ddd-context-menu but with icon rows + trigger-source motion. */
+  .ddd-app-menu__popover {
+    position: fixed;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    padding: var(--ddd-space-2) 0;
+    font-size: var(--ddd-text-base);
+    color: var(--ddd-fg);
+    animation: ddd-menu-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-app-menu__item {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-4);
+    width: 100%;
+    padding: var(--ddd-space-3) var(--ddd-space-5);
+    background: transparent;
+    color: inherit;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--ddd-text-base);
+    transition: background var(--ddd-duration-instant);
+  }
+  .ddd-app-menu__item:hover:not(:disabled) {
+    background: var(--ddd-surface-hover);
+  }
+  .ddd-app-menu__item:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .ddd-app-menu__label {
+    flex: 1;
+  }
+  /* Trailing affordance — Git row signals a future submenu/panel. */
+  .ddd-app-menu__chevron {
+    display: inline-flex;
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-app-menu__separator {
     border: none;
     border-top: 1px solid var(--ddd-border-subtle);
     margin: var(--ddd-space-2) 0;
@@ -691,43 +1034,34 @@
     bottom: var(--ddd-space-4);
     right: var(--ddd-space-4);
     display: flex;
+    align-items: center;
     gap: var(--ddd-space-1);
     background: var(--ddd-surface-raised);
     border: 1px solid var(--ddd-border);
     border-radius: var(--ddd-radius-md);
     padding: var(--ddd-space-1);
     z-index: 5;
-    box-shadow: var(--ddd-shadow-sm);
+    box-shadow: var(--ddd-shadow-md);
   }
-  .ddd-zoom__btn {
-    min-width: 28px;
-    height: 24px;
-    padding: 0 var(--ddd-space-3);
-    background: transparent;
-    color: var(--ddd-fg);
-    border: none;
-    border-radius: var(--ddd-radius-sm);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: var(--ddd-text-base);
-    line-height: 1;
-    transition: background var(--ddd-duration-instant);
-  }
-  .ddd-zoom__btn:hover {
-    background: var(--ddd-surface-hover);
+  /* Thin rule separating the undo/redo sub-group from the zoom controls. */
+  .ddd-zoom__divider {
+    width: 1px;
+    align-self: stretch;
+    margin: var(--ddd-space-1) 0;
+    background: var(--ddd-border-subtle);
   }
   .ddd-zoom__pct {
     position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0 var(--ddd-space-2);
-    min-width: 54px;
+    padding: 0;
+    min-width: 38px;
     font-variant-numeric: tabular-nums;
     color: var(--ddd-fg-muted);
   }
   .ddd-zoom__input {
-    width: 40px;
+    width: 30px;
     background: transparent;
     border: 1px solid transparent;
     color: var(--ddd-fg);
@@ -752,100 +1086,45 @@
     opacity: 0;
   }
 
-  /* ----- Actions panel (bottom-center) ----- */
-  .ddd-actions-panel {
+  /* ----- Actions bar (bottom-center, floating) ----- */
+  .ddd-actions-bar {
     position: absolute;
-    bottom: 0;
+    bottom: var(--ddd-space-4);
     left: 50%;
     transform: translateX(-50%);
-    display: flex;
-    flex-direction: column-reverse;
-    align-items: center;
     z-index: 5;
-  }
-  .ddd-actions-panel__footer {
     display: flex;
-    align-items: stretch;
+    align-items: center;
+    padding: var(--ddd-space-1);
     background: var(--ddd-surface-raised);
     border: 1px solid var(--ddd-border);
-    border-bottom: none;
-    border-top-left-radius: var(--ddd-radius-md);
-    border-top-right-radius: var(--ddd-radius-md);
-    box-shadow: var(--ddd-shadow-sm);
-    overflow: hidden;
-  }
-  .ddd-actions-panel.is-open .ddd-actions-panel__footer {
-    border-top-left-radius: 0;
-    border-top-right-radius: 0;
-    border-top: none;
-    box-shadow: none;
-  }
-  .ddd-actions-panel__handle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: var(--ddd-space-2) var(--ddd-space-6);
-    background: transparent;
-    border: none;
-    border-left: 1px solid var(--ddd-border);
-    color: var(--ddd-fg-muted);
-    cursor: pointer;
-    transition: color var(--ddd-duration-instant), background var(--ddd-duration-instant);
-  }
-  .ddd-actions-panel__handle:hover {
-    color: var(--ddd-fg);
-    background: var(--ddd-surface-hover);
-  }
-  .ddd-hist-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    padding: var(--ddd-space-2) 0;
-    background: transparent;
-    border: none;
-    color: var(--ddd-fg-muted);
-    cursor: pointer;
-    transition: background var(--ddd-duration-instant), color var(--ddd-duration-instant);
-  }
-  .ddd-hist-btn:hover:not(:disabled) {
-    background: var(--ddd-surface-hover);
-    color: var(--ddd-fg);
-  }
-  .ddd-hist-btn:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
-  .ddd-actions-panel__body {
-    background: var(--ddd-surface-raised);
-    border: 1px solid var(--ddd-border);
-    border-bottom: none;
-    border-top-left-radius: var(--ddd-radius-md);
-    border-top-right-radius: var(--ddd-radius-md);
-    padding: var(--ddd-space-4) var(--ddd-space-5);
-    display: flex;
-    gap: var(--ddd-space-3);
+    border-radius: var(--ddd-radius-md);
     box-shadow: var(--ddd-shadow-md);
   }
-  .ddd-actions-btn {
-    display: inline-flex;
+  .ddd-actions-bar__row {
+    display: flex;
     align-items: center;
-    gap: var(--ddd-space-3);
-    padding: var(--ddd-space-2) var(--ddd-space-5);
-    background: transparent;
-    border: 1px solid var(--ddd-border);
-    color: var(--ddd-fg);
-    border-radius: var(--ddd-radius-sm);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: var(--ddd-text-base);
-    transition: background var(--ddd-duration-instant),
-                color var(--ddd-duration-instant),
-                border-color var(--ddd-duration-instant);
+    gap: var(--ddd-space-1);
   }
-  .ddd-actions-btn:hover {
-    background: var(--ddd-surface-hover);
+  .ddd-actions-bar__divider {
+    width: 1px;
+    align-self: stretch;
+    margin: var(--ddd-space-1) var(--ddd-space-1);
+    background: var(--ddd-border-subtle);
   }
+  /* Staggered entrance of the tools when the bar expands (transform-prop only; the buttons'
+     :active scale uses the separate `scale` property, so the two never collide). */
+  .ddd-actions-bar.is-expanded .ddd-actions-bar__row > * {
+    animation: ddd-tool-in var(--ddd-duration-medium) var(--ddd-ease-out) backwards;
+  }
+  .ddd-actions-bar__row > *:nth-child(1) { animation-delay: 0ms; }
+  .ddd-actions-bar__row > *:nth-child(2) { animation-delay: 25ms; }
+  .ddd-actions-bar__row > *:nth-child(3) { animation-delay: 50ms; }
+  .ddd-actions-bar__row > *:nth-child(4) { animation-delay: 75ms; }
+  .ddd-actions-bar__row > *:nth-child(5) { animation-delay: 100ms; }
+  .ddd-actions-bar__row > *:nth-child(6) { animation-delay: 125ms; }
+  .ddd-actions-bar__row > *:nth-child(7) { animation-delay: 150ms; }
+  .ddd-actions-bar__row > *:nth-child(8) { animation-delay: 175ms; }
 
   /* ----- Group panel ----- */
   .ddd-group-panel {
@@ -896,6 +1175,23 @@
   }
   .ddd-group-panel__handle:hover {
     background: var(--ddd-surface-hover);
+  }
+
+  /* Global view toggles (PK/FK, …) — sit above the group list. */
+  .ddd-group-panel__views {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--ddd-space-2);
+    padding: var(--ddd-space-3) var(--ddd-space-5);
+    border-bottom: 1px solid var(--ddd-border-subtle);
+  }
+  .ddd-group-panel__section {
+    font-size: var(--ddd-text-xs);
+    font-weight: var(--ddd-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ddd-fg-muted);
   }
 
   .ddd-group-empty {
@@ -998,24 +1294,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .ddd-group-btn {
-    width: 22px;
-    height: 20px;
-    padding: 0;
-    background: transparent;
-    color: var(--ddd-fg-muted);
-    border: 1px solid transparent;
-    border-radius: var(--ddd-radius-sm);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: var(--ddd-text-sm);
-    transition: color var(--ddd-duration-instant), border-color var(--ddd-duration-instant);
-  }
-  .ddd-group-btn:hover {
-    border-color: var(--ddd-border);
-    color: var(--ddd-fg);
-  }
-
   /* ----- Group container (non-collapsed) ----- */
   .ddd-group-container {
     border: 2px dashed;
@@ -1076,27 +1354,31 @@
   }
 
   /* ----- Modal ----- */
-  .ddd-modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(2px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-    animation: ddd-fade-in var(--ddd-duration-fast) var(--ddd-ease-out);
-  }
+  /* Native <dialog>: the UA centers it in the top layer when shown via
+     showModal(); the scrim is its ::backdrop. (Was a .ddd-modal-overlay div.) */
   .ddd-modal {
+    padding: 0;
+    margin: auto;
     background: var(--ddd-surface-canvas);
+    color: var(--ddd-fg);
     border: 1px solid var(--ddd-border);
     border-radius: var(--ddd-radius-lg);
     width: min(440px, calc(100vw - 32px));
     max-height: calc(100vh - 64px);
+    box-shadow: var(--ddd-shadow-lg);
+  }
+  .ddd-modal[open] {
     display: flex;
     flex-direction: column;
-    box-shadow: var(--ddd-shadow-lg);
     animation: ddd-modal-in var(--ddd-duration-medium) var(--ddd-ease-out);
+  }
+  .ddd-modal:not([open]) {
+    display: none;
+  }
+  .ddd-modal::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    animation: ddd-fade-in var(--ddd-duration-fast) var(--ddd-ease-out);
   }
   .ddd-modal--wide {
     width: min(560px, calc(100vw - 32px));
@@ -1136,6 +1418,334 @@
     border-top: 1px solid var(--ddd-border-subtle);
   }
 
+  /* ----- Settings (two-pane: icon rail + content) ----- */
+  .ddd-settings {
+    display: flex;
+    gap: var(--ddd-space-6);
+    min-height: 260px;
+  }
+  .ddd-settings__rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-1);
+    flex-shrink: 0;
+    width: 148px;
+    padding-right: var(--ddd-space-5);
+    border-right: 1px solid var(--ddd-border-subtle);
+  }
+  .ddd-settings__rail-item {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-3);
+    width: 100%;
+    padding: var(--ddd-space-3) var(--ddd-space-4);
+    background: transparent;
+    border: none;
+    border-radius: var(--ddd-radius-sm);
+    color: var(--ddd-fg-muted);
+    font: inherit;
+    font-size: var(--ddd-text-base);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--ddd-duration-instant), color var(--ddd-duration-instant);
+  }
+  .ddd-settings__rail-item:hover {
+    background: var(--ddd-surface-hover);
+    color: var(--ddd-fg);
+  }
+  .ddd-settings__rail-item.is-active {
+    background: var(--ddd-surface-selected);
+    color: var(--ddd-fg-strong);
+    font-weight: var(--ddd-weight-medium);
+  }
+  .ddd-settings__content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .ddd-settings__panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-5);
+  }
+  .ddd-settings__panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: var(--ddd-space-3);
+    border-bottom: 1px solid var(--ddd-border-subtle);
+  }
+  .ddd-settings__panel-title {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-3);
+    font-weight: var(--ddd-weight-semibold);
+    font-size: var(--ddd-text-md);
+    color: var(--ddd-fg-strong);
+  }
+  .ddd-settings__panel-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+  }
+  .ddd-settings__info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--ddd-radius-sm);
+    color: var(--ddd-fg-muted);
+    cursor: help;
+    transition: background var(--ddd-duration-instant), color var(--ddd-duration-instant);
+  }
+  .ddd-settings__info:hover,
+  .ddd-settings__info:focus-visible {
+    background: var(--ddd-surface-hover);
+    color: var(--ddd-accent);
+  }
+
+  /* ----- Git panel (spec 16) — shares the two-pane shell above ----- */
+  .ddd-git-branch {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-git-branch__name {
+    color: var(--ddd-fg-strong);
+    font-weight: var(--ddd-weight-medium);
+  }
+  .ddd-git-branch__sep { opacity: 0.6; }
+  .ddd-git-empty {
+    margin: 0;
+    font-size: var(--ddd-text-base);
+    color: var(--ddd-fg-muted);
+    line-height: 1.5;
+  }
+  .ddd-git-empty code {
+    font-family: var(--vscode-editor-font-family, monospace);
+    background: var(--ddd-surface-hover);
+    padding: 0 var(--ddd-space-2);
+    border-radius: var(--ddd-radius-sm);
+  }
+  .ddd-git-files {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-1);
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .ddd-git-file {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ddd-space-4);
+    padding: var(--ddd-space-2) var(--ddd-space-3);
+    border-radius: var(--ddd-radius-sm);
+    background: var(--ddd-surface-raised);
+  }
+  .ddd-git-file__name {
+    font-size: var(--ddd-text-base);
+    color: var(--ddd-fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-git-pill {
+    flex-shrink: 0;
+    font-size: var(--ddd-text-sm);
+    padding: 0 var(--ddd-space-3);
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-git-pill.is-modified { color: var(--ddd-warning); }
+  .ddd-git-pill.is-added,
+  .ddd-git-pill.is-untracked { color: var(--ddd-success); }
+  .ddd-git-pill.is-deleted { color: var(--ddd-danger); }
+  .ddd-git-pill.is-renamed { color: var(--ddd-accent); }
+  .ddd-git-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--ddd-space-3);
+  }
+  .ddd-git-warn {
+    margin: 0 0 var(--ddd-space-4);
+    font-size: var(--ddd-text-base);
+    color: var(--ddd-fg);
+    line-height: 1.5;
+  }
+  .ddd-git-warn strong { color: var(--ddd-danger); }
+  .ddd-git-stash__ref {
+    font-family: var(--vscode-editor-font-family, monospace);
+    color: var(--ddd-fg-muted);
+    font-size: var(--ddd-text-sm);
+  }
+  .ddd-git-stash__ops {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-1);
+    flex-shrink: 0;
+  }
+  .ddd-git-commits {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-1);
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .ddd-git-commit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-1);
+    width: 100%;
+    text-align: left;
+    padding: var(--ddd-space-3) var(--ddd-space-4);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--ddd-radius-sm);
+    color: var(--ddd-fg);
+    font: inherit;
+    cursor: pointer;
+    transition: background var(--ddd-duration-instant), border-color var(--ddd-duration-instant);
+  }
+  .ddd-git-commit:hover {
+    background: var(--ddd-surface-hover);
+    border-color: var(--ddd-border);
+  }
+  .ddd-git-commit__subject {
+    font-size: var(--ddd-text-base);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-git-commit__meta {
+    display: flex;
+    gap: var(--ddd-space-4);
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-git-commit__sha {
+    font-family: var(--vscode-editor-font-family, monospace);
+    color: var(--ddd-accent);
+  }
+
+  /* ----- Git canvas bar (time-travel / diff overlay; spec 16) ----- */
+  .ddd-git-bar {
+    position: absolute;
+    top: var(--ddd-space-5);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-4);
+    max-width: calc(100% - var(--ddd-space-8) * 2);
+    padding: var(--ddd-space-3) var(--ddd-space-5);
+    background: var(--ddd-surface-raised);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    color: var(--ddd-fg);
+    font-size: var(--ddd-text-base);
+    animation: ddd-menu-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-git-bar__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-git-bar__label strong { color: var(--ddd-fg-strong); }
+  .ddd-git-bar__nav {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+  }
+  .ddd-git-bar__count {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    min-width: 44px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .ddd-git-bar__check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  /* ----- Diff overlay (spec 16) — table markers, focus/blur, hover card, edges ----- */
+  .ddd-table.is-diff-added { outline: 2px solid var(--ddd-success); outline-offset: 1px; }
+  .ddd-table.is-diff-modified { outline: 2px solid var(--ddd-warning); outline-offset: 1px; }
+  .ddd-table.is-diff-removed { outline: 2px dashed var(--ddd-danger); outline-offset: 1px; }
+  /* Background (non-diff / non-conflict) tables: dimmed + blurred so the changes/conflicts stand out.
+     Shared by the diff overlay and the merge resolver (spec 14/16). */
+  .ddd-table.is-diff-dimmed {
+    opacity: 0.32;
+    filter: blur(1.5px) saturate(0.6);
+    transition: opacity var(--ddd-duration-fast) var(--ddd-ease-out), filter var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+
+  /* Inline unified diff rows inside a table — git editor-diff look (red/green + −/+ gutter). */
+  .ddd-table__col-sign {
+    flex-shrink: 0;
+    width: 12px;
+    text-align: center;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-weight: var(--ddd-weight-semibold);
+  }
+  .ddd-table__col.is-diff-add {
+    background: var(--ddd-diff-add-bg);
+    box-shadow: inset 2px 0 0 var(--ddd-diff-add-fg);
+  }
+  .ddd-table__col.is-diff-add .ddd-table__col-sign { color: var(--ddd-diff-add-fg); }
+  .ddd-table__col.is-diff-del {
+    background: var(--ddd-diff-del-bg);
+    box-shadow: inset 2px 0 0 var(--ddd-diff-del-fg);
+  }
+  .ddd-table__col.is-diff-del .ddd-table__col-sign { color: var(--ddd-diff-del-fg); }
+  .ddd-table__col.is-diff-del .ddd-table__col-name { text-decoration: line-through; opacity: 0.85; }
+  /* The shared "Blur background tables" toggle in the merge bar sits on the right of the head row. */
+  .ddd-merge-bar__blur { margin-left: auto; }
+
+  .ddd-edge.is-diff-added { stroke: var(--ddd-success); stroke-width: 2.5; }
+  .ddd-edge.is-diff-removed { stroke: var(--ddd-danger); stroke-dasharray: 5 4; }
+  /* Removed-table ghost card (no live node exists). */
+  .ddd-diff-ghost {
+    opacity: 0.7;
+    outline: 2px dashed var(--ddd-danger);
+    outline-offset: 1px;
+    filter: saturate(0.8);
+  }
+  .ddd-diff-ghost__header { border-top-color: var(--ddd-danger); }
+  .ddd-diff-ghost__tag {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-danger);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .ddd-diff-ghost-line {
+    stroke: var(--ddd-danger);
+    stroke-width: 2;
+    stroke-dasharray: 5 4;
+    opacity: 0.8;
+  }
+
   /* ----- Form ----- */
   .ddd-field {
     display: flex;
@@ -1172,6 +1782,48 @@
   .ddd-field__control:focus {
     outline: none;
     border-color: var(--ddd-accent);
+  }
+
+  .ddd-slider {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-2);
+  }
+  .ddd-slider__input {
+    width: 100%;
+    appearance: none;
+    -webkit-appearance: none;
+    height: var(--ddd-space-1);
+    border-radius: var(--ddd-radius-sm);
+    background: var(--ddd-border);
+    cursor: pointer;
+  }
+  .ddd-slider__input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: var(--ddd-space-4);
+    height: var(--ddd-space-4);
+    border-radius: var(--ddd-radius-full);
+    background: var(--ddd-accent);
+    cursor: grab;
+  }
+  .ddd-slider__input:focus {
+    outline: none;
+  }
+  .ddd-slider__input:focus-visible {
+    outline: 1px solid var(--ddd-accent);
+    outline-offset: 2px;
+  }
+  .ddd-slider__scale {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-slider__value {
+    font-weight: var(--ddd-weight-medium);
+    color: var(--ddd-fg);
+    font-variant-numeric: tabular-nums;
   }
 
   .ddd-radio {
@@ -1216,63 +1868,305 @@
     background: var(--ddd-surface-hover);
   }
 
-  /* ----- Buttons ----- */
-  .ddd-btn {
-    background: transparent;
-    border: 1px solid var(--ddd-border);
-    color: var(--ddd-fg);
-    border-radius: var(--ddd-radius-sm);
-    padding: var(--ddd-space-2) var(--ddd-space-5);
+  /* ----- Collaborative-merge conflict UI (spec 14 §Tier-3) ----- */
+  /* Blocking mode: everything in the world is read-only (pan/zoom only) EXCEPT the ghost layer.
+     The diff overlay (spec 16) is display-only inline, so it needs no interaction exemption. */
+  .ddd-world.is-merge-locked > *:not(.ddd-merge-ghost-layer) {
+    pointer-events: none;
+  }
+  .ddd-merge-ghost-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none; /* the layer never blocks; only the ghost cards catch */
+  }
+  /* A ghost IS a full table (.ddd-table look) + an outline-emphasis on top (so it never fights the
+     table's own border). Sits in the exempt ghost layer, so it stays clickable to pick. */
+  .ddd-merge-ghost {
+    position: absolute;
+    pointer-events: auto;
     cursor: pointer;
-    font: inherit;
-    font-size: var(--ddd-text-base);
-    transition: background var(--ddd-duration-instant),
-                border-color var(--ddd-duration-instant),
-                transform var(--ddd-duration-instant);
+    user-select: none;
+    transition: opacity var(--ddd-duration-fast),
+                outline-color var(--ddd-duration-fast),
+                box-shadow var(--ddd-duration-fast),
+                filter var(--ddd-duration-fast);
   }
-  .ddd-btn:hover {
-    background: var(--ddd-surface-hover);
-    border-color: var(--ddd-fg-muted);
+  /* Neutral = undecided + not hovered: faint dashed outline. */
+  .ddd-merge-ghost.is-neutral { opacity: 0.72; outline: 2px dashed var(--ddd-fg-muted); outline-offset: 1px; }
+  /* Keep = hovered or chosen: full opacity + accent ring (bloom). */
+  .ddd-merge-ghost.is-keep { opacity: 1; outline: 2px solid var(--ddd-accent); outline-offset: 1px; box-shadow: var(--ddd-shadow-md), var(--ddd-shadow-focus); }
+  /* Discard = the losing side: dim + reddish so it reads as "this gets thrown away". */
+  .ddd-merge-ghost.is-discard { opacity: 0.4; outline: 2px solid var(--ddd-danger); outline-offset: 1px; filter: saturate(0.55); }
+  .ddd-merge-ghost__check {
+    position: absolute;
+    top: var(--ddd-space-2);
+    right: var(--ddd-space-2);
+    z-index: 1;
+    color: var(--ddd-accent);
+    font-weight: 700;
   }
-  .ddd-btn:active {
-    transform: scale(0.97);
+  /* Delete-side chip (the side has no saved position to draw a table for). */
+  .ddd-merge-ghost--chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+    padding: var(--ddd-space-2) var(--ddd-space-4);
+    background: var(--ddd-surface-raised);
+    border-radius: var(--ddd-radius-sm);
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg);
   }
-  .ddd-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
+  .ddd-merge-ghost--chip.is-removed { color: var(--ddd-danger); }
+
+  /* The blocking conflict bar: floats top-centre over the read-only diagram. */
+  .ddd-merge-bar {
+    position: absolute;
+    top: var(--ddd-space-5);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-3);
+    /* Fixed width so toggling Review-all ↔ Step-through never jumps horizontally. */
+    width: min(420px, calc(100% - 2 * var(--ddd-space-6)));
+    max-height: calc(100% - 2 * var(--ddd-space-6));
+    overflow: auto;
+    padding: var(--ddd-space-4) var(--ddd-space-5);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-lg);
+    box-shadow: var(--ddd-shadow-lg);
+    color: var(--ddd-fg);
   }
-  .ddd-btn--primary {
-    background: var(--ddd-accent);
-    border-color: var(--ddd-accent);
-    color: var(--ddd-fg-on-accent);
-    font-weight: var(--ddd-weight-medium);
+  .ddd-merge-bar__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ddd-space-5);
   }
-  .ddd-btn--primary:hover {
-    background: var(--ddd-accent-hover);
-    border-color: var(--ddd-accent-hover);
-    filter: brightness(1.05);
+  .ddd-merge-bar__title { font-weight: 600; }
+  .ddd-merge-bar__count {
+    flex: none;
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    background: var(--ddd-surface-active);
+    padding: 0 var(--ddd-space-3);
+    border-radius: var(--ddd-radius-full);
+    font-variant-numeric: tabular-nums;
+  }
+  .ddd-merge-bar__hint { margin: 0; font-size: var(--ddd-text-sm); color: var(--ddd-fg-muted); }
+  /* Swappable view body — min-height keeps the vertical size similar across the two views. */
+  .ddd-merge-bar__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-3);
+    min-height: 128px;
   }
 
-  .ddd-icon-btn {
-    width: 24px;
-    height: 22px;
-    padding: 0;
+  /* Progress spine — primary "how done are you" signal; turns success-green at 100%. */
+  .ddd-merge-progress {
+    height: var(--ddd-space-2);
+    border-radius: var(--ddd-radius-full);
+    background: var(--ddd-surface-active);
+    overflow: hidden;
+  }
+  .ddd-merge-progress__fill {
+    height: 100%;
+    width: var(--ddd-merge-pct, 0%);
+    border-radius: inherit;
+    background: var(--ddd-accent);
+    transition: width var(--ddd-duration-medium) var(--ddd-ease-out),
+                background-color var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-merge-progress__fill[data-complete] { background: var(--ddd-success); }
+
+  /* Step-view dot rail — clickable per-conflict jump + status mirror. The orb is the small visible
+     circle; the <button> around it carries transparent hit padding and the rail gap is 0, so the
+     whole slot is clickable (no need to land on the 8px circle). Unresolved = hollow grey; resolved =
+     filled in the git current/incoming color; cursor = scaled + accent border. */
+  /* Rail = scrollable orb row + an expand toggle (shown only when the orbs overflow one row). */
+  .ddd-merge-rail {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+  }
+  .ddd-merge-dots {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    /* `safe center` centers a short row but falls back to start when it overflows, so the leading
+       orbs never become unreachable (the classic flex justify-center + overflow trap). */
+    justify-content: safe center;
+    gap: 0;
+    /* 2px all round so the terminal orbs' focus ring isn't shaved by overflow-x/-y. */
+    padding: var(--ddd-space-1);
+    /* Default (collapsed): one row, scroll horizontally. */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+  /* Expanded: full wrapped grid, height-capped with a vertical scroll past a few rows. */
+  .ddd-merge-dots.is-expanded {
+    flex-wrap: wrap;
+    justify-content: center;
+    overflow-x: hidden;
+    overflow-y: auto;
+    max-height: 92px;
+  }
+  .ddd-merge-dot {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    padding: var(--ddd-space-1);
+    border: none;
     background: transparent;
-    color: var(--ddd-fg);
-    border: 1px solid transparent;
-    border-radius: var(--ddd-radius-sm);
     cursor: pointer;
-    transition: background var(--ddd-duration-instant),
-                border-color var(--ddd-duration-instant),
-                color var(--ddd-duration-instant);
   }
-  .ddd-icon-btn:hover {
-    border-color: var(--ddd-border);
-    background: var(--ddd-surface-hover);
+  .ddd-merge-dot__orb {
+    width: var(--ddd-space-4);
+    height: var(--ddd-space-4);
+    box-sizing: border-box;
+    border-radius: var(--ddd-radius-full);
+    border: 1px solid var(--ddd-fg-muted);
+    background: transparent;
+    transition: background-color var(--ddd-duration-fast) var(--ddd-ease-out),
+                border-color var(--ddd-duration-fast) var(--ddd-ease-out),
+                transform var(--ddd-duration-fast) var(--ddd-ease-out);
   }
+  .ddd-merge-dot:hover .ddd-merge-dot__orb { border-color: var(--ddd-accent); }
+  .ddd-merge-dot.is-current-side .ddd-merge-dot__orb { background: var(--ddd-merge-current); border-color: var(--ddd-merge-current); }
+  .ddd-merge-dot.is-incoming-side .ddd-merge-dot__orb { background: var(--ddd-merge-incoming); border-color: var(--ddd-merge-incoming); }
+  /* Cursor = scaled-up orb with an accent border (distinct from the global :focus-visible box-shadow
+     ring on the button, so keyboard focus and "which conflict am I on" read as two different things). */
+  .ddd-merge-dot.is-at .ddd-merge-dot__orb { transform: scale(1.35); border-color: var(--ddd-accent); }
+
+  /* current/incoming pick affordance. Chosen = the Button's own action=accent fill (no extra class).
+     Discarded = struck, danger-tinted CAP + dimmed value/swatch — all on child spans, never the button
+     bg/border (those are Tailwind utilities in @layer utilities and would win over a component rule). */
+  .ddd-merge-side__stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    line-height: var(--ddd-leading-tight);
+  }
+  .ddd-merge-side__cap {
+    text-transform: uppercase;
+    font-size: var(--ddd-text-xs);
+    letter-spacing: 0.04em;
+  }
+  .ddd-merge-side__pos {
+    font-size: var(--ddd-text-xs);
+    font-variant-numeric: tabular-nums;
+    opacity: 0.8;
+  }
+  .ddd-merge-side--cut .ddd-merge-side__cap {
+    color: var(--ddd-danger);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+  }
+  .ddd-merge-side--cut .ddd-merge-side__pos { opacity: 0.45; }
+  .ddd-merge-side--cut .ddd-merge-bar__swatch { opacity: 0.5; }
+  .ddd-merge-bar__rows {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-2);
+    max-height: 220px;
+    overflow: auto;
+  }
+  .ddd-merge-bar__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ddd-space-4);
+  }
+  .ddd-merge-bar__row-label {
+    min-width: 0;
+    font-size: var(--ddd-text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-merge-bar__row-noun {
+    color: var(--ddd-fg-muted);
+    text-transform: uppercase;
+    font-size: var(--ddd-text-xs);
+  }
+  .ddd-merge-bar__row-choices { display: flex; gap: var(--ddd-space-2); flex: none; }
+  .ddd-merge-bar__swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: var(--ddd-space-2);
+    border-radius: var(--ddd-radius-xs);
+    border: 1px solid var(--ddd-border);
+    vertical-align: middle;
+  }
+  /* One shared footer (both views): bulk on the left, Apply docked right. */
+  .ddd-merge-bar__footer {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+    padding-top: var(--ddd-space-3);
+    border-top: 1px solid var(--ddd-border-subtle);
+  }
+  .ddd-merge-bar__apply { margin-left: auto; }
+  /* Compact two-line bulk buttons: "All" over a git conflict-marker glyph (<<< current / >>> incoming);
+     the full action is in the Tooltip. flex-direction/gap aren't set by the secondary variant utilities,
+     so a component rule applies cleanly. */
+  .ddd-merge-bulk {
+    flex-direction: column;
+    gap: 0;
+    line-height: var(--ddd-leading-tight);
+  }
+  .ddd-merge-bulk__all {
+    font-size: var(--ddd-text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-merge-bulk__sym {
+    font-family: var(--ddd-font-mono);
+    font-size: var(--ddd-text-base);
+    letter-spacing: 1px;
+  }
+
+  /* Segmented [Review all | Step through] toggle. */
+  .ddd-merge-bar__tabs { display: flex; gap: var(--ddd-space-2); }
+
+  /* Step-through view: prev/next + the current conflict's mine/theirs picks. */
+  .ddd-merge-step { display: flex; flex-direction: column; gap: var(--ddd-space-3); }
+  .ddd-merge-step__nav {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: var(--ddd-space-4);
+  }
+  .ddd-merge-step__pos {
+    justify-self: center;
+    text-align: center;
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .ddd-merge-step__label {
+    font-size: var(--ddd-text-base);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ddd-merge-step__choices { display: flex; gap: var(--ddd-space-3); }
+  .ddd-merge-step__choices > * { flex: 1; }
+  /* Cross-highlight: the matching button glows when its ghost is hovered on the canvas. */
+  .ddd-merge-cross {
+    outline: 1px solid var(--ddd-accent);
+    outline-offset: 1px;
+    box-shadow: var(--ddd-shadow-focus);
+  }
+
 }
 
 /* ============================================================================
@@ -1312,32 +2206,7 @@
   body.ddd-is-edge-dragging {
     cursor: grabbing !important;
   }
-  body.ddd-is-edge-dragging .ddd-edge-waypoint {
-    cursor: grabbing;
-  }
 
-  /* ----- Toggle buttons ----- */
-  .ddd-actions-btn.is-active {
-    background: var(--ddd-accent);
-    color: var(--ddd-fg-on-accent);
-    border-color: var(--ddd-accent);
-  }
-  .ddd-actions-btn.is-active:hover {
-    background: var(--ddd-accent-hover);
-    border-color: var(--ddd-accent-hover);
-  }
-  .ddd-icon-btn.is-on {
-    color: var(--ddd-accent);
-  }
-  .ddd-icon-btn.is-off {
-    opacity: 0.55;
-  }
-  .ddd-group-btn.is-on {
-    color: var(--ddd-accent);
-  }
-  .ddd-group-btn.is-off {
-    opacity: 0.5;
-  }
   .ddd-radio.is-disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -1415,12 +2284,45 @@
   }
 }
 
+/* Button tooltip — fade + slight rise (inner element; outer owns the placement transform). */
+@keyframes ddd-tip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Staggered tool entrance when the floating action bar expands. */
+@keyframes ddd-tool-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* App menu — fade + slight drop from the trigger source. */
+@keyframes ddd-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Marching dots along an edge — negative offset + the path drawn M source…L target makes the dots
+   travel in the relation's direction (source -> target). The offset is a LITERAL equal to one dash
+   period — which, since the dash is 0, is just --ddd-edge-flow-gap — so the wrap is seamless (offset
+   0 and -gap render identically), no jump. IMPORTANT: a CSS var()/calc() here does NOT animate
+   (Chromium freezes a stroke-dashoffset keyframe that contains var/calc), so this MUST stay a literal
+   equal to -(--ddd-edge-flow-gap). Change the gap token → change this number too. */
+@keyframes ddd-edge-flow {
+  to { stroke-dashoffset: -42; } /* == -(--ddd-edge-flow-gap) */
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0ms !important;
+  }
+  /* The flow overlay carries no meaning frozen — hide it rather than leave a static dashed line. */
+  .ddd-edges path.ddd-edge-flow {
+    display: none;
   }
 }

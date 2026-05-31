@@ -1,83 +1,106 @@
 import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
-import { schedulePersist } from '../persistence';
-import { IconChevronDown, IconChevronUp, IconFilter, IconGoToFile, IconRedo, IconSettings, IconUndo } from '../icons';
+import { postToHost } from '../vscode';
+import { Button } from '../ui/Button';
+import { Tooltip } from '../ui/Tooltip';
+import { ContextMenu, clampMenuAnchor, type ContextMenuItem } from './contextMenu';
+import { runSmartLayout } from '../layout/smartLayout';
+import {
+  IconAutoArrange,
+  IconChevronDown,
+  IconChevronUp,
+  IconGoToFile,
+  IconMagnet,
+  IconSearch,
+  IconSettings,
+} from '../icons';
 
 /**
- * Floating bottom-center actions panel. Footer row (undo/redo + chevron) is always visible.
- * Remaining actions (filter, export, settings) expand above when open.
+ * Floating bottom-center tool bar. Collapses to a single chevron handle and expands to one row of
+ * fixed-size icon buttons (each with a styled Tooltip). Auto-arrange opens a popover (reusing the
+ * generic ContextMenu) for its scope options. Undo/redo live in the zoom cluster and the PK/FK view
+ * filter lives in Diagram Views — see spec 12 / spec 06.
  */
 export function ActionsPanel() {
   const [open, setOpen] = useState(false);
-  const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
-  const pastLen = useAppStore((s) => s.past.length);
-  const futureLen = useAppStore((s) => s.future.length);
+  const [arrangeMenu, setArrangeMenu] = useState<{ x: number; y: number } | null>(null);
+  const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
+  const selCount = useAppStore((s) => s.selection.size);
 
-  const undo = () => {
-    if (store.getState().past.length === 0) return;
-    store.getState().undo();
-    schedulePersist();
+  const arrange = (mode: 'all' | 'new' | 'selection') => {
+    void runSmartLayout(mode);
+    setArrangeMenu(null);
   };
-  const redo = () => {
-    if (store.getState().future.length === 0) return;
-    store.getState().redo();
-    schedulePersist();
+
+  // Anchor the popover just above the auto-arrange button (the bar sits at the bottom).
+  const openArrangeMenu = (e: MouseEvent) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const estHeight = 104;
+    const { x, y } = clampMenuAnchor(r.left, r.top - 8 - estHeight, 200, estHeight);
+    setArrangeMenu({ x, y });
   };
+
+  const arrangeItems: ContextMenuItem[] = [
+    { label: 'Re-arrange all', onClick: () => arrange('all') },
+    { label: 'Place new tables', onClick: () => arrange('new') },
+    { label: `Re-arrange selection (${selCount})`, onClick: () => arrange('selection'), disabled: selCount === 0 },
+  ];
+
+  if (!open) {
+    return (
+      <div class="ddd-actions-bar is-collapsed">
+        <Tooltip label="Show tools">
+          <Button variant="subtle" size="tool" onClick={() => setOpen(true)}>
+            <IconChevronUp size={14} />
+          </Button>
+        </Tooltip>
+      </div>
+    );
+  }
 
   return (
-    <div class={`ddd-actions-panel ${open ? 'is-open' : 'is-closed'}`}>
-      <div class="ddd-actions-panel__footer">
-        <button
-          class="ddd-hist-btn"
-          disabled={pastLen === 0}
-          onClick={undo}
-          title="Undo (Ctrl+Z)"
-        >
-          <IconUndo size={13} />
-        </button>
-        <button
-          class="ddd-hist-btn"
-          disabled={futureLen === 0}
-          onClick={redo}
-          title="Redo (Ctrl+Shift+Z)"
-        >
-          <IconRedo size={13} />
-        </button>
-        <button
-          class="ddd-actions-panel__handle"
-          onClick={() => setOpen(!open)}
-          title={open ? 'Hide actions' : 'Show actions'}
-        >
-          {open ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
-        </button>
+    <div class="ddd-actions-bar is-expanded">
+      <div class="ddd-actions-bar__row">
+        <Tooltip label="Auto-arrange">
+          <Button variant="subtle" size="tool" active={arrangeMenu !== null} onClick={openArrangeMenu}>
+            <IconAutoArrange size={14} />
+          </Button>
+        </Tooltip>
+        <Tooltip label={snapToGrid ? 'Snap to grid: on' : 'Snap to grid: off'}>
+          <Button
+            variant="subtle"
+            size="tool"
+            active={snapToGrid}
+            onClick={() => postToHost({ type: 'settings:update', payload: { 'ui.snapToGrid': !snapToGrid } })}
+          >
+            <IconMagnet size={14} />
+          </Button>
+        </Tooltip>
+        <Tooltip label="Search tables & groups">
+          <Button variant="subtle" size="tool" onClick={() => store.getState().openViewsAndFocusSearch()}>
+            <IconSearch size={14} />
+          </Button>
+        </Tooltip>
+        <span class="ddd-actions-bar__divider" aria-hidden="true" />
+        <Tooltip label="Export…">
+          <Button variant="subtle" size="tool" onClick={() => store.getState().setExportPromptOpen(true)}>
+            <IconGoToFile size={14} />
+          </Button>
+        </Tooltip>
+        <Tooltip label="Settings">
+          <Button variant="subtle" size="tool" onClick={() => store.getState().setSettingsPanelOpen(true)}>
+            <IconSettings size={14} />
+          </Button>
+        </Tooltip>
+        <span class="ddd-actions-bar__divider" aria-hidden="true" />
+        <Tooltip label="Hide tools">
+          <Button variant="subtle" size="tool" onClick={() => setOpen(false)}>
+            <IconChevronDown size={14} />
+          </Button>
+        </Tooltip>
       </div>
-      {open ? (
-        <div class="ddd-actions-panel__body">
-          <button
-            class={`ddd-actions-btn ${showOnlyPkFk ? 'is-active' : ''}`}
-            onClick={() => store.getState().toggleShowOnlyPkFk()}
-            title="Toggle PK/FK-only column view"
-          >
-            <IconFilter size={12} />
-            <span>{showOnlyPkFk ? 'Show all columns' : 'PK/FK only'}</span>
-          </button>
-          <button
-            class="ddd-actions-btn"
-            onClick={() => store.getState().setExportPromptOpen(true)}
-            title="Export schema to TypeORM (or other formats)"
-          >
-            <IconGoToFile size={12} />
-            <span>Export…</span>
-          </button>
-          <button
-            class="ddd-actions-btn"
-            onClick={() => store.getState().setSettingsPanelOpen(true)}
-            title="Open settings"
-          >
-            <IconSettings size={12} />
-            <span>Settings</span>
-          </button>
-        </div>
+      {arrangeMenu ? (
+        <ContextMenu x={arrangeMenu.x} y={arrangeMenu.y} items={arrangeItems} onClose={() => setArrangeMenu(null)} />
       ) : null}
     </div>
   );

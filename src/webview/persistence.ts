@@ -1,4 +1,4 @@
-import { store, toTableLayoutRecord } from './state/store';
+import { store, toTableLayoutRecord, isCanvasReadOnly } from './state/store';
 import { postToHost } from './vscode';
 import type { EdgeLayout } from '../shared/types';
 
@@ -14,6 +14,9 @@ let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const PERSIST_DEBOUNCE_MS = 300;
 
 export function schedulePersist(): void {
+  // Read-only canvas (spec 14/16): a merge shows a provisional layout that must NOT be written
+  // until applied; a git overlay (time-travel/diff) shows a past/other revision. Drop every persist.
+  if (isCanvasReadOnly(store.getState())) return;
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     persistTimer = null;
@@ -28,7 +31,12 @@ export function schedulePersist(): void {
         if (v.dx !== undefined) e.dx = v.dx;
         if (v.dy !== undefined) e.dy = v.dy;
       }
-      if (e.waypoints || e.dx !== undefined || e.dy !== undefined) edges[id] = e;
+      if (v.color) e.color = v.color;
+      if (v.sourceSide) e.sourceSide = v.sourceSide;
+      if (v.targetSide) e.targetSide = v.targetSide;
+      if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
+        edges[id] = e;
+      }
     }
     postToHost({
       type: 'layout:persist',

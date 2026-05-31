@@ -1,9 +1,28 @@
 /// <reference types="vitest" />
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'path';
+import { copyFileSync } from 'fs';
+
+// Copy the codicon font + stylesheet into the webview dist root after each bundle.
+// They must live under dist/webview because that is the panel's only localResourceRoot
+// (see panel.ts), and emptyOutDir wipes the dir every build — so copy on closeBundle,
+// which fires in both `vite build` and `vite build --watch`.
+function copyCodicons(): Plugin {
+  const src = resolve(__dirname, 'node_modules/@vscode/codicons/dist');
+  const out = resolve(__dirname, 'dist/webview');
+  return {
+    name: 'copy-codicons',
+    closeBundle() {
+      copyFileSync(resolve(src, 'codicon.css'), resolve(out, 'codicon.css'));
+      copyFileSync(resolve(src, 'codicon.ttf'), resolve(out, 'codicon.ttf'));
+    },
+  };
+}
 
 export default defineConfig({
   root: resolve(__dirname, 'src/webview'),
+  plugins: [tailwindcss(), copyCodicons()],
   resolve: {
     alias: {
       react: 'preact/compat',
