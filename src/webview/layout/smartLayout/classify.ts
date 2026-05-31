@@ -2,7 +2,7 @@ import type { QualifiedName, Ref, Table } from '../../../shared/types';
 
 /**
  * Database-aware role classification — the "brain" of smart auto-layout, fully
- * engine-agnostic. The geometry engine (ELK) never sees these roles; they drive
+ * engine-agnostic. The geometry engine (dagre) never sees these roles; they drive
  * clustering and radial placement (see cluster.ts, layout.ts).
  */
 export type Role =

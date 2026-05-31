@@ -9,7 +9,7 @@ describe('flattenSettings', () => {
       zoomMin: 0.1,
       zoomMax: 8,
       lod: { lowThreshold: 0.22 },
-      ui: { density: 'compact', snapToGrid: true, gridSize: 24 },
+      ui: { density: 'compact', snapToGrid: true, gridSize: 24, layoutSpacing: 1.3 },
       export: {
         defaultFormat: 'sql',
         typeorm: { dialect: 'mysql', singularize: false, includeImports: false, emitNullableExplicit: false },
@@ -23,6 +23,7 @@ describe('flattenSettings', () => {
       'ui.density': 'compact',
       'ui.snapToGrid': true,
       'ui.gridSize': 24,
+      'ui.layoutSpacing': 1.3,
       'export.defaultFormat': 'sql',
       'export.typeorm.dialect': 'mysql',
       'export.typeorm.singularize': false,

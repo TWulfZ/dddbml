@@ -4,6 +4,7 @@ import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { Modal } from '../ui/Modal';
 import { NumberField, TextField, Checkbox } from '../ui/Field';
+import { Slider } from '../ui/Slider';
 import { RadioGroup } from '../ui/RadioGroup';
 import { Button } from '../ui/Button';
 import { HoverCard } from '../ui/HoverCard';
@@ -22,7 +23,7 @@ const CATEGORIES: { id: Category; label: string; icon: VNode }[] = [
 ];
 
 const CATEGORY_KEYS: Record<Category, PatchKey[]> = {
-  interface: ['ui.density', 'ui.snapToGrid', 'ui.gridSize'],
+  interface: ['ui.density', 'ui.snapToGrid', 'ui.gridSize', 'ui.layoutSpacing'],
   viewport: ['zoomStep', 'zoomMin', 'zoomMax'],
   lod: ['lod.lowThreshold'],
   export: [
@@ -113,6 +114,18 @@ export function SettingsPanel() {
                 max={128}
                 step={2}
                 onCommit={(v) => apply('ui.gridSize', v)}
+              />
+              <Slider
+                label="Layout spacing"
+                hint="Auto-arrange density. Lower packs tables and groups tighter; higher spreads them out. Applies on the next auto-arrange."
+                value={settings.ui.layoutSpacing}
+                min={0.4}
+                max={2.5}
+                step={0.1}
+                minLabel="Compact"
+                maxLabel="Spacious"
+                format={(v) => v.toFixed(1)}
+                onCommit={(v) => apply('ui.layoutSpacing', v)}
               />
             </Section>
           ) : null}

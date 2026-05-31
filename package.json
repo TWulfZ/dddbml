@@ -198,6 +198,13 @@
           "maximum": 128,
           "description": "World-unit spacing of the snap grid used when magnet mode (ui.snapToGrid) is on."
         },
+        "dddbml.ui.layoutSpacing": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0.4,
+          "maximum": 2.5,
+          "description": "Smart auto-layout density. Below 1 packs tables and groups tighter; above 1 spreads them out. Applied on the next auto-arrange."
+        },
         "dddbml.export.defaultFormat": {
           "type": "string",
           "default": "typeorm",
@@ -253,7 +260,6 @@
     "@vscode/codicons": "^0.0.45",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "elkjs": "^0.11.1",
     "preact": "^10.22.0",
     "zustand": "^5.0.0"
   },

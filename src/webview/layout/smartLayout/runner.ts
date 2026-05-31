@@ -11,8 +11,9 @@ import { computeEdgeResets, computeSelectionEdgeResets, movedNames } from './edg
  * Host glue: read state → run smart layout → reset stranded edge waypoints → batch-apply
  * positions + edge resets as a single undoable ArrangeCommand → schedule persist.
  *
- * Async because ELK is async. Snapshots are taken BEFORE the await so undo restores the
- * exact pre-arrange state even if the store changed meanwhile (it won't — single-threaded).
+ * `smartLayout` (dagre two-level) is synchronous. The function stays `async` for a stable API
+ * (and forward-compat with edge ordering, spec 05 §9). Snapshots are taken before mutating the
+ * store so the ArrangeCommand restores the exact pre-arrange state.
  */
 export async function runSmartLayout(mode: SmartLayoutMode): Promise<void> {
   const s = store.getState();
@@ -28,7 +29,7 @@ export async function runSmartLayout(mode: SmartLayoutMode): Promise<void> {
 
   let result: Map<QualifiedName, { x: number; y: number }>;
   try {
-    result = await smartLayout({
+    result = smartLayout({
       tables: s.schema.tables,
       refs: s.schema.refs,
       groups: s.schema.groups,
@@ -36,6 +37,7 @@ export async function runSmartLayout(mode: SmartLayoutMode): Promise<void> {
       mode,
       existing: before,
       selection: s.selection,
+      spacing: s.settings.ui.layoutSpacing,
     });
   } catch (err) {
     postToHost({

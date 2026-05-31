@@ -226,6 +226,11 @@ export interface AppSettings {
     snapToGrid: boolean;
     /** World-unit grid spacing used when `snapToGrid` is on. */
     gridSize: number;
+    /**
+     * Smart auto-layout density multiplier. 1 = default; <1 packs tighter, >1 spreads out.
+     * Scales all separations + the cluster-compaction gap. Read at auto-arrange time. See specs/13.
+     */
+    layoutSpacing: number;
   };
   export: {
     defaultFormat: string;
@@ -244,7 +249,7 @@ export function defaultSettings(): AppSettings {
     zoomMin: 0.08,
     zoomMax: 4,
     lod: { lowThreshold: 0.3 },
-    ui: { density: 'cozy', snapToGrid: false, gridSize: 16 },
+    ui: { density: 'cozy', snapToGrid: false, gridSize: 16, layoutSpacing: 1 },
     export: {
       defaultFormat: 'typeorm',
       typeorm: {
@@ -321,6 +326,7 @@ export interface FlatSettingsPatch {
   'ui.density': UiDensity;
   'ui.snapToGrid': boolean;
   'ui.gridSize': number;
+  'ui.layoutSpacing': number;
   'export.defaultFormat': string;
   'export.typeorm.dialect': string;
   'export.typeorm.singularize': boolean;
@@ -342,6 +348,7 @@ export function flattenSettings(s: AppSettings): FlatSettingsPatch {
     'ui.density': s.ui.density,
     'ui.snapToGrid': s.ui.snapToGrid,
     'ui.gridSize': s.ui.gridSize,
+    'ui.layoutSpacing': s.ui.layoutSpacing,
     'export.defaultFormat': s.export.defaultFormat,
     'export.typeorm.dialect': s.export.typeorm.dialect,
     'export.typeorm.singularize': s.export.typeorm.singularize,

@@ -92,7 +92,7 @@ export function routeRefs(
   }
 
   // 2. group by (table, side) to compute port offsets
-  type Group = Array<{ edgeIdx: number; role: 'source' | 'target'; otherCenter: number; orientation: 'h' | 'v' }>;
+  type Group = Array<{ edgeIdx: number; role: 'source' | 'target'; otherCenter: number; refId: string; orientation: 'h' | 'v' }>;
   const groups = new Map<string, Group>();
 
   for (let i = 0; i < decisions.length; i++) {
@@ -110,11 +110,15 @@ export function routeRefs(
     const srcOther = srcOrientation === 'v' ? tgtCenter.y : tgtCenter.x;
     const tgtOther = tgtOrientation === 'v' ? srcCenter.y : srcCenter.x;
 
-    pushGroup(groups, srcKey, { edgeIdx: i, role: 'source', otherCenter: srcOther, orientation: srcOrientation });
-    pushGroup(groups, tgtKey, { edgeIdx: i, role: 'target', otherCenter: tgtOther, orientation: tgtOrientation });
+    pushGroup(groups, srcKey, { edgeIdx: i, role: 'source', otherCenter: srcOther, refId: d.ref.id, orientation: srcOrientation });
+    pushGroup(groups, tgtKey, { edgeIdx: i, role: 'target', otherCenter: tgtOther, refId: d.ref.id, orientation: tgtOrientation });
   }
 
-  // 3. assign port ratios: sort group by otherCenter, evenly distribute
+  // 3. assign port ratios: sort group by the other endpoint's center (barycentric crossing
+  // reduction — the edge whose far end sits higher/left gets the higher/left port), then
+  // distribute evenly. Tie-break by ref id so the assignment depends only on geometry + stable
+  // ids, never on the refs[] array order (which @dbml/core can shuffle on re-parse) — preserving
+  // the git-friendly invariant that the same schema yields the same routed ports.
   const portAssign: PortAssignment[] = decisions.map(() => ({
     sourceSide: 'right',
     targetSide: 'left',
@@ -123,7 +127,7 @@ export function routeRefs(
   }));
 
   for (const [, entries] of groups) {
-    entries.sort((a, b) => a.otherCenter - b.otherCenter);
+    entries.sort((a, b) => (a.otherCenter - b.otherCenter) || (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0));
     const count = entries.length;
     for (let i = 0; i < count; i++) {
       const entry = entries[i]!;
@@ -557,9 +561,9 @@ export function deleteNotch(route: EdgeRoute, segIndex: number): Waypoint[] {
 }
 
 function pushGroup(
-  groups: Map<string, Array<{ edgeIdx: number; role: 'source' | 'target'; otherCenter: number; orientation: 'h' | 'v' }>>,
+  groups: Map<string, Array<{ edgeIdx: number; role: 'source' | 'target'; otherCenter: number; refId: string; orientation: 'h' | 'v' }>>,
   key: string,
-  entry: { edgeIdx: number; role: 'source' | 'target'; otherCenter: number; orientation: 'h' | 'v' },
+  entry: { edgeIdx: number; role: 'source' | 'target'; otherCenter: number; refId: string; orientation: 'h' | 'v' },
 ): void {
   let arr = groups.get(key);
   if (!arr) {

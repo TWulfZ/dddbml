@@ -51,22 +51,27 @@ requestAnimationFrame(tick);
 
 | Artefacto | Budget | Actual |
 |---|---|---|
-| `dist/webview/webview.js` (gzipped) | < 40kb (pre-ELK) | ~29kb post-M2 · **~644kb con ELK** (excepción consciente) |
-| `dist/webview/webview.js` (uncompressed) | < 200kb (pre-ELK) | ~106kb post-M2 · ~3.7MB con ELK |
+| `dist/webview/webview.js` (gzipped) | < 40kb (objetivo histórico) | ~29kb post-M2 · **~88kb** (sin ELK, con smart-layout dagre) |
+| `dist/webview/webview.js` (uncompressed) | < 200kb (objetivo histórico) | ~106kb post-M2 · ~410kb |
 | `dist/extension/**` (uncompressed) | < 50kb | tbd |
 
-> **Excepción de bundle — smart auto-layout (ELK), v0.3.** El presupuesto original
-> (<40kb gz) asumía sólo dagre. El motor ELK (`elkjs`) añade ~600kb gz al webview.
-> Se aceptó conscientemente (el usuario: la app ya pesa ~10MB y herramientas DBML
-> pares pesan +10MB; +1MB no afecta) a cambio de un layout compound de mucha mayor
-> calidad para diagramas agrupados (ver `specs/13-smart-auto-layout.md`). El webview
-> se empaqueta como un único IIFE, así que ELK no se puede code-split a un chunk lazy
-> con el target actual. Mantener el resto del webview lean; el peso extra es sólo ELK.
+> **ELK eliminado — motor de layout = dagre dos niveles (v0.3.x, 2026-05-31).** El smart
+> auto-layout usaba `elkjs` (compound) como motor de geometría. `elkjs` pesaba ~468kb gz (~71%
+> del webview). Se **eliminó** y se reemplazó por un motor **dagre de dos niveles** (dagre interno
+> por clúster + dagre externo sobre los clústeres como meta-nodos; ver `specs/13`). `dagre` ya
+> estaba en el bundle (fallback `autoLayout()`), así que el nuevo motor **no agrega bytes**. El
+> cerebro de BD (classify/cluster/radial/columnAlign/collisionGuard) es agnóstico del motor y se
+> conservó intacto. Motivo: ELK sólo daba ~10% más de compacidad sobre dagre dos-niveles en
+> esquemas agrupados (verificado por el usuario) — no justifica 468kb. La densidad vs ELK es un
+> factor constante en las separaciones, ahora **configurable por el usuario** (`spacing`, ver
+> `specs/13` y `specs/10`). Esto revierte la "excepción consciente de bundle (ELK)" anterior.
+> *(Intentos intermedios descartados en la misma sesión: lazy-load de ELK como asset aparte —
+> innecesario una vez que el motor se reemplaza.)*
 
 Librerías pesadas (cuidado):
 - `@dbml/core` corre sólo en host → no afecta webview.
-- `@dagrejs/dagre` corre en webview (fallback `autoLayout()`) → ~30kb gzipped.
-- `elkjs` corre en webview (smart auto-layout) → ~600kb gzipped. Excepción consciente (arriba). Layout medido en huge.dbml ~2.57s < 3s. Si se nota jank, mover a Web Worker (v1.1).
+- `@dagrejs/dagre` corre en webview (fallback `autoLayout()`) → ~30kb gzipped, bundleado (se usa siempre).
+- `elkjs` corre en webview (smart auto-layout) → ~468kb gzipped, **lazy asset aparte** (arriba), fuera del parse inicial. Layout medido en huge.dbml ~2.57s < 3s. Si se nota jank, mover a Web Worker (v1.1, `elkjs` worker build + `worker-src` en CSP).
 
 ## Regresiones conocidas a vigilar
 

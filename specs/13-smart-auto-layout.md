@@ -30,6 +30,9 @@ context. ~80% de "buen orden de BD" son las heurísticas propias; ~20% es el mot
   reemplazando el "fake hierarchy" de dagre (meta-dagre + colisión AABB manual + expansión de caja
   manual). El peso del bundle **no** es restricción (la app ya pesa ~10MB; herramientas DBML pares
   también >10MB). (acordado con el usuario, 2026-05-29)
+  - *Follow-up (2026-05-31):* la decisión de **usar** ELK se mantiene; pero como pesa ~71% del
+    webview, se sacó del parse inicial vía **carga lazy** (asset aparte + `<script>` on-demand, ver
+    "Carga lazy de ELK" abajo y `specs/07`). Abrir sin auto-ordenar ya no paga el costo de ELK.
 - [x] **Riqueza de colocación específica de BD.** → **Decisión: heurísticas + colocación radial.**
   classify/cluster + alineación de columnas FK + **colocación radial/estrella dedicada** para
   clústeres hub+satélites (hub al centro, satélites en anillo ordenados por `inDeg`). (2026-05-29)
@@ -96,16 +99,37 @@ garantiza "cada tabla en exactamente un clúster". Fases en orden (saltando lo y
 5. Componentes conexos sobre el subgrafo restante (DFS). Nodo aislado (totalDeg 0) → orphans.
 6. Orphans: un único clúster para islas.
 
-### Motor de geometría: ELK compound (`layoutEngine.ts`)
+### Motor de geometría: dagre de dos niveles (`layout.ts`)
 
-Wrapper async delgado sobre `elkjs` (`elk.bundled.js`). Convierte nuestro modelo
-nodo/arista/contenedor a un grafo ELK compound, llama `await elk.layout(graph)` con
-`elk.algorithm = layered`, `hierarchyHandling = INCLUDE_CHILDREN`, dirección DOWN/RIGHT según
-orientación, y **aplana** las coordenadas relativas-al-padre de ELK a coordenadas de mundo absolutas
-(acumulando el offset de la cadena de padres). Aísla el motor (un único módulo para un futuro swap).
+El motor de geometría es **dagre** (ya en el bundle), usado en **dos niveles**, todo síncrono e
+inline en `layout.ts` (no hay módulo wrapper de motor — dagre no se va a volver a cambiar):
 
-> ELK devuelve **esquinas superiores-izquierdas relativas al contenedor padre**; el flatten suma el
-> origen del padre recursivamente. Es el paso más propenso a error del port → se prueba aislado.
+1. **Nivel interno (`layoutClusterLocal`)** — un grafo dagre por clúster: sus tablas como nodos, los
+   refs intra-clúster como aristas (`child→parent`), `rankdir` por clúster (`pickClusterOrientation`:
+   clústeres ≤3 → LR; cadenas FK profundas → TB; si no, hereda el global). Se normaliza a un bbox de
+   origen 0 y se devuelve `{positions, bbox}`.
+2. **Nivel externo (`layoutMeta`)** — un grafo dagre sobre los **clústeres como meta-nodos** (tamaño =
+   bbox del clúster + `clusterMargin`·2); los refs cross-clúster se agregan como aristas ponderadas
+   por conteo. dagre da el origen de cada clúster; se **aplana** sumando el origen del clúster a las
+   coords locales de sus tablas.
+
+Los clústeres **aggregate** (hub+satélites) saltan el dagre interno y usan `radialPlace` (hub al
+centro, satélites en anillo ordenado por `inDeg` asc, empate por nombre) → su bbox entra al nivel
+externo como cualquier otro meta-nodo. Tras aplanar: `columnAlignPass` (alineación FK determinista) +
+`resolveCollisions` (red AABB). Sólo se consumen posiciones `{x,y}` de tablas; las aristas las rutea
+`edgeRouter.ts` (spec 05).
+
+> **Densidad configurable (`spacing`).** dagre dos-niveles queda ~10% más suelto que ELK compound (un
+> factor constante en las separaciones, no un defecto estructural). En vez de un post-pass de
+> compactación frágil (un intento de "pull al centroide" se descartó por **reordenar** clústeres y
+> romper la lectura por niveles), se expone un **multiplicador `spacing`** (`SmartLayoutInput.spacing`,
+> default 1, clamp `[0.4, 2.5]`) que escala todas las separaciones/márgenes (`computeSeps`). El usuario
+> lo controla vía `dddbml.ui.layoutSpacing` (spec 10). Bajarlo recupera (y supera) la compacidad de
+> ELK; subirlo da diagramas más aireados. Determinista (seps redondeadas a enteros).
+>
+> *Trade-off documentado:* un re-pack 2D de las cajas de clúster sería más compacto aún, pero
+> sacrifica la lectura por niveles (clústeres ordenados por profundidad FK) que hace legible el
+> diagrama. Se prioriza legibilidad + control del usuario sobre densidad máxima automática.
 
 ### Orquestación (`layout.ts`)
 

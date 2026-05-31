@@ -142,8 +142,12 @@ Para cada ref, dado bbox source y target:
 source=left, target=right. (Override manual: ver §4.)
 
 **Distribuir ports** en cada lado: agrupar por `(table, side)`, sortar por el
-otro extremo, asignar `ratio = (i+1)/(n+1)` (equidistante, sin tocar esquinas;
-clamp `[0.05, 0.95]`). Alinear `y` del puerto a la fila de la columna PK/FK vía
+otro extremo (reducción baricéntrica de cruces: la arista cuyo extremo lejano está
+más arriba/izquierda recibe el puerto más arriba/izquierda), **desempate por `ref.id`**
+para que la asignación dependa sólo de geometría + ids estables, nunca del orden del
+array `refs[]` (que `@dbml/core` puede reordenar al re-parsear — invariante git-friendly:
+mismo schema ⇒ mismos puertos). Asignar `ratio = (i+1)/(n+1)` (equidistante, sin tocar
+esquinas; clamp `[0.05, 0.95]`). Alinear `y` del puerto a la fila de la columna PK/FK vía
 `columnYResolver` (`columnCenterY`).
 
 **Computar path** (`buildPath`): polilínea ortogonal de ejes alternados. El
@@ -306,9 +310,105 @@ Implementación: `app.tsx` (memo `visibleRefIds`; pasa `refs=effectiveRefs`,
 `visibleRoutes`; rama low-zoom; overlay seleccionada-only + `.ddd-edge-hit`);
 `style.css` (`.ddd-edge-hit`). Presupuesto y regresiones a vigilar: spec 07.
 
+### 9. Ordenamiento automático de aristas (edge ordering) — DRAFT, pendiente de aprobación
+
+> **Estado:** diseño propuesto (2026-05-31). Resuelve "ordenar los edges de las relaciones de forma
+> más limpia". **Preguntas abiertas resueltas con el usuario** (ver "Decisiones" abajo); listo para
+> revisión final del spec antes de codificar.
+
+**Objetivo del usuario (4 metas):** menos cruces de aristas paralelas, espaciado uniforme en cada
+lado, mejor selección de lado (hoy `chooseSides` fuerza izq/der), y menos cruces arista↔tabla
+(obstacle avoidance). El ordenamiento **no es en tiempo real**: es una operación on-demand,
+deshacible y persistida (escribe `EdgeLayout`), con indicador de progreso porque puede tardar.
+
+**Disparo (acordado con el usuario):** vive en el **mismo botón/superficies de `runSmartLayout`**
+(command palette + ActionsPanel + menú contextual, patrón spec 13). Al auto-ordenar tablas, el
+**ordenamiento de aristas viene activado por defecto** (toggle para desactivarlo). Además, el mismo
+control ofrece **"ordenar sólo aristas"** (las tablas no se mueven). En cada corrida el usuario elige
+**alcance**: re-ordenar **todas** las aristas o **preservar las que ya modificó** manualmente
+(default: preservar).
+
+#### Arquitectura: UN router A* para todas las aristas; ELK sólo posiciona tablas
+
+Decisión clave (usuario, 2026-05-31): **un único router ortogonal A* con evición de obstáculos** rutea
+**todas** las aristas, sobre las posiciones **finales** de las tablas — sirva el arrange (tablas
+recién movidas) o el modo "sólo aristas" (tablas fijas). **ELK no rutea aristas**: sigue siendo sólo
+el motor de **posición de tablas** (`smartLayout`, spec 13); sus `edge.sections` se descartan como
+hoy. Se rechazó usar el ruteo de ELK porque (a) su obstacle-avoidance es intrínseco al algoritmo
+`layered` y **no** funciona con tablas fijas (modo "sólo aristas"), y (b) tener dos routers según modo
+duplica superficie + obliga a reconciliar los puertos de ELK con nuestro anclaje `columnYResolver`. Un
+solo router respeta nativamente los stubs rígidos (decisión 7) y el anclaje a fila de columna PK/FK.
+
+**Dos planos de trabajo, distinta cadencia:**
+
+1. **Calidad de puertos — SIEMPRE activa, barata (E2).** Mejora en el seam de asignación de puertos
+   existente de `routeRefs` (§1 "Distribuir ports"), sin comando: sort baricéntrico con **desempate
+   estable** determinista (menos cruces de aristas paralelas en un lado), **espaciado uniforme**, y
+   **selección de lado ampliada a top/bottom** (E3). Sigue O(aristas), memoizada, corre en cada cambio
+   de geometría como hoy. El tramo medio queda en el H-V-H por defecto (sin A* en el camino caliente).
+2. **Ruteo A* obstacle-avoiding — ON-DEMAND, costoso (E1).** El comando "ordenar aristas" corre A*
+   sobre una grilla (reusa el `spatialIndex` para marcar celdas-obstáculo de las tablas) entre
+   `sourceStub` y `targetStub` de cada arista, penalizando cruces con otras aristas ya ruteadas
+   (crossing-min incremental). Produce bend-points → `EdgeLayout.waypoints` (esquinas literales, §3),
+   que el ruteo base ya envuelve con stubs + fillets. **No** corre por frame ni en `routeRefs`: se
+   ejecuta sólo al activar el comando, persiste, y luego `routeRefs` simplemente dibuja a través de los
+   waypoints guardados (`cornersThrough`). Funciona con tablas fijas (lo que ELK no daba).
+
+**Mapeo al modelo existente (sin cambio de schema del sidecar):**
+- Bend-points de A* (coords world) → `EdgeLayout.waypoints` (§3). Los stubs rígidos + fillets se
+  aplican sin cambios; el anclaje de puerto a la fila PK/FK (`columnYResolver`, §1) se conserva en los
+  extremos (A* rutea entre los stubs, no toca los puertos).
+- Selección de lado → `EdgeLayout.sourceSide`/`targetSide`. **Se amplía el tipo a
+  `'left' | 'right' | 'top' | 'bottom'`** (E3); `portPoint` ya dibuja los 4 lados, falta extender
+  `chooseSides` + el serializador (`persistence.ts`, omitir defaults, git-friendly).
+
+**Integración con el runner (`runner.ts`, spec 13):** hoy el arrange **limpia** los waypoints de
+aristas cuyos dos extremos se movieron (para que `columnYResolver` re-rutee limpio). Con edge-ordering
+ON, en vez de limpiar se **setean** los waypoints con la salida de A*. Reusa el snapshot de aristas que
+el `ArrangeCommand` **ya** transporta (`edgesFrom`/`edgesTo`) → un único Ctrl+Z revierte tablas +
+aristas, como ya ocurre. `preservar manuales` ⇒ se excluyen del re-ruteo las aristas con forma manual
+previa (waypoints/sides/dx-dy).
+
+**Tipos/opciones nuevas (propuesto):** opciones de arrange `orderEdges: boolean` (default `true`) y
+`preserveManualEdges: boolean` (default `true`, E5); entry-point `runEdgeOrdering(preserveManual)` para
+el modo "sólo aristas" (reusa `ArrangeCommand` con posiciones vacías, patrón `buildEdgesResetCommand`).
+Determinismo: A* con costos + desempates **deterministas** (sin `Math.random`; orden de procesado de
+aristas estable por `ref.id`; bends redondeados a enteros) — invariante git-friendly.
+
+**Progreso (E4):** como **nosotros** controlamos el loop de A* (una arista a la vez), el indicador puede
+ser un **porcentaje real** (aristas ruteadas / total), no un spinner opaco — ventaja sobre el llamado
+opaco de ELK. Para no bloquear el hilo en diagramas grandes, el loop cede (yield) cada N aristas y
+emite progreso; cancelable.
+
+#### Decisiones (resueltas con el usuario, 2026-05-31)
+
+- **E1 · Router.** → **A* propio para TODAS las aristas; ELK sólo posiciona.** Da obstacle-avoidance
+  también con tablas fijas (modo "sólo aristas"). Un solo motor de aristas, sin reconciliar puertos de
+  ELK. (Reemplaza el anti-goal de spec 13 "ruteo ortogonal con min de dobleces" para el contexto del
+  comando on-demand; el camino caliente de `routeRefs` sigue sin A*.)
+- **E2 · Calidad de puertos siempre-on.** → **Sí.** Sort crossing-reduced + desempate estable +
+  espaciado uniforme entran al `routeRefs` base (gratis para todo diagrama). La selección de lado
+  persistida y el A* son la parte on-demand.
+- **E3 · Lados top/bottom.** → **Sí, ampliar** `sourceSide`/`targetSide` a `'top' | 'bottom'`.
+- **E4 · Progreso.** → **Porcentaje real** (loop A* propio, cede + emite progreso, cancelable).
+- **E5 · `preserveManualEdges`.** → **El usuario elige por corrida; default ON** (preservar).
+
+#### Presupuesto / riesgos del A*
+
+- A* obstacle-avoiding es O(aristas × celdas exploradas). En `huge` (1000 refs / 5000 tablas) debe
+  medirse contra spec 07 (objetivo análogo al de layout: < 3s, con yield + progreso). Mitigaciones:
+  resolución de grilla adaptativa, límite de nodos explorados por arista con fallback a H-V-H, y
+  procesar sólo el subconjunto a re-ordenar (no-manuales). **No** corre en el render path → no afecta
+  FPS de pan/zoom (a diferencia de `routeRefs`, que sigue barato).
+- El crossing-min de A* es **local/greedy** (penaliza cruces con lo ya ruteado), más débil que el
+  layer-sweep global de ELK. Aceptable: el usuario priorizó un router único + obstacle-avoidance en
+  tablas fijas sobre el óptimo global de cruces.
+
 ## Limitaciones conocidas
 
-1. **No evita tablas en el camino** (sin obstacle avoidance). v2.
+1. **Obstacle avoidance** llega vía el comando on-demand de edge-ordering (§9, router A* propio),
+   también con tablas fijas. El ruteo del **render path** (`routeRefs`, sin comando) sigue **sin**
+   evitar tablas — sólo dibuja a través de los waypoints que A* persistió, o el H-V-H por defecto.
 2. **Tie-break de lado** binario (45° ⇒ horizontal). Aceptable.
 3. **Self-loops** (ref de tabla a sí misma) no soportados visualmente. v1.1.
 4. **Sin curvatura** en codos (90° rígidos). v1.1 opcional.
@@ -346,3 +446,19 @@ Implementación: `app.tsx` (memo `visibleRefIds`; pasa `refs=effectiveRefs`,
 
 `history.waypoint.test.ts` / `store.history.test.ts`: undo/redo de notch (create/deepen/
 delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`move`/`remove`).
+
+**Edge ordering (§9) — test plan:**
+- **Calidad de puertos siempre-on (`edgeRouter`):** dos aristas paralelas que comparten un lado se
+  ordenan sin cruzarse (desempate estable); espaciado uniforme entre puertos del mismo lado; dos
+  corridas idénticas ⇒ salida byte-exacta (determinismo). `chooseSides` elige top/bottom cuando las
+  tablas están apiladas verticalmente (y left/right cuando están lado a lado).
+- **Router A* (`edgeOrder`/A*):** una arista cuya recta cruzaría una tabla intermedia se rutea
+  rodeándola (ningún segmento intersecta un bbox-obstáculo); ruta ortogonal; entre `sourceStub` y
+  `targetStub` (puertos/anclaje columnY intactos); determinista (mismo input ⇒ mismos bends);
+  fallback a H-V-H si se excede el límite de exploración (no crash). Progreso reportado monótono
+  0→100%.
+- **Runner / undo:** `runEdgeOrdering` empuja un único `ArrangeCommand` (posiciones vacías, sólo
+  aristas); un Ctrl+Z restaura los `EdgeLayout` previos. `orderEdges:true` en arrange setea waypoints
+  (no los limpia); `preserveManualEdges:true` deja intactas las aristas con forma manual previa.
+- **Serializador:** `sourceSide`/`targetSide` con valores `top`/`bottom` round-trip por
+  `persistence.ts`; defaults omitidos; git-friendly (claves ordenadas, enteros).

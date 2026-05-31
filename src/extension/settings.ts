@@ -19,6 +19,7 @@ export function loadSettings(): AppSettings {
       density: uiDensityOr(cfg.get<string>('ui.density'), defaults.ui.density),
       snapToGrid: boolOr(cfg.get<boolean>('ui.snapToGrid'), defaults.ui.snapToGrid),
       gridSize: numberOr(cfg.get<number>('ui.gridSize'), defaults.ui.gridSize),
+      layoutSpacing: numberOr(cfg.get<number>('ui.layoutSpacing'), defaults.ui.layoutSpacing),
     },
     export: {
       defaultFormat: stringOr(cfg.get<string>('export.defaultFormat'), defaults.export.defaultFormat),
