@@ -121,14 +121,23 @@ Tres formas de paneo, todas vía `panBy` (`render/viewport.ts`):
 `panActive = panMode || spacePan`. Cuando está activo es una **herramienta mano
 pura** (decisión de UX): arrastrar en cualquier parte panea, los clicks **no**
 seleccionan ni mueven tablas. Implementación:
-- `app.tsx onPointerDown`: panea con `e.button === 1 || (e.button === 0 && panActive)`;
-  con `panActive` se omite el marquee.
+- `app.tsx onPointerDown`: el paneo sólo arranca si el pointerdown cae en el
+  **canvas** — `target === el || target.closest('.ddd-world')`. El chrome flotante
+  (barra de zoom, menús, paneles) vive **fuera** de `.ddd-world`, así que la
+  herramienta mano nunca le roba el click (si no, no podrías ni apagar su propio
+  toggle ni usar los menús). Con `panActive` se omite el marquee.
 - `dragController.startDrag`: retorna temprano si `panActive` — **antes** de
   `stopPropagation`, para que el pointerdown burbujee al viewport y este panee.
 - Cursor: `.ddd-viewport.is-pan-mode { cursor: grab }` (clase reactiva desde
   `panActive`), `.is-panning { cursor: grabbing }` (imperativa durante el gesto;
   segura porque `panActive` no cambia a mitad de un gesto → Preact no reescribe la
   clase y no borra `is-panning`).
+
+**Foco del teclado.** Los listeners de teclado (Space-pan, undo/redo, Escape) viven
+en `window`, que sólo recibe teclas mientras el iframe del webview tiene foco — y
+pasar el cursor por el canvas no lo enfoca. Por eso el viewport (con `tabIndex=0`) se
+**enfoca en `pointerenter`** (salvo que un input/textarea/contenteditable tenga el
+foco), de modo que mantener Space sobre el canvas arma el paneo de inmediato.
 
 ### Selección
 

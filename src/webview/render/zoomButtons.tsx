@@ -12,6 +12,8 @@ export function ZoomButtons() {
   const pastLen = useAppStore((s) => s.past.length);
   const futureLen = useAppStore((s) => s.future.length);
   const panMode = useAppStore((s) => s.panMode);
+  const spacePan = useAppStore((s) => s.spacePan);
+  const panActive = panMode || spacePan;
   const getEl = () => document.querySelector<HTMLElement>('.ddd-viewport');
 
   const undo = () => {
@@ -27,6 +29,17 @@ export function ZoomButtons() {
 
   return (
     <div class="ddd-zoom">
+      <Tooltip label="Pan tool" shortcut="Space (hold)">
+        <Button
+          variant="zoom"
+          size="tool"
+          active={panActive}
+          aria-pressed={panActive}
+          onClick={() => store.getState().setPanMode(!store.getState().panMode)}
+        >
+          <IconPan size={14} />
+        </Button>
+      </Tooltip>
       <Tooltip label="Undo" shortcut="Ctrl+Z">
         <Button variant="history" size="tool" disabled={pastLen === 0} onClick={undo}>
           <IconUndo size={14} />
@@ -52,18 +65,6 @@ export function ZoomButtons() {
       <Tooltip label="Fit to content" shortcut="Ctrl+1">
         <Button variant="zoom" size="tool" onClick={() => { const el = getEl(); if (el) fitToContent(el); }}>
           <IconFitScreen size={14} />
-        </Button>
-      </Tooltip>
-      <span class="ddd-zoom__divider" aria-hidden="true" />
-      <Tooltip label="Pan tool" shortcut="Space">
-        <Button
-          variant="zoom"
-          size="tool"
-          active={panMode}
-          aria-pressed={panMode}
-          onClick={() => store.getState().setPanMode(!store.getState().panMode)}
-        >
-          <IconPan size={14} />
         </Button>
       </Tooltip>
     </div>

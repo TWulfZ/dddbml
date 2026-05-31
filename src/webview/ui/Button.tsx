@@ -30,13 +30,14 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // toggle-able: resting colors come from compoundVariants below
+        // toggle-able: resting bg/text come from compoundVariants below (idle vs active are
+        // mutually exclusive there, so the base must NOT set bg — that would collide, no tw-merge).
         ghost:
-          'rounded-[var(--ddd-radius-sm)] border border-transparent bg-transparent ' +
+          'rounded-[var(--ddd-radius-sm)] border border-transparent ' +
           'hover:bg-[var(--ddd-surface-hover)] hover:border-[color:var(--ddd-border)] disabled:opacity-50 disabled:cursor-not-allowed',
         // like ghost but fully borderless (no hover border) — only the bg changes
         subtle:
-          'rounded-[var(--ddd-radius-sm)] border-none bg-transparent ' +
+          'rounded-[var(--ddd-radius-sm)] border-none ' +
           'hover:bg-[var(--ddd-surface-hover)] disabled:opacity-50 disabled:cursor-not-allowed',
         action:
           'rounded-[var(--ddd-radius-sm)] border gap-[var(--ddd-space-3)] px-[var(--ddd-space-5)] py-[var(--ddd-space-2)] ' +
@@ -79,11 +80,13 @@ const buttonVariants = cva(
       off: { true: 'opacity-[0.55]', false: '' },
     },
     compoundVariants: [
-      // ghost (= .ddd-icon-btn .is-on): only the text color toggles
-      { variant: 'ghost', active: false, class: 'text-[color:var(--ddd-fg)]' },
-      { variant: 'ghost', active: true, class: 'text-[color:var(--ddd-accent)]' },
-      { variant: 'subtle', active: false, class: 'text-[color:var(--ddd-fg)]' },
-      { variant: 'subtle', active: true, class: 'text-[color:var(--ddd-accent)]' },
+      // Icon toggles (ghost/subtle/history/zoom): active = background highlight ONLY. The icon
+      // keeps its normal --ddd-fg color (never tinted accent) so "active" reads as a filled chip,
+      // not a recolored glyph. Idle/active bg live in mutually-exclusive compounds → conflict-free.
+      { variant: 'ghost', active: false, class: 'bg-transparent text-[color:var(--ddd-fg)]' },
+      { variant: 'ghost', active: true, class: 'bg-[var(--ddd-surface-selected)] text-[color:var(--ddd-fg)]' },
+      { variant: 'subtle', active: false, class: 'bg-transparent text-[color:var(--ddd-fg)]' },
+      { variant: 'subtle', active: true, class: 'bg-[var(--ddd-surface-selected)] text-[color:var(--ddd-fg)]' },
       // action (= .ddd-actions-btn .is-active): full accent fill when active
       {
         variant: 'action',
@@ -97,12 +100,12 @@ const buttonVariants = cva(
           'bg-[var(--ddd-accent)] text-[color:var(--ddd-fg-on-accent)] border-[color:var(--ddd-accent)] ' +
           'hover:bg-[var(--ddd-accent-hover)] hover:border-[color:var(--ddd-accent-hover)]',
       },
-      // history (= .ddd-hist-btn .is-active): muted → accent + selected bg
+      // history (= .ddd-hist-btn): idle muted; active = selected bg, icon stays normal fg (no tint)
       { variant: 'history', active: false, class: 'bg-transparent text-[color:var(--ddd-fg-muted)]' },
-      { variant: 'history', active: true, class: 'bg-[var(--ddd-surface-selected)] text-[color:var(--ddd-accent)]' },
-      // zoom (toolbar/pan toggle): transparent → selected bg + accent when active
+      { variant: 'history', active: true, class: 'bg-[var(--ddd-surface-selected)] text-[color:var(--ddd-fg)]' },
+      // zoom (toolbar/pan toggle): active = selected bg only, icon stays normal fg
       { variant: 'zoom', active: false, class: 'bg-transparent text-[color:var(--ddd-fg)]' },
-      { variant: 'zoom', active: true, class: 'bg-[var(--ddd-surface-selected)] text-[color:var(--ddd-accent)]' },
+      { variant: 'zoom', active: true, class: 'bg-[var(--ddd-surface-selected)] text-[color:var(--ddd-fg)]' },
     ],
     defaultVariants: { variant: 'secondary', active: false, off: false },
   },

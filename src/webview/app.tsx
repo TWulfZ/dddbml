@@ -267,9 +267,14 @@ export function App(_props: AppProps) {
     let marqueeStart = { x: 0, y: 0 };
 
     const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement;
+      // "Canvas" = the viewport background or anything inside the world (tables / groups / edges).
+      // The floating chrome (zoom bar, app menu, panels) lives OUTSIDE `.ddd-world`, so panning must
+      // NOT start on it — otherwise the pan tool would steal clicks from its own toggle and the menus.
+      const onCanvas = target === el || target.closest('.ddd-world') != null;
       // Pan on the middle button, or the left button while the hand tool is active (toggle / Space).
       const panActive = store.getState().panMode || store.getState().spacePan;
-      if (e.button === 1 || (e.button === 0 && panActive)) {
+      if (onCanvas && (e.button === 1 || (e.button === 0 && panActive))) {
         e.preventDefault();
         panning = true;
         lastX = e.clientX;
@@ -281,7 +286,6 @@ export function App(_props: AppProps) {
       if (e.button === 0) {
         if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no marquee/selection
         // Only start marquee if click landed on empty viewport (not on a table / group / etc).
-        const target = e.target as HTMLElement;
         if (target !== el && !target.classList.contains('ddd-world') && !target.classList.contains('ddd-group-container')) {
           return;
         }
@@ -389,12 +393,21 @@ export function App(_props: AppProps) {
     };
     // Releasing focus while Space is held (alt-tab) would otherwise leave pan stuck on.
     const onBlur = () => store.getState().setSpacePan(false);
+    // Keyboard (Space-pan, undo/redo, Escape) is bound on `window`, which only gets keys while the
+    // webview iframe is focused. Merely hovering the canvas doesn't focus it, so hold-Space did
+    // nothing. Focus the viewport when the pointer enters it — unless a field/dialog owns focus.
+    const onPointerEnter = () => {
+      const a = document.activeElement as HTMLElement | null;
+      if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+      if (a !== el) el.focus({ preventScroll: true });
+    };
 
     el.addEventListener('wheel', onWheel, { passive: false });
     el.addEventListener('pointerdown', onPointerDown);
     el.addEventListener('pointermove', onPointerMove);
     el.addEventListener('pointerup', onPointerUp);
     el.addEventListener('pointercancel', onPointerUp);
+    el.addEventListener('pointerenter', onPointerEnter);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
@@ -405,6 +418,7 @@ export function App(_props: AppProps) {
       el.removeEventListener('pointermove', onPointerMove);
       el.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('pointercancel', onPointerUp);
+      el.removeEventListener('pointerenter', onPointerEnter);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);

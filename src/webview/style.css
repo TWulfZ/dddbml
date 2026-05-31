@@ -269,7 +269,7 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
-    cursor: grab;
+    cursor: default;
     background: var(--ddd-surface-canvas);
   }
   .ddd-viewport.is-panning { cursor: grabbing; }
@@ -367,7 +367,9 @@
     color: var(--ddd-fg);
     box-shadow: var(--ddd-shadow-sm);
     user-select: none;
-    cursor: grab;
+    /* Idle cursor stays normal — the "hand" appears only with the pan tool (see .is-pan-mode).
+       While actually dragging a table, body.ddd-is-dragging / :active still show `grabbing`. */
+    cursor: default;
     touch-action: none;
     transition: box-shadow var(--ddd-duration-fast) var(--ddd-ease-out);
   }
@@ -1045,7 +1047,7 @@
   .ddd-zoom__divider {
     width: 1px;
     align-self: stretch;
-    margin: var(--ddd-space-1) var(--ddd-space-1);
+    margin: var(--ddd-space-1) 0;
     background: var(--ddd-border-subtle);
   }
   .ddd-zoom__pct {
@@ -1053,13 +1055,13 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0 var(--ddd-space-2);
-    min-width: 54px;
+    padding: 0;
+    min-width: 38px;
     font-variant-numeric: tabular-nums;
     color: var(--ddd-fg-muted);
   }
   .ddd-zoom__input {
-    width: 40px;
+    width: 30px;
     background: transparent;
     border: 1px solid transparent;
     color: var(--ddd-fg);
