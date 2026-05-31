@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import type { Column, Table, TableDiffStatus } from '../../shared/types';
+import type { Column, ColumnDiffEntry, Table, TableDiffStatus } from '../../shared/types';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag } from '../drag/dragController';
@@ -21,14 +21,59 @@ interface TableNodeProps {
   selected: boolean;
   color?: string;
   fkColumns?: Set<string>;
-  /** Git diff overlay status for this table — a border marker (spec 16). Detail lives in the
-   *  Previous|Current hover card, so no per-column tints are rendered inline. */
+  /** Git diff overlay status for this table — border marker + inline unified-diff rows (spec 16). */
   diffStatus?: TableDiffStatus;
-  /** True in diff mode for tables NOT in the diff, when "Blur background tables" is on. */
+  /** True when "Blur background tables" is on and this table is NOT in the active diff/merge. */
   dimmed?: boolean;
+  /** Previous (base) table — supplies old column defs for the inline diff of a modified table. */
+  diffBase?: Table;
+  /** Per-column diff entries (by name) for a modified table — tells which columns changed. */
+  columnDiff?: Map<string, ColumnDiffEntry>;
 }
 
-export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed }: TableNodeProps) {
+/** A column row tagged for the inline git-style unified diff. `context` = unchanged. */
+type DiffKind = 'context' | 'added' | 'removed' | 'changed-old' | 'changed-new';
+interface DiffRow { key: string; kind: DiffKind; col: Column; isFk: boolean }
+
+/**
+ * Build git-unified-diff rows for a table's columns: removed (`-`) then added (`+`), changed columns
+ * as a `-`old / `+`new pair, interleaved in the base column order so it reads like an editor diff.
+ * `base` undefined ⇒ a newly-added table (every column is `+`).
+ */
+function buildDiffRows(current: Column[], base: Column[] | undefined, changed: Set<string>, fk?: Set<string>): DiffRow[] {
+  const isFk = (n: string) => fk?.has(n) ?? false;
+  if (!base) return current.map((c) => ({ key: `+${c.name}`, kind: 'added' as const, col: c, isFk: isFk(c.name) }));
+  const baseByName = new Map(base.map((c) => [c.name, c]));
+  const curByName = new Map(current.map((c) => [c.name, c]));
+  const rows: DiffRow[] = [];
+  let bi = 0;
+  const flushRemovedBefore = (target: number) => {
+    while (bi < target) {
+      const bc = base[bi]!;
+      if (!curByName.has(bc.name)) rows.push({ key: `-${bc.name}`, kind: 'removed', col: bc, isFk: false });
+      bi++;
+    }
+  };
+  for (const cc of current) {
+    const bc = baseByName.get(cc.name);
+    if (bc) {
+      flushRemovedBefore(base.indexOf(bc));
+      bi = base.indexOf(bc) + 1;
+      if (changed.has(cc.name)) {
+        rows.push({ key: `-${cc.name}`, kind: 'changed-old', col: bc, isFk: false });
+        rows.push({ key: `+${cc.name}`, kind: 'changed-new', col: cc, isFk: isFk(cc.name) });
+      } else {
+        rows.push({ key: cc.name, kind: 'context', col: cc, isFk: isFk(cc.name) });
+      }
+    } else {
+      rows.push({ key: `+${cc.name}`, kind: 'added', col: cc, isFk: isFk(cc.name) });
+    }
+  }
+  flushRemovedBefore(base.length);
+  return rows;
+}
+
+export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
   const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
   const selection = useAppStore((s) => s.selection);
@@ -45,6 +90,11 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
     e.preventDefault();
     e.stopPropagation();
     setCtxMenu(clampMenuAnchor(e.clientX, e.clientY, 200, 100));
+  };
+  // Hovering a table reveals its (otherwise faded) connected edges.
+  const onTableEnter = () => store.getState().setHoveredTable(table.name);
+  const onTableLeave = () => {
+    if (store.getState().hoveredTable === table.name) store.getState().setHoveredTable(null);
   };
 
   const ctxItems: ContextMenuItem[] = [
@@ -73,8 +123,7 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
   ) : null;
 
   const selClass = selected ? ' is-selected' : '';
-  // Diff marker (border) + background-dim. Hover detection lives in a separate hit-layer (DiffHitLayer)
-  // so it survives the read-only `pointer-events:none` belt; here we only paint.
+  // Diff marker (border) + background-dim. Column-level changes render inline as a unified diff.
   const diffClass = (diffStatus ? ` is-diff-${diffStatus}` : '') + (dimmed ? ' is-diff-dimmed' : '');
 
   const headerStyle: Record<string, string> = color
@@ -90,6 +139,8 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
           onPointerDown={onPointerDown}
           onDblClick={onDblClick}
           onContextMenu={onContextMenu}
+          onMouseEnter={onTableEnter}
+          onMouseLeave={onTableLeave}
           title={table.note ? `${table.name}\n\n${table.note}` : table.name}
           style={{
             position: 'absolute',
@@ -113,6 +164,8 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
           onPointerDown={onPointerDown}
           onDblClick={onDblClick}
           onContextMenu={onContextMenu}
+          onMouseEnter={onTableEnter}
+          onMouseLeave={onTableLeave}
           style={{
             position: 'absolute',
             transform: `translate3d(${x}px, ${y}px, 0)`,
@@ -130,6 +183,15 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
     ? table.columns.filter((c) => c.pk || (fkColumns && fkColumns.has(c.name)))
     : table.columns;
 
+  // In diff mode show the full inline unified diff (bypasses the PK/FK-only filter).
+  const isDiff = diffStatus === 'added' || diffStatus === 'modified';
+  let diffRows: DiffRow[] | null = null;
+  if (isDiff) {
+    const changed = new Set<string>();
+    if (columnDiff) for (const [n, e] of columnDiff) if (e.status === 'changed') changed.add(n);
+    diffRows = buildDiffRows(table.columns, diffStatus === 'modified' ? diffBase?.columns : undefined, changed, fkColumns);
+  }
+
   return (
     <>
       <div
@@ -138,6 +200,8 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
         onPointerDown={onPointerDown}
         onDblClick={onDblClick}
         onContextMenu={onContextMenu}
+        onMouseEnter={onTableEnter}
+        onMouseLeave={onTableLeave}
         style={{
           position: 'absolute',
           transform: `translate3d(${x}px, ${y}px, 0)`,
@@ -146,9 +210,9 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
       >
         <TableHeader table={table} configurable headerStyle={headerStyle} />
         <ul class="ddd-table__cols">
-          {visibleCols.map((c) => (
-            <ColumnRow key={c.name} col={c} isFk={fkColumns?.has(c.name) ?? false} />
-          ))}
+          {diffRows
+            ? diffRows.map((r) => <ColumnRow key={r.key} col={r.col} isFk={r.isFk} diffKind={r.kind} />)
+            : visibleCols.map((c) => <ColumnRow key={c.name} col={c} isFk={fkColumns?.has(c.name) ?? false} />)}
         </ul>
       </div>
       {ctxMenuEl}
@@ -218,7 +282,11 @@ function TableHeader({ table, configurable, headerStyle }: { table: Table; confi
   );
 }
 
-function ColumnRow({ col, isFk }: { col: Column; isFk: boolean }) {
+function ColumnRow({ col, isFk, diffKind }: { col: Column; isFk: boolean; diffKind?: DiffKind }) {
+  const isAdd = diffKind === 'added' || diffKind === 'changed-new';
+  const isDel = diffKind === 'removed' || diffKind === 'changed-old';
+  const diffCls = isAdd ? ' is-diff-add' : isDel ? ' is-diff-del' : '';
+  const sign = isAdd ? '+' : isDel ? '−' : '';
   const onEnter = (e: Event) => {
     if (!col.note) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -235,10 +303,11 @@ function ColumnRow({ col, isFk }: { col: Column; isFk: boolean }) {
   };
   return (
     <li
-      class={`ddd-table__col${isFk ? ' is-fk' : ''}`}
+      class={`ddd-table__col${isFk ? ' is-fk' : ''}${diffCls}`}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
     >
+      {sign ? <span class="ddd-table__col-sign" aria-hidden="true">{sign}</span> : null}
       <span class="ddd-table__col-left">
         <span class={`ddd-table__col-name${col.pk ? ' is-pk' : ''}`}>{col.name}</span>
         {col.pk ? <IconKey size={10} /> : null}

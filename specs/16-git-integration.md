@@ -37,15 +37,18 @@ pesada que se construye **por fases**, cada una desplegable por separado.
   lectura. **No** ejecuta un `git checkout` real; no toca el working tree ni el
   editor abierto; reversible al instante. (Acordado, 2026-05-30.)
 - [x] **Granularidad del diff.** — **Decisión:** tabla + columna + relación. El detalle
-  columna a columna se ve en una **tarjeta Previous | Current** al hacer hover sobre una
-  tabla cambiada. (Acordado, 2026-05-30.)
-- [x] **Idioma de la app y framing del diff.** — **Decisión:** TODA la UI de la app en
+  columna a columna se renderiza **inline en la tabla** como un diff unificado de git.
+  (Acordado, 2026-05-30; presentación revisada 2026-05-31, ver abajo.)
+- [x] **Idioma de la app y presentación del diff.** — **Decisión:** TODA la UI de la app en
   **inglés** (las specs siguen en español; mezclar idiomas en la app fue un error y se
-  corrigió). El diff se enmarca como **Previous/Current** (antes/después), no como
-  "added/removed/modified": en canvas las tablas cambiadas se marcan (borde) y las no-diff
-  se **atenúan/desenfocan** (toggle "Blur background tables", on por defecto); el detalle
-  vive en la tarjeta de hover Previous|Current; la barra trae botones **prev/next** que
-  enfocan la cámara en cada cambio. (Acordado con el owner, 2026-05-31.)
+  corrigió). El diff se renderiza como un **diff unificado estilo editor de VS Code**, inline
+  dentro de cada tabla: filas eliminadas en rojo con `−`, añadidas en verde con `+`, una
+  columna modificada como par `−`viejo / `+`nuevo, usando los **colores de diff del tema de
+  VS Code** (`--vscode-diffEditor-*`). Se descartó la tarjeta de hover Previous|Current (no
+  aportaba). Las tablas no-diff se **atenúan/desenfocan** (toggle "Blur background tables",
+  on por defecto), y la barra trae botones **prev/next** que enfocan la cámara en cada cambio.
+  El mismo toggle de blur se aplica al **merge resolver** para enfocar los conflictos.
+  (Acordado con el owner, 2026-05-31.)
 - [ ] **Descubrimiento de `!include`.** Hoy el host parsea un solo archivo
   (`parser.ts`) y `resolveDiagram` (en `panel.ts`) solo incluye `.dbml` + sidecar.
   Cuando el parse multi-archivo aterrice, ampliar el alcance con un escaneo regex de
@@ -94,19 +97,26 @@ real. "Salir" pide al host re-enviar el estado de trabajo.
 mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render paralelo:
 - **Focus/blur:** las tablas **no** incluidas en el diff se atenúan + desenfocan
   (`is-diff-dimmed`); toggle **"Blur background tables"** (on por defecto, store
-  `diffBlurBackground`). Solo afecta a las tablas visibles (el culling acota el set).
-- **Marcador en canvas:** las tablas cambiadas llevan un borde (`is-diff-*`) — sin
-  etiquetas de texto added/removed/modified. Las **eliminadas** (sin nodo vivo) se dibujan
-  como ghosts (`DiffGhosts`) en su posición base, etiquetadas "Previous".
-- **Hover → tarjeta Previous | Current** (`DiffHoverCard`): dos columnas con las columnas
-  de la tabla en cada revisión; una columna ausente de un lado se lee como add/remove por
-  su ausencia, una columna que difiere va en ámbar a ambos lados. La detección de hover usa
-  una **hit-layer** transparente (`DiffHitLayer`) exenta del cinturón read-only, así el
-  canvas sigue no-editable pero las tablas del diff son hover-ables.
+  `focusDimming`, compartido con el merge resolver). Solo afecta a las tablas visibles (el
+  culling acota el set).
+- **Diff inline (estilo editor):** `TableNode` recibe `diffBase` (tabla Previous) +
+  `columnDiff` y construye un **diff unificado** de sus columnas (`buildDiffRows`): eliminadas
+  `−` (rojo), añadidas `+` (verde), modificadas como par `−`viejo/`+`nuevo, intercaladas en el
+  orden de la tabla base. Las filas usan los tokens `--ddd-diff-add/del-*` → `--vscode-diffEditor-*`.
+  Las tablas cambiadas llevan además un borde (`is-diff-*`). Las **eliminadas** (sin nodo vivo)
+  se dibujan como ghosts (`DiffGhosts`) en su posición base, con sus columnas en rojo `−`.
 - **Navegación:** la barra (`GitBanner`) trae botones prev/next + contador que enfocan la
   cámara en cada cambio (`fitToBbox`, store `diffCursor`).
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
-  layer); eliminadas → conector punteado en `DiffGhosts`.
+  layer); eliminadas → conector punteado en `DiffGhosts`. Los edges con cambio quedan a
+  opacidad llena (auto-focus) mientras los demás siguen el fade global (ver abajo).
+
+### Edges suavizados (fade + reveal on focus)
+Los edges son secundarios: por defecto se renderizan con opacidad reducida (`.ddd-edge-group`
+~0.4) y solo se revelan a opacidad llena cuando están **enfocados** — su tabla está en hover o
+seleccionada, el propio edge está en hover/seleccionado, o (en diff) el edge tiene un cambio.
+El hover de tabla se comparte vía store `hoveredTable` (lo setea `TableNode`); `edgeLayer`
+marca `is-focused` los routes cuyo endpoint coincide. Aplica en vista normal, diff y merge.
 
 El gate de solo lectura es único: `isCanvasReadOnly(s) = mergeConflicts != null ||
 gitView != null`, consultado por drag/persist/undo/redo/marquee/teclado/smart-layout
@@ -123,11 +133,11 @@ y el cinturón CSS `.is-merge-locked`. Merge y git-overlay son mutuamente excluy
 
 Store (`src/webview/state/store.ts`): `gitStatus`, `gitPanelOpen`, `gitBusy`,
 `gitStashes`, `gitCommits`, `gitView`, `diffByTable`, `columnDiffByTable`,
-`diffBaseByTable` (tabla Previous para la tarjeta de hover), `diffGhosts`, `refDiff`,
-`diffRemovedRefs`, `diffBlurBackground` (default `true`), `diffHover` (tabla + ancla de
-pantalla), `diffCursor` (nav) + acciones (`setGitStatus`, `setGitPanelOpen`, `setGitBusy`,
+`diffBaseByTable` (tabla Previous para el diff inline), `diffGhosts`, `refDiff`,
+`diffRemovedRefs`, `focusDimming` (default `true`, compartido con el merge resolver),
+`diffCursor` (nav) + acciones (`setGitStatus`, `setGitPanelOpen`, `setGitBusy`,
 `setGitStashes`, `setGitCommits`, `enterTimeTravel`, `enterDiff`, `exitGitView`,
-`setDiffBlurBackground`, `setDiffHover`, `setDiffCursor`). Helper exportado
+`setFocusDimming`, `setDiffCursor`). Helper exportado
 `isCanvasReadOnly(s)`. Suscripciones granulares: los mapas de diff cambian de referencia
 solo al entrar/salir (un re-render de `App`, igual que `mergeConflicts`). `TableDiff.base`
 lleva la tabla Previous también para las tablas **modificadas** (no solo eliminadas).
@@ -142,9 +152,10 @@ lleva la tabla Previous también para las tablas **modificadas** (no solo elimin
   `sendCommits`, `handleGitCommit/Restore/StashPush/StashOp`, `enterTimeTravel`,
   `exitTimeTravel`, `enterDiff`, `reloadFromDisk`).
 - Read-only + overlay on-canvas → patrón de merge (gate `mergeConflicts`,
-  `mergeGhosts`). Nuevo: `gitBanner.tsx`, `diffGhosts.tsx`, `diffHoverCard.tsx`
-  (tarjeta Previous|Current), `diffHitLayer.tsx` (hover exento del cinturón read-only).
-  Cámara → `fitToBbox` (`render/viewport.ts`).
+  `mergeGhosts`). Nuevo: `gitBanner.tsx`, `diffGhosts.tsx`. Diff inline → `tableNode.tsx`
+  (`buildDiffRows` + filas `is-diff-add/del`). Cámara → `fitToBbox` (`render/viewport.ts`).
+  Blur compartido (`focusDimming`) → `tableNode` (`is-diff-dimmed`) consumido por diff y por
+  el merge bar (`mergePanel.tsx`).
 - Panel de dos paneles → shell `.ddd-settings__*` (reusado). Primitivos: `Button`
   (variante nueva `danger`), `Modal`, `Field`, `Search`, `Tooltip`; codicons via
   `make()` (`git-commit`, `git-branch`, `history`, `diff`, `archive`).
@@ -182,10 +193,9 @@ schema), a diferencia del time-travel (round-trip para restaurar).
   todavía (ver Preguntas abiertas).
 - **Sin repo / sin HEAD**: el panel muestra un aviso ("Initialize git" / "no committed
   version at HEAD"); ninguna operación lanza.
-- **Detalle de columnas solo en hover**: una tabla modificada en canvas solo muestra el
-  borde; el desglose columna a columna requiere hover (tarjeta Previous|Current). La tarjeta
-  es pointer-transparent (peek), así que tablas muy largas no se pueden scrollear dentro de
-  ella.
+- **Orden del diff de columnas**: las columnas eliminadas se intercalan según el orden de la
+  tabla **base**; si la tabla se reordenó mucho entre revisiones el intercalado es aproximado
+  (no es un LCS), pero el contenido (qué se añadió/quitó/cambió) es exacto.
 
 ## Error handling
 
@@ -199,11 +209,10 @@ lanzar.
 
 Cumple [`07-performance-budgets.md`](07-performance-budgets.md) (5000 tablas, pan/zoom
 60fps): los mapas de diff cambian de referencia solo al entrar/salir (un re-render de
-`App`), los props de diff viajan por el `TableNode`/`EdgeLayer` ya culleado (sin render
-de detalle paralelo), el `is-diff-dimmed` (opacity + blur) aplica solo a las tablas
-**visibles** (el culling acota el set a un screenful, no a las 5000), la hit-layer y la
-tarjeta de hover solo existen en modo diff, y el cálculo del diff (parse de dos
-revisiones) corre en el host, fuera del render path.
+`App`), las filas de diff inline + props viajan por el `TableNode`/`EdgeLayer` ya culleado
+(sin render de detalle paralelo), el `is-diff-dimmed` (opacity + blur) aplica solo a las
+tablas **visibles** (el culling acota el set a un screenful, no a las 5000), y el cálculo del
+diff (parse de dos revisiones) corre en el host, fuera del render path.
 
 ## Test plan
 

@@ -63,6 +63,9 @@ interface HoverState {
 export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, groupSizes, worldBbox, refDiff }: EdgeLayerProps) {
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
+  // Edges are faded by default; they reveal (full opacity) when their table or the edge is focused.
+  const hoveredTable = useAppStore((s) => s.hoveredTable);
+  const selection = useAppStore((s) => s.selection);
   const svgRef = useRef<SVGSVGElement>(null);
   const [colorPopup, setColorPopup] = useState<ColorPopupState | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -244,15 +247,26 @@ export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, g
           const color = edgeLayouts.get(r.id)?.color;
           const diff = refDiff?.get(r.id);
           const diffCls = diff ? ` is-diff-${diff}` : '';
+          const ref = refById.get(r.id);
+          const focused =
+            diff != null || // a changed (added/removed) ref stays full in diff mode
+            r.id === selectedEdgeId ||
+            hover?.refId === r.id ||
+            (hoveredTable != null && (ref?.source.table === hoveredTable || ref?.target.table === hoveredTable)) ||
+            (ref != null && (selection.has(ref.source.table) || selection.has(ref.target.table)));
+          const groupCls = `ddd-edge-group${focused ? ' is-focused' : ''}`;
           if (lowZoom) {
             // Bird's-eye: straight port-to-port line, no crow's-foot, no direction dots.
-            return <path key={r.id} d={straightPath(r)} class={`ddd-edge${diffCls}`} style={color ? { stroke: color } : undefined} />;
+            return (
+              <g key={r.id} class={groupCls}>
+                <path d={straightPath(r)} class={`ddd-edge${diffCls}`} style={color ? { stroke: color } : undefined} />
+              </g>
+            );
           }
-          const ref = refById.get(r.id);
           const startMarker = ref?.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)';
           const endMarker = ref?.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)';
           return (
-            <g key={r.id} style={color ? { color } : undefined}>
+            <g key={r.id} class={groupCls} style={color ? { color } : undefined}>
               <path
                 d={r.d}
                 class={`ddd-edge${diffCls}`}

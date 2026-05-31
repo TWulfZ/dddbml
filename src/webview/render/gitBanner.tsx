@@ -3,7 +3,15 @@ import { postToHost } from '../vscode';
 import { Button } from '../ui/Button';
 import { IconHistory, IconDiff, IconClose, IconChevronRight } from '../icons';
 import { fitToBbox } from './viewport';
-import type { DiffTarget } from './diffHitLayer';
+
+/** A change location (table or removed-ghost bbox) the banner's prev/next nav flies the camera to. */
+export interface DiffTarget {
+  name: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 /**
  * Canvas-level read-only bar (spec 16), shown while a git overlay is active (`gitView != null`).
@@ -13,7 +21,7 @@ import type { DiffTarget } from './diffHitLayer';
  */
 export function GitBanner({ diffTargets = [] }: { diffTargets?: DiffTarget[] }) {
   const gitView = useAppStore((s) => s.gitView);
-  const blur = useAppStore((s) => s.diffBlurBackground);
+  const blur = useAppStore((s) => s.focusDimming);
   const cursor = useAppStore((s) => s.diffCursor);
   if (!gitView) return null;
 
@@ -62,7 +70,7 @@ export function GitBanner({ diffTargets = [] }: { diffTargets?: DiffTarget[] }) 
         <input
           type="checkbox"
           checked={blur}
-          onChange={(e) => store.getState().setDiffBlurBackground((e.currentTarget as HTMLInputElement).checked)}
+          onChange={(e) => store.getState().setFocusDimming((e.currentTarget as HTMLInputElement).checked)}
         />
         Blur background tables
       </label>

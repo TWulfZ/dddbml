@@ -101,14 +101,15 @@ export interface AppState {
   refDiff: Map<string, RefDiffStatus> | null;
   /** Removed refs (endpoints) for the ghost connector overlay. */
   diffRemovedRefs: RefDiff[] | null;
-  /** Previous (base) full table for changed tables — feeds the Previous|Current hover card. */
+  /** Previous (base) full table for changed tables — feeds the inline unified-diff rows. */
   diffBaseByTable: Map<QualifiedName, Table> | null;
-  /** When true (default), tables NOT in the diff are dimmed/blurred to focus the changes. */
-  diffBlurBackground: boolean;
-  /** Table currently hovered in diff mode (+ its screen anchor) — drives the Previous|Current card. */
-  diffHover: { name: QualifiedName; anchor: { left: number; top: number; right: number; bottom: number } } | null;
+  /** When true (default), tables NOT in the active diff / merge are dimmed + blurred to focus the
+   *  changes/conflicts. Shared by the diff overlay and the merge resolver (spec 14/16). */
+  focusDimming: boolean;
   /** Index into the change list for the banner's prev/next camera navigation. */
   diffCursor: number;
+  /** Table currently hovered on the canvas — reveals its (otherwise faded) connected edges. */
+  hoveredTable: QualifiedName | null;
 }
 
 export interface AppActions {
@@ -163,9 +164,9 @@ export interface AppActions {
   enterTimeTravel(rev: string, label: string): void;
   enterDiff(baseLabel: string, headLabel: string, diff: SchemaDiff): void;
   exitGitView(): void;
-  setDiffBlurBackground(on: boolean): void;
-  setDiffHover(hover: AppState['diffHover']): void;
+  setFocusDimming(on: boolean): void;
   setDiffCursor(index: number): void;
+  setHoveredTable(name: QualifiedName | null): void;
 }
 
 const initial: AppState = {
@@ -211,9 +212,9 @@ const initial: AppState = {
   refDiff: null,
   diffRemovedRefs: null,
   diffBaseByTable: null,
-  diffBlurBackground: true,
-  diffHover: null,
+  focusDimming: true,
   diffCursor: 0,
+  hoveredTable: null,
 };
 
 /** The canvas is read-only (pan/zoom only) during a merge OR any git overlay (time-travel / diff).
@@ -462,7 +463,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   beginMerge(conflicts) {
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
     // A host merge always wins over a git overlay, so clear gitView too.
-    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffHover: null, diffCursor: 0 });
+    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: 0 });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -552,7 +553,6 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       diffGhosts: ghosts,
       refDiff,
       diffRemovedRefs: removedRefs,
-      diffHover: null,
       diffCursor: 0,
       selection: new Set(),
       selectedEdgeId: null,
@@ -567,18 +567,17 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       diffGhosts: null,
       refDiff: null,
       diffRemovedRefs: null,
-      diffHover: null,
       diffCursor: 0,
     });
   },
-  setDiffBlurBackground(on) {
-    set({ diffBlurBackground: on });
-  },
-  setDiffHover(hover) {
-    set({ diffHover: hover });
+  setFocusDimming(on) {
+    set({ focusDimming: on });
   },
   setDiffCursor(index) {
     set({ diffCursor: index });
+  },
+  setHoveredTable(name) {
+    set((s) => (s.hoveredTable === name ? s : { hoveredTable: name }));
   },
 }));
 

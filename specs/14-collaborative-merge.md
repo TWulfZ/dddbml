@@ -124,13 +124,17 @@ Sólo el host escribe el sidecar. Flujo:
    dispara doble no borra las decisiones del usuario; (b) un `git pull` que cambia el
    set sí refresca (avisa); (c) `mergeResolving` evita Apply concurrentes (doble
    escritura/stage).
-   - **Tablas** (con `(x,y)`): se ocultan sus `TableNode` normales y se dibujan
-     **dos fantasmas** (mía @ours, suya @theirs) en coords world (dentro de
-     `.ddd-world`, paneando con el lienzo). **Hover = preview, click = decide**
-     (regla UX: no fiar acciones importantes sólo al hover). Hover/elegido →
-     opacidad llena + bloom `--ddd-accent`; el otro → atenuado + tinte
-     `--ddd-danger` (rojizo = "se descarta"). La decisión es **revertible**
-     (re-click del otro fantasma) hasta *Apply*.
+   - **Tablas** (con `(x,y)`): se ocultan sus `TableNode` normales y se dibuja la
+     **tabla completa** (header + columnas, como en el diff view de spec 16) en cada
+     posición candidata (@ours y @theirs), en coords world. **Sin etiquetas
+     mine/theirs en el canvas** — la barra ya dice cuál es current vs incoming; el
+     fantasma solo muestra la tabla tal cual está compuesta, en sus 2 posibles
+     posiciones (mejor UX que un contorno + label). **Hover = preview, click =
+     decide** (regla UX: no fiar acciones importantes sólo al hover). Hover/elegido →
+     opacidad llena + ring `--ddd-accent`; el otro → atenuado + outline `--ddd-danger`
+     (rojizo = "se descarta"). Revertible hasta *Apply*. Un lado que **borra** la
+     posición (sin tabla que dibujar) muestra un chip compacto en vez de duplicar la
+     otra posición.
    - **Grupos / aristas** (sin posición): filas mía/suya en la barra de conflictos
      (swatch de color para grupos; "ruta mía/suya" para aristas).
    - **Barra persistente:** `N conflictos · M resueltos`, **Resolver todo como
@@ -145,6 +149,13 @@ Sólo el host escribe el sidecar. Flujo:
    `lastWrittenSerialized`, limpia `pendingMerge`, postea `layout:loaded` (final,
    con view-state re-aplicado) y `merge:done`. El webview sale del modo conflicto
    en `merge:done`.
+
+### Foco: atenuar el fondo (compartido con el diff de spec 16)
+
+La cabecera de la barra incluye un toggle **"Blur background tables"** (on por defecto, store
+`focusDimming`, el mismo flag que usa el diff de [`16-git-integration.md`](16-git-integration.md)):
+atenúa + desenfoca (`is-diff-dimmed`) las tablas que **no** están en conflicto para enfocar los
+fantasmas/conflictos. Solo afecta a las tablas visibles (culling).
 
 ### Dos vistas + foco de cámara por diff (stepper)
 

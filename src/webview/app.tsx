@@ -19,10 +19,8 @@ import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
 import { SettingsPanel } from './render/settingsPanel';
 import { GitPanel } from './render/gitPanel';
-import { GitBanner } from './render/gitBanner';
+import { GitBanner, type DiffTarget } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
-import { DiffHoverCard } from './render/diffHoverCard';
-import { DiffHitLayer, type DiffTarget } from './render/diffHitLayer';
 import type { QualifiedName, Ref, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
 
 interface AppProps {
@@ -52,10 +50,12 @@ export function App(_props: AppProps) {
   const gitView = useAppStore((s) => s.gitView);
   const readOnly = mergeConflicts != null || gitView != null;
   const diffByTable = useAppStore((s) => s.diffByTable);
+  const columnDiffByTable = useAppStore((s) => s.columnDiffByTable);
+  const diffBaseByTable = useAppStore((s) => s.diffBaseByTable);
   const refDiff = useAppStore((s) => s.refDiff);
   const diffGhosts = useAppStore((s) => s.diffGhosts);
   const diffRemovedRefs = useAppStore((s) => s.diffRemovedRefs);
-  const diffBlurBackground = useAppStore((s) => s.diffBlurBackground);
+  const focusDimming = useAppStore((s) => s.focusDimming);
   const diffActive = gitView?.kind === 'diff';
   const lodThresholds = useAppStore((s) => s.settings.lod);
   const density = useAppStore((s) => s.settings.ui.density);
@@ -546,7 +546,9 @@ export function App(_props: AppProps) {
                   color={tColor}
                   fkColumns={fkColumnsByTable.get(t.name)}
                   diffStatus={diffByTable?.get(t.name)}
-                  dimmed={diffActive && diffBlurBackground && !diffByTable?.has(t.name)}
+                  diffBase={diffBaseByTable?.get(t.name)}
+                  columnDiff={columnDiffByTable?.get(t.name)}
+                  dimmed={focusDimming && ((diffActive && !diffByTable?.has(t.name)) || (mergeConflicts != null && !mergeTableKeys.has(t.name)))}
                 />
               );
             })}
@@ -567,15 +569,12 @@ export function App(_props: AppProps) {
             })}
             {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} /> : null}
             {diffActive ? (
-              <>
-                <DiffGhosts
-                  ghosts={diffGhosts ?? []}
-                  removedRefs={diffRemovedRefs ?? []}
-                  positions={positions}
-                  tablesByName={tablesByName}
-                />
-                <DiffHitLayer targets={diffTargets} />
-              </>
+              <DiffGhosts
+                ghosts={diffGhosts ?? []}
+                removedRefs={diffRemovedRefs ?? []}
+                positions={positions}
+                tablesByName={tablesByName}
+              />
             ) : null}
           </div>
         ) : null}
@@ -614,7 +613,6 @@ export function App(_props: AppProps) {
         </div>
       ) : null}
       <Tooltip />
-      {diffActive ? <DiffHoverCard /> : null}
       <ExportModal />
       <SettingsPanel />
       <GitPanel />

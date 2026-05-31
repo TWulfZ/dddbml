@@ -26,6 +26,7 @@ export function MergePanel() {
   const decisions = useAppStore((s) => s.mergeDecisions);
   const applying = useAppStore((s) => s.mergeApplying);
   const view = useAppStore((s) => s.mergeView);
+  const focusDimming = useAppStore((s) => s.focusDimming);
   const [confirm, setConfirm] = useState(false);
 
   if (!conflicts) return null;
@@ -49,6 +50,14 @@ export function MergePanel() {
       <div class="ddd-merge-bar__head">
         <span class="ddd-merge-bar__title">Layout merge</span>
         <span class="ddd-merge-bar__count" aria-live="polite">{resolved}/{total} resolved</span>
+        <label class="ddd-git-bar__check ddd-merge-bar__blur">
+          <input
+            type="checkbox"
+            checked={focusDimming}
+            onChange={(e) => store.getState().setFocusDimming((e.currentTarget as HTMLInputElement).checked)}
+          />
+          Blur background tables
+        </label>
       </div>
 
       <div class="ddd-merge-progress" role="presentation">

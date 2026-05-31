@@ -348,9 +348,9 @@ function DiffPane({ status }: { status: GitStatusSummary }) {
       ) : (
         <>
           <p class="ddd-git-empty">
-            Overlay the changes against the last commit (HEAD) on the diagram. Changed tables are
-            highlighted; hover one to compare its <strong>Previous</strong> and <strong>Current</strong>
-            columns side by side.
+            Overlay the changes against the last commit (HEAD) on the diagram. Changed tables show an
+            inline diff of their columns (<strong>−</strong> removed / <strong>+</strong> added), with
+            a focus blur and prev/next navigation over the changes.
           </p>
           <BranchRow status={status} />
           <div class="ddd-git-actions">

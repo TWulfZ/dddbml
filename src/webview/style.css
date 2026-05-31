@@ -114,6 +114,11 @@
        <<<<<<< current / >>>>>>> incoming (same mental model as a conflict in the editor). */
     --ddd-merge-current: var(--vscode-merge-currentHeaderBackground, #3b6ea5);
     --ddd-merge-incoming: var(--vscode-merge-incomingHeaderBackground, #3f8f5b);
+    /* Inline diff rows — reuse the editor's diff colors so a schema diff matches VS Code's diff view. */
+    --ddd-diff-add-bg: var(--vscode-diffEditor-insertedLineBackground, var(--vscode-diffEditor-insertedTextBackground, rgba(78, 201, 176, 0.18)));
+    --ddd-diff-add-fg: var(--vscode-gitDecoration-addedResourceForeground, var(--ddd-success));
+    --ddd-diff-del-bg: var(--vscode-diffEditor-removedLineBackground, var(--vscode-diffEditor-removedTextBackground, rgba(244, 135, 113, 0.18)));
+    --ddd-diff-del-fg: var(--vscode-gitDecoration-deletedResourceForeground, var(--ddd-danger));
 
     /* ----- Edges ----- */
     --ddd-edge: var(--vscode-charts-blue, #4a9eff);
@@ -499,6 +504,13 @@
   }
 
   /* ----- Edges (SVG) ----- */
+  /* Edges are secondary: faded by default, revealed to full opacity when their table or the edge is
+     focused (hover/selection). The base + dots ride a wrapper group so opacity applies once. */
+  .ddd-edges .ddd-edge-group {
+    opacity: 0.4;
+    transition: opacity var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-edges .ddd-edge-group.is-focused { opacity: 1; }
   .ddd-edges path.ddd-edge {
     stroke: var(--ddd-edge);
     stroke-width: 1.6;
@@ -1678,59 +1690,35 @@
   .ddd-table.is-diff-added { outline: 2px solid var(--ddd-success); outline-offset: 1px; }
   .ddd-table.is-diff-modified { outline: 2px solid var(--ddd-warning); outline-offset: 1px; }
   .ddd-table.is-diff-removed { outline: 2px dashed var(--ddd-danger); outline-offset: 1px; }
-  /* Background (non-diff) tables: dimmed + blurred so the changes stand out. */
+  /* Background (non-diff / non-conflict) tables: dimmed + blurred so the changes/conflicts stand out.
+     Shared by the diff overlay and the merge resolver (spec 14/16). */
   .ddd-table.is-diff-dimmed {
     opacity: 0.32;
     filter: blur(1.5px) saturate(0.6);
     transition: opacity var(--ddd-duration-fast) var(--ddd-ease-out), filter var(--ddd-duration-fast) var(--ddd-ease-out);
   }
-  /* Transparent hover targets over each diff table (exempt from the read-only belt). */
-  .ddd-diff-hit-layer { position: absolute; inset: 0; pointer-events: none; }
-  .ddd-diff-hit { pointer-events: auto; cursor: help; }
 
-  /* Previous | Current comparison card (peek, pointer-transparent). */
-  .ddd-diff-card {
-    position: fixed;
-    z-index: 45;
-    pointer-events: none;
-    background: var(--ddd-surface-raised);
-    border: 1px solid var(--ddd-border);
-    border-radius: var(--ddd-radius-md);
-    box-shadow: var(--ddd-shadow-md);
-    padding: var(--ddd-space-4);
-    animation: ddd-menu-in var(--ddd-duration-fast) var(--ddd-ease-out);
-  }
-  .ddd-diff-card__title {
-    font-size: var(--ddd-text-sm);
-    color: var(--ddd-fg-muted);
-    margin-bottom: var(--ddd-space-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .ddd-diff-card__panes { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ddd-space-4); }
-  .ddd-diff-card__pane-head {
-    font-size: var(--ddd-text-sm);
+  /* Inline unified diff rows inside a table — git editor-diff look (red/green + −/+ gutter). */
+  .ddd-table__col-sign {
+    flex-shrink: 0;
+    width: 12px;
+    text-align: center;
+    font-family: var(--vscode-editor-font-family, monospace);
     font-weight: var(--ddd-weight-semibold);
-    color: var(--ddd-fg-strong);
-    padding-bottom: var(--ddd-space-2);
-    border-bottom: 1px solid var(--ddd-border-subtle);
-    margin-bottom: var(--ddd-space-2);
   }
-  .ddd-diff-card__empty { margin: 0; font-size: var(--ddd-text-sm); color: var(--ddd-fg-muted); font-style: italic; }
-  .ddd-diff-card__cols { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
-  .ddd-diff-card__col {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--ddd-space-3);
-    font-size: var(--ddd-text-sm);
-    padding: 1px var(--ddd-space-2);
-    border-radius: var(--ddd-radius-sm);
+  .ddd-table__col.is-diff-add {
+    background: var(--ddd-diff-add-bg);
+    box-shadow: inset 2px 0 0 var(--ddd-diff-add-fg);
   }
-  .ddd-diff-card__col-type { color: var(--ddd-fg-muted); }
-  .ddd-diff-card__col.is-diff-added { background: color-mix(in srgb, var(--ddd-success) 18%, transparent); }
-  .ddd-diff-card__col.is-diff-removed { background: color-mix(in srgb, var(--ddd-danger) 16%, transparent); text-decoration: line-through; }
-  .ddd-diff-card__col.is-diff-changed { background: color-mix(in srgb, var(--ddd-warning) 18%, transparent); }
+  .ddd-table__col.is-diff-add .ddd-table__col-sign { color: var(--ddd-diff-add-fg); }
+  .ddd-table__col.is-diff-del {
+    background: var(--ddd-diff-del-bg);
+    box-shadow: inset 2px 0 0 var(--ddd-diff-del-fg);
+  }
+  .ddd-table__col.is-diff-del .ddd-table__col-sign { color: var(--ddd-diff-del-fg); }
+  .ddd-table__col.is-diff-del .ddd-table__col-name { text-decoration: line-through; opacity: 0.85; }
+  /* The shared "Blur background tables" toggle in the merge bar sits on the right of the head row. */
+  .ddd-merge-bar__blur { margin-left: auto; }
 
   .ddd-edge.is-diff-added { stroke: var(--ddd-success); stroke-width: 2.5; }
   .ddd-edge.is-diff-removed { stroke: var(--ddd-danger); stroke-dasharray: 5 4; }
@@ -1836,9 +1824,9 @@
   }
 
   /* ----- Collaborative-merge conflict UI (spec 14 §Tier-3) ----- */
-  /* Blocking mode: everything in the world is read-only (pan/zoom only) EXCEPT the ghost layer and
-     the diff hit-layer (spec 16), which stays hoverable so the Previous|Current card can open. */
-  .ddd-world.is-merge-locked > *:not(.ddd-merge-ghost-layer):not(.ddd-diff-hit-layer) {
+  /* Blocking mode: everything in the world is read-only (pan/zoom only) EXCEPT the ghost layer.
+     The diff overlay (spec 16) is display-only inline, so it needs no interaction exemption. */
+  .ddd-world.is-merge-locked > *:not(.ddd-merge-ghost-layer) {
     pointer-events: none;
   }
   .ddd-merge-ghost-layer {
@@ -1846,70 +1834,44 @@
     inset: 0;
     pointer-events: none; /* the layer never blocks; only the ghost cards catch */
   }
+  /* A ghost IS a full table (.ddd-table look) + an outline-emphasis on top (so it never fights the
+     table's own border). Sits in the exempt ghost layer, so it stays clickable to pick. */
   .ddd-merge-ghost {
-    box-sizing: border-box;
+    position: absolute;
     pointer-events: auto;
     cursor: pointer;
     user-select: none;
-    overflow: hidden;
-    border: 2px dashed var(--ddd-border);
-    border-radius: var(--ddd-radius-md);
-    background: var(--ddd-surface-raised);
-    color: var(--ddd-fg);
-    box-shadow: var(--ddd-shadow-md);
     transition: opacity var(--ddd-duration-fast),
-                border-color var(--ddd-duration-fast),
+                outline-color var(--ddd-duration-fast),
                 box-shadow var(--ddd-duration-fast),
                 filter var(--ddd-duration-fast);
   }
-  /* Neutral = undecided + not hovered: faint dashed. */
-  .ddd-merge-ghost.is-neutral {
-    opacity: 0.62;
-    border-style: dashed;
-    border-color: var(--ddd-fg-muted);
-  }
+  /* Neutral = undecided + not hovered: faint dashed outline. */
+  .ddd-merge-ghost.is-neutral { opacity: 0.72; outline: 2px dashed var(--ddd-fg-muted); outline-offset: 1px; }
   /* Keep = hovered or chosen: full opacity + accent ring (bloom). */
-  .ddd-merge-ghost.is-keep {
-    opacity: 1;
-    border-style: solid;
-    border-color: var(--ddd-accent);
-    box-shadow: var(--ddd-shadow-md), var(--ddd-shadow-focus);
-  }
+  .ddd-merge-ghost.is-keep { opacity: 1; outline: 2px solid var(--ddd-accent); outline-offset: 1px; box-shadow: var(--ddd-shadow-md), var(--ddd-shadow-focus); }
   /* Discard = the losing side: dim + reddish so it reads as "this gets thrown away". */
-  .ddd-merge-ghost.is-discard {
-    opacity: 0.38;
-    border-style: solid;
-    border-color: var(--ddd-danger);
-    filter: saturate(0.55);
+  .ddd-merge-ghost.is-discard { opacity: 0.4; outline: 2px solid var(--ddd-danger); outline-offset: 1px; filter: saturate(0.55); }
+  .ddd-merge-ghost__check {
+    position: absolute;
+    top: var(--ddd-space-2);
+    right: var(--ddd-space-2);
+    z-index: 1;
+    color: var(--ddd-accent);
+    font-weight: 700;
   }
-  .ddd-merge-ghost__tag {
-    display: flex;
+  /* Delete-side chip (the side has no saved position to draw a table for). */
+  .ddd-merge-ghost--chip {
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--ddd-space-3);
-    padding: var(--ddd-space-1) var(--ddd-space-3);
+    gap: var(--ddd-space-2);
+    padding: var(--ddd-space-2) var(--ddd-space-4);
+    background: var(--ddd-surface-raised);
+    border-radius: var(--ddd-radius-sm);
     font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg);
   }
-  .ddd-merge-ghost__who {
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  /* Mine vs theirs always tinted differently so the two ghosts are tellable apart at a glance. */
-  .ddd-merge-ghost.is-mine .ddd-merge-ghost__who { color: var(--ddd-accent); }
-  .ddd-merge-ghost.is-theirs .ddd-merge-ghost__who { color: var(--ddd-warning); }
-  .ddd-merge-ghost__check { color: var(--ddd-accent); font-weight: 700; }
-  .ddd-merge-ghost__name {
-    padding: var(--ddd-space-2) var(--ddd-space-3);
-    font-weight: 600;
-    border-top: 1px solid var(--ddd-border);
-  }
-  .ddd-merge-ghost.is-removed .ddd-merge-ghost__name { color: var(--ddd-danger); }
-  .ddd-merge-ghost__pos {
-    padding: 0 var(--ddd-space-3) var(--ddd-space-2);
-    font-size: var(--ddd-text-sm);
-    color: var(--ddd-fg-muted);
-  }
+  .ddd-merge-ghost--chip.is-removed { color: var(--ddd-danger); }
 
   /* The blocking conflict bar: floats top-centre over the read-only diagram. */
   .ddd-merge-bar {

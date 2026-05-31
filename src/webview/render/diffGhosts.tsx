@@ -70,7 +70,8 @@ export function DiffGhosts({ ghosts, removedRefs, positions, tablesByName }: Dif
             </div>
             <ul class="ddd-table__cols">
               {g.table.columns.map((c) => (
-                <li key={c.name} class="ddd-table__col is-diff-removed">
+                <li key={c.name} class="ddd-table__col is-diff-del">
+                  <span class="ddd-table__col-sign" aria-hidden="true">−</span>
                   <span class="ddd-table__col-left">
                     <span class="ddd-table__col-name">{c.name}</span>
                   </span>
