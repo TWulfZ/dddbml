@@ -21,20 +21,33 @@ import type { Waypoint } from '../../shared/types';
 
 let active = false;
 
+/** Min screen-px the pointer must travel between down and up to count as a drag (not a click). */
+const CLICK_THRESHOLD_PX = 4;
+
 export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement): void {
   if (active || e.button !== 0) return;
   const state = store.getState();
   if (isCanvasReadOnly(state)) return; // read-only during merge / git overlay (spec 14/16); belt to the CSS lock
+  // Pan tool active (toggle or spacebar held): let the event bubble to the viewport so it pans.
+  // Returning BEFORE stopPropagation is what lets the viewport handler take over (spec 04).
+  if (state.panMode || state.spacePan) return;
   const pos = state.positions.get(tableName);
   if (!pos) return;
 
-  // Multi-drag: if this table is in the current selection (size >= 2), drag all selected.
-  const selectionNames: string[] = state.selection.has(tableName) && state.selection.size > 1
-    ? Array.from(state.selection)
-    : [tableName];
-  if (!state.selection.has(tableName)) {
-    state.clearSelection();
+  // Click vs drag is decided on pointerup by distance travelled; selection is applied there.
+  // Shift = additive/toggle (matches the marquee). A plain press on an unselected table selects
+  // it now (select-on-press) so a drag moves just it; additive presses defer to the click handler.
+  const additive = e.shiftKey;
+  const wasSelected = state.selection.has(tableName);
+  if (!additive && !wasSelected) {
+    state.setSelection([tableName]);
   }
+
+  // Multi-drag: if this table is in the current selection (size >= 2), drag all selected.
+  const liveSelection = store.getState().selection;
+  const selectionNames: string[] = liveSelection.has(tableName) && liveSelection.size > 1
+    ? Array.from(liveSelection)
+    : [tableName];
 
   const origins = new Map<string, { x: number; y: number }>();
   for (const n of selectionNames) {
@@ -78,6 +91,23 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
     node.style.willChange = '';
     try { node.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
     document.body.classList.remove('ddd-is-dragging');
+
+    const moved = Math.hypot(ev.clientX - pointerStartX, ev.clientY - pointerStartY);
+    if (moved < CLICK_THRESHOLD_PX) {
+      // A click, not a drag: resolve selection (no move command — zero displacement).
+      const sel = store.getState().selection;
+      if (additive) {
+        const next = new Set(sel);
+        if (next.has(tableName)) next.delete(tableName);
+        else next.add(tableName);
+        store.getState().setSelection(next);
+      } else {
+        // Collapse any multi-selection down to just the clicked table.
+        store.getState().setSelection([tableName]);
+      }
+      return;
+    }
+
     const cmd = buildMoveCommand(origins, store.getState().positions);
     if (cmd) store.getState().pushMoveCommand(cmd);
     schedulePersist();

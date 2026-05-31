@@ -218,7 +218,6 @@ export interface AppSettings {
   zoomMin: number;
   zoomMax: number;
   lod: {
-    mediumThreshold: number;
     lowThreshold: number;
   };
   ui: {
@@ -244,7 +243,7 @@ export function defaultSettings(): AppSettings {
     zoomStep: 1.2,
     zoomMin: 0.08,
     zoomMax: 4,
-    lod: { mediumThreshold: 0.6, lowThreshold: 0.3 },
+    lod: { lowThreshold: 0.3 },
     ui: { density: 'cozy', snapToGrid: false, gridSize: 16 },
     export: {
       defaultFormat: 'typeorm',
@@ -318,7 +317,6 @@ export interface FlatSettingsPatch {
   'zoomStep': number;
   'zoomMin': number;
   'zoomMax': number;
-  'lod.mediumThreshold': number;
   'lod.lowThreshold': number;
   'ui.density': UiDensity;
   'ui.snapToGrid': boolean;
@@ -340,7 +338,6 @@ export function flattenSettings(s: AppSettings): FlatSettingsPatch {
     'zoomStep': s.zoomStep,
     'zoomMin': s.zoomMin,
     'zoomMax': s.zoomMax,
-    'lod.mediumThreshold': s.lod.mediumThreshold,
     'lod.lowThreshold': s.lod.lowThreshold,
     'ui.density': s.ui.density,
     'ui.snapToGrid': s.ui.snapToGrid,

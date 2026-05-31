@@ -164,19 +164,12 @@
           "maximum": 16,
           "description": "Maximum allowed zoom level (1 = 100%)."
         },
-        "dddbml.lod.mediumThreshold": {
-          "type": "number",
-          "default": 0.6,
-          "minimum": 0.05,
-          "maximum": 1,
-          "description": "Below this zoom level, tables render in header-only LOD (name only, no columns)."
-        },
         "dddbml.lod.lowThreshold": {
           "type": "number",
           "default": 0.3,
           "minimum": 0.01,
           "maximum": 1,
-          "description": "Below this zoom level, tables render as colored rectangles (no text). Must be lower than mediumThreshold."
+          "description": "Below this zoom level, tables render as colored rectangles (name shown on hover); at or above it, full columns render."
         },
         "dddbml.ui.density": {
           "type": "string",

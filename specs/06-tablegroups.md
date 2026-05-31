@@ -38,6 +38,19 @@ Cuando un group está collapsed, todas sus tablas se sustituyen por el nodo-caja
 - **Drag**: NO soportado en v1. Para mover un group, expandir → arrastrar tablas → colapsar.
 - **Double-click** en el group-box → expande (toggle collapsed off).
 
+## Label de nombre al hover en zoom bajo
+
+A `lod === 'rect'` (zoom `< lowThreshold`) el render del grupo no cambia de calidad,
+pero su label world-space queda diminuto. Igual que las tablas (spec 04), al hacer
+hover se revela el nombre del grupo como label en screen-space (`setTooltip`):
+- **Nodo colapsado** → handler en el nodo entero.
+- **Contenedor expandido** → handler **sólo en la franja-label** (el cuerpo es
+  `pointer-events: none`), para no competir con el hover de las tablas internas.
+
+La condición `lodForZoom(...) === 'rect'` se evalúa dentro del handler. El slot único
+`tooltip` garantiza que nunca se muestren dos labels a la vez (ver spec 04, "Regla de
+un solo label").
+
 ## UI: Diagram Views panel
 
 Panel flotante top-right dentro del viewport (título **"Diagram Views"**), colapsable a un handle

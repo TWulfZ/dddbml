@@ -273,6 +273,10 @@
     background: var(--ddd-surface-canvas);
   }
   .ddd-viewport.is-panning { cursor: grabbing; }
+  /* Pan tool armed (toggle / Space held): the whole canvas, tables included, reads as grab. */
+  .ddd-viewport.is-pan-mode,
+  .ddd-viewport.is-pan-mode .ddd-table { cursor: grab; }
+  .ddd-viewport.is-pan-mode.is-panning { cursor: grabbing; }
 
   .ddd-world {
     position: absolute;
@@ -377,9 +381,6 @@
   .ddd-table--rect {
     box-shadow: var(--ddd-shadow-sm);
     border-radius: var(--ddd-radius-sm);
-  }
-  .ddd-table--header-only {
-    overflow: hidden;
   }
 
   .ddd-table__header {

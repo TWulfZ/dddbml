@@ -96,6 +96,17 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
   const onTableLeave = () => {
     if (store.getState().hoveredTable === table.name) store.getState().setHoveredTable(null);
   };
+  // In `rect` LOD the name isn't drawn, so hovering reveals it as a screen-space label
+  // (reuses the single shared tooltip slot — only one label can ever show at a time).
+  const onRectEnter = (e: Event) => {
+    onTableEnter();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    store.getState().setTooltip({ title: table.name, body: table.note ?? '', x: r.left, y: r.top });
+  };
+  const onRectLeave = () => {
+    onTableLeave();
+    if (store.getState().tooltip) store.getState().setTooltip(null);
+  };
 
   const ctxItems: ContextMenuItem[] = [
     { label: 'Export…', onClick: () => store.getState().setExportPromptOpen(true) },
@@ -139,9 +150,8 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
           onPointerDown={onPointerDown}
           onDblClick={onDblClick}
           onContextMenu={onContextMenu}
-          onMouseEnter={onTableEnter}
-          onMouseLeave={onTableLeave}
-          title={table.note ? `${table.name}\n\n${table.note}` : table.name}
+          onMouseEnter={onRectEnter}
+          onMouseLeave={onRectLeave}
           style={{
             position: 'absolute',
             transform: `translate3d(${x}px, ${y}px, 0)`,
@@ -150,30 +160,6 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
             background: color ?? 'var(--ddd-accent)',
           }}
         />
-        {ctxMenuEl}
-      </>
-    );
-  }
-
-  if (lod === 'header') {
-    return (
-      <>
-        <div
-          class={`ddd-table ddd-table--header-only${selClass}${diffClass}`}
-          data-id={table.name}
-          onPointerDown={onPointerDown}
-          onDblClick={onDblClick}
-          onContextMenu={onContextMenu}
-          onMouseEnter={onTableEnter}
-          onMouseLeave={onTableLeave}
-          style={{
-            position: 'absolute',
-            transform: `translate3d(${x}px, ${y}px, 0)`,
-            borderTopColor: color ?? undefined,
-          }}
-        >
-          <TableHeader table={table} headerStyle={headerStyle} />
-        </div>
         {ctxMenuEl}
       </>
     );

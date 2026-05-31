@@ -13,7 +13,6 @@ export function loadSettings(): AppSettings {
     zoomMin: numberOr(cfg.get<number>('zoomMin'), defaults.zoomMin),
     zoomMax: numberOr(cfg.get<number>('zoomMax'), defaults.zoomMax),
     lod: {
-      mediumThreshold: numberOr(cfg.get<number>('lod.mediumThreshold'), defaults.lod.mediumThreshold),
       lowThreshold: numberOr(cfg.get<number>('lod.lowThreshold'), defaults.lod.lowThreshold),
     },
     ui: {

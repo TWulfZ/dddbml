@@ -6,7 +6,7 @@ import { bcColorFor } from '../groups/bcPalette';
 /**
  * LOD-mode preview shown inside the settings `HoverCard` (info icon next to the
  * "Level of Detail" thresholds). Renders the SAME `TableNode` the canvas uses, once
- * per LOD level, so the user sees exactly what `full` / `header` / `rect` look like
+ * per LOD level, so the user sees exactly what `full` / `rect` look like
  * without zooming out to discover it.
  *
  * Interactivity is neutralized purely in CSS (`.ddd-lod-preview` sets
@@ -31,8 +31,7 @@ const PREVIEW_COLOR = bcColorFor(DUMMY_TABLE.tableName);
 
 const MODES: { lod: LodLevel; label: string; hint: string }[] = [
   { lod: 'full', label: 'Full', hint: 'All columns' },
-  { lod: 'header', label: 'Medium', hint: 'Header only' },
-  { lod: 'rect', label: 'Low', hint: 'Colored rect' },
+  { lod: 'rect', label: 'Low', hint: 'Colored rect · name on hover' },
 ];
 
 export function LodPreview() {

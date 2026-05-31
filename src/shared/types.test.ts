@@ -8,7 +8,7 @@ describe('flattenSettings', () => {
       zoomStep: 1.5,
       zoomMin: 0.1,
       zoomMax: 8,
-      lod: { mediumThreshold: 0.55, lowThreshold: 0.22 },
+      lod: { lowThreshold: 0.22 },
       ui: { density: 'compact', snapToGrid: true, gridSize: 24 },
       export: {
         defaultFormat: 'sql',
@@ -19,7 +19,6 @@ describe('flattenSettings', () => {
       'zoomStep': 1.5,
       'zoomMin': 0.1,
       'zoomMax': 8,
-      'lod.mediumThreshold': 0.55,
       'lod.lowThreshold': 0.22,
       'ui.density': 'compact',
       'ui.snapToGrid': true,

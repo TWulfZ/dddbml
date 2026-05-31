@@ -4,13 +4,14 @@ import { schedulePersist } from '../persistence';
 import { fitToContent, zoomAtCenter } from './viewport';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
-import { IconFitScreen, IconMinus, IconPlus, IconRedo, IconUndo } from '../icons';
+import { IconFitScreen, IconMinus, IconPan, IconPlus, IconRedo, IconUndo } from '../icons';
 
 export function ZoomButtons() {
   const viewport = useAppStore((s) => s.viewport);
   const zoomStep = useAppStore((s) => s.settings.zoomStep);
   const pastLen = useAppStore((s) => s.past.length);
   const futureLen = useAppStore((s) => s.future.length);
+  const panMode = useAppStore((s) => s.panMode);
   const getEl = () => document.querySelector<HTMLElement>('.ddd-viewport');
 
   const undo = () => {
@@ -51,6 +52,18 @@ export function ZoomButtons() {
       <Tooltip label="Fit to content" shortcut="Ctrl+1">
         <Button variant="zoom" size="tool" onClick={() => { const el = getEl(); if (el) fitToContent(el); }}>
           <IconFitScreen size={14} />
+        </Button>
+      </Tooltip>
+      <span class="ddd-zoom__divider" aria-hidden="true" />
+      <Tooltip label="Pan tool" shortcut="Space">
+        <Button
+          variant="zoom"
+          size="tool"
+          active={panMode}
+          aria-pressed={panMode}
+          onClick={() => store.getState().setPanMode(!store.getState().panMode)}
+        >
+          <IconPan size={14} />
         </Button>
       </Tooltip>
     </div>

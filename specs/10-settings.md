@@ -25,8 +25,7 @@ Exponer knobs configurables al usuario en vez de constantes hardcodeadas. Cubre 
 | `dddbml.zoomStep` | number | `1.2` | Factor multiplicativo por click del botón zoom o `Ctrl++`. Wheel-zoom usa una curva separada. |
 | `dddbml.zoomMin` | number | `0.08` | Zoom mínimo permitido. |
 | `dddbml.zoomMax` | number | `4` | Zoom máximo permitido. |
-| `dddbml.lod.mediumThreshold` | number | `0.6` | Por debajo de este zoom, tablas se renderizan en LOD `header` (solo nombre). |
-| `dddbml.lod.lowThreshold` | number | `0.3` | Por debajo de este zoom, tablas se renderizan en LOD `rect` (sin texto). |
+| `dddbml.lod.lowThreshold` | number | `0.3` | Por debajo de este zoom, tablas se renderizan en LOD `rect` (sin texto, nombre al hover); a partir de él, `full`. Único umbral (el antiguo `header`/`mediumThreshold` se eliminó). |
 | `dddbml.ui.density` | enum | `"cozy"` | Densidad visual de tablas/filas. Choices: `compact`, `cozy`, `comfortable`. Ver spec 12. |
 | `dddbml.ui.snapToGrid` | boolean | `false` | Modo imán: snappea posiciones de tabla y bends de edge al grid; muestra fondo punteado. |
 | `dddbml.ui.gridSize` | number | `16` | Espaciado (unidades-mundo) del grid de snap cuando `ui.snapToGrid` está activo. Min 2, max 128. |
@@ -47,7 +46,7 @@ export interface AppSettings {
   zoomStep: number;
   zoomMin: number;
   zoomMax: number;
-  lod: { mediumThreshold: number; lowThreshold: number };
+  lod: { lowThreshold: number };
   ui: { density: UiDensity; snapToGrid: boolean; gridSize: number };
   export: {
     defaultFormat: string;
@@ -92,7 +91,7 @@ Default inicial = `defaultSettings()` para que el render funcione antes de que `
 |---|---|---|
 | `src/webview/render/viewport.ts:zoomAt`, `zoomAtCenter`, `fitToContent` | `0.08`, `4`, `1.2` | `store.getState().settings.{zoomMin,zoomMax,zoomStep}` |
 | `src/webview/render/zoomButtons.tsx` | `1.2`, `0.08`, `4` | idem |
-| `src/webview/render/lod.ts` | `0.3`, `0.6` | `store.getState().settings.lod.{lowThreshold,mediumThreshold}` |
+| `src/webview/render/lod.ts` | `0.3` | `store.getState().settings.lod.lowThreshold` |
 | `src/webview/main.tsx:viewport:command` `zoomIn/Out` | `1.2` | settings.zoomStep |
 
 `lodForZoom` cambia de función pura a función que recibe thresholds (o se lee del store inline en el componente — preferimos pasar como parámetro para no acoplar `lod.ts` al store).
@@ -137,5 +136,5 @@ duplicar el panel.
   - `loadSettings()` con tipos inválidos → fallback a defaults sin tirar.
 
 - Smoke manual:
-  - Cambiar `dddbml.lod.mediumThreshold` a `0.9` en `settings.json`; el diagrama cambia a `header` LOD a 90% zoom inmediatamente.
+  - Cambiar `dddbml.lod.lowThreshold` a `0.9` en `settings.json`; el diagrama cae a LOD `rect` por debajo de 90% zoom inmediatamente.
   - Botón Reset en panel restaura defaults sin recargar.

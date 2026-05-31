@@ -60,9 +60,9 @@ const buttonVariants = cva(
           'rounded-[var(--ddd-radius-sm)] border border-[color:var(--ddd-danger)] px-[var(--ddd-space-5)] py-[var(--ddd-space-2)] ' +
           'text-[length:var(--ddd-text-base)] font-medium bg-transparent text-[color:var(--ddd-danger)] active:scale-[0.97] ' +
           'hover:bg-[var(--ddd-surface-hover)] disabled:opacity-50 disabled:cursor-not-allowed',
+        // toggle-able (pan tool): resting colors come from compoundVariants below
         zoom:
-          'rounded-[var(--ddd-radius-sm)] border-none ' +
-          'bg-transparent text-[color:var(--ddd-fg)] hover:bg-[var(--ddd-surface-hover)]',
+          'rounded-[var(--ddd-radius-sm)] border-none hover:bg-[var(--ddd-surface-hover)]',
         toolbar:
           'rounded-[var(--ddd-radius-sm)] border-none bg-transparent text-[color:var(--ddd-fg)] ' +
           'hover:bg-[var(--ddd-surface-selected)]',
@@ -100,6 +100,9 @@ const buttonVariants = cva(
       // history (= .ddd-hist-btn .is-active): muted → accent + selected bg
       { variant: 'history', active: false, class: 'bg-transparent text-[color:var(--ddd-fg-muted)]' },
       { variant: 'history', active: true, class: 'bg-[var(--ddd-surface-selected)] text-[color:var(--ddd-accent)]' },
+      // zoom (toolbar/pan toggle): transparent → selected bg + accent when active
+      { variant: 'zoom', active: false, class: 'bg-transparent text-[color:var(--ddd-fg)]' },
+      { variant: 'zoom', active: true, class: 'bg-[var(--ddd-surface-selected)] text-[color:var(--ddd-accent)]' },
     ],
     defaultVariants: { variant: 'secondary', active: false, off: false },
   },

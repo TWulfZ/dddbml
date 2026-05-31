@@ -51,14 +51,38 @@ Schema update ─▶ positions update ─▶ SpatialIndex rebuild ─▶ visible
 
 | Zoom | Nivel | Render |
 |---|---|---|
-| `>= 0.6` | `full` | Header + columnas completas con flags |
-| `0.3 - 0.6` | `header` | Sólo header con nombre, sin columnas |
-| `< 0.3` | `rect` | Rectángulo coloreado, sin texto |
+| `>= lowThreshold` | `full` | Header + columnas completas con flags |
+| `< lowThreshold` | `rect` | Rectángulo coloreado, sin texto; nombre al hacer hover |
 
-Decidido por `lodForZoom(viewport.zoom)` en `render/lod.ts`. Umbrales empíricos:
-- `full` a zoom normal y zoom in.
-- `header` útil cuando ves muchas tablas a la vez pero aún distingues nombres.
-- `rect` para vista "pájaro" de 5000 tablas → sólo puntos de color agrupados por grupo.
+Decidido por `lodForZoom(viewport.zoom, settings.lod)` en `render/lod.ts`. Un solo
+umbral configurable (`lowThreshold`, default `0.3`) — `full` a zoom normal/in,
+`rect` para vista "pájaro" de 5000 tablas (puntos de color agrupados por grupo).
+
+> **Un solo modo de detalle (por feedback de usuarios).** El antiguo nivel
+> intermedio `header` (sólo la franja del título, sin columnas) se eliminó: aportaba
+> poco y duplicaba el umbral. Hoy hay dos niveles y un único `lowThreshold`.
+
+### Etiqueta de nombre al hover en `rect`
+
+En `rect` el nombre no se dibuja (el texto sería ilegible a ese zoom). Al hacer
+hover sobre una tabla se revela su nombre como **label en screen-space**, reusando
+el slot único `tooltip` del store (`setTooltip`) + el componente `<Tooltip/>` — el
+mismo mecanismo que las notas de columna.
+
+**Los grupos** (contenedor expandido y nodo colapsado) ganan la misma etiqueta de
+nombre al hover, **sólo en `rect`**, sin cambiar su render. La condición se evalúa
+dentro del handler (`lodForZoom(...) === 'rect'`), sin suscripción extra.
+
+**Regla de un solo label (invariante):**
+1. El store tiene **un único** slot `tooltip` y `<Tooltip/>` renderiza uno → es
+   estructuralmente imposible mostrar dos labels a la vez.
+2. Las **zonas** de hover no se solapan: el cuerpo de `GroupContainer` es
+   `pointer-events: none` (sólo su franja-label es interactiva), así que al pasar el
+   cursor sobre una tabla *dentro* de un grupo dispara el hover de la tabla, nunca el
+   del contenedor. El handler del grupo vive en la franja-label, no en el cuerpo.
+
+   Resultado: tabla dentro de grupo → label de la tabla; área vacía / franja-label /
+   nodo colapsado → label del grupo.
 
 ## Edge rendering
 
@@ -76,6 +100,49 @@ suelto por edge fuera de esta capa). Edge culling:
   (al menos un endpoint en `visibleNames`). El margen de 256px ya incluye aristas
   que cruzan el borde.
 - `lod === 'rect'`: arista = recta `M source L target`, sin markers/dots/overlay.
+
+## Interacción de canvas (pan + selección)
+
+Los handlers de pointer viven en el `useEffect` de `app.tsx` (sobre `.ddd-viewport`,
+fase de bubbling); el drag de tabla vive en `drag/dragController.ts` (sobre el nodo).
+El orden table→viewport en bubbling es lo que permite delegar.
+
+### Pan
+
+Tres formas de paneo, todas vía `panBy` (`render/viewport.ts`):
+- **Botón central del mouse** (`e.button === 1`) — siempre, sin estado.
+- **Toggle "herramienta mano"** — botón junto a los controles de zoom
+  (`render/zoomButtons.tsx`, `<Button variant="zoom" active={panMode}>`). Persiste
+  hasta volver a pulsarlo. Estado: `panMode` en el store (efímero, no persistido).
+- **Mantener `Space`** — override temporal independiente del toggle. Estado:
+  `spacePan` (keydown `' '` → `setSpacePan(true)`; keyup / `blur` → `false`). Como es
+  navegación (no edición) funciona incluso en overlays read-only (merge/diff).
+
+`panActive = panMode || spacePan`. Cuando está activo es una **herramienta mano
+pura** (decisión de UX): arrastrar en cualquier parte panea, los clicks **no**
+seleccionan ni mueven tablas. Implementación:
+- `app.tsx onPointerDown`: panea con `e.button === 1 || (e.button === 0 && panActive)`;
+  con `panActive` se omite el marquee.
+- `dragController.startDrag`: retorna temprano si `panActive` — **antes** de
+  `stopPropagation`, para que el pointerdown burbujee al viewport y este panee.
+- Cursor: `.ddd-viewport.is-pan-mode { cursor: grab }` (clase reactiva desde
+  `panActive`), `.is-panning { cursor: grabbing }` (imperativa durante el gesto;
+  segura porque `panActive` no cambia a mitad de un gesto → Preact no reescribe la
+  clase y no borra `is-panning`).
+
+### Selección
+
+- **Click simple** sobre una tabla → la selecciona sólo a ella (`setSelection([n])`).
+- **Shift-click** → alterna (toggle) la tabla en/fuera del set. Sólo `Shift`
+  (consistente con el marquee, que usa `Shift` para sumar).
+- **Marquee** (arrastre sobre área vacía) → sin cambios; `Shift` suma al set.
+- Click vs drag se decide en `pointerup` por distancia recorrida
+  (`CLICK_THRESHOLD_PX = 4`, screen-px): `< 4` = click (resuelve selección, sin
+  `MoveCommand`); `>= 4` = drag (mueve, empuja `MoveCommand`).
+- *Select-on-press*: un press plano sobre una tabla no seleccionada la selecciona ya
+  en el `pointerdown`, así un drag mueve sólo a ella; los press aditivos (Shift)
+  difieren la decisión al click. El multi-drag (press sobre miembro de una
+  multi-selección) mueve todo el set.
 
 ## Rendering framework decisions
 

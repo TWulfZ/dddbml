@@ -33,6 +33,7 @@ export type IconName =
   | 'info'
   | 'layout'
   | 'zoom-in'
+  | 'move'
   | 'export'
   | 'menu'
   | 'source-control'
@@ -94,6 +95,7 @@ export const IconAutoArrange = make('wand');
 export const IconInfo = make('info');
 export const IconLayout = make('layout');
 export const IconZoom = make('zoom-in');
+export const IconPan = make('move');
 export const IconExport = make('export');
 export const IconMenu = make('menu');
 export const IconGit = make('source-control');

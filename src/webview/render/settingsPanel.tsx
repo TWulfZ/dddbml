@@ -24,7 +24,7 @@ const CATEGORIES: { id: Category; label: string; icon: VNode }[] = [
 const CATEGORY_KEYS: Record<Category, PatchKey[]> = {
   interface: ['ui.density', 'ui.snapToGrid', 'ui.gridSize'],
   viewport: ['zoomStep', 'zoomMin', 'zoomMax'],
-  lod: ['lod.mediumThreshold', 'lod.lowThreshold'],
+  lod: ['lod.lowThreshold'],
   export: [
     'export.defaultFormat',
     'export.typeorm.dialect',
@@ -145,17 +145,8 @@ export function SettingsPanel() {
               }
             >
               <NumberField
-                label="Medium threshold"
-                hint="Zoom below this renders header-only LOD."
-                value={settings.lod.mediumThreshold}
-                min={0.05}
-                max={1}
-                step={0.05}
-                onCommit={(v) => apply('lod.mediumThreshold', v)}
-              />
-              <NumberField
                 label="Low threshold"
-                hint="Zoom below this renders rect-only LOD. Must be < medium."
+                hint="Below this zoom, tables render as colored rectangles (name on hover); at or above, full columns."
                 value={settings.lod.lowThreshold}
                 min={0.01}
                 max={1}

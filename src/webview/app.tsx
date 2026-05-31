@@ -46,6 +46,9 @@ export function App(_props: AppProps) {
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
   const tableColors = useAppStore((s) => s.tableColors);
   const selection = useAppStore((s) => s.selection);
+  const panMode = useAppStore((s) => s.panMode);
+  const spacePan = useAppStore((s) => s.spacePan);
+  const panActive = panMode || spacePan;
   const mergeConflicts = useAppStore((s) => s.mergeConflicts);
   const gitView = useAppStore((s) => s.gitView);
   const readOnly = mergeConflicts != null || gitView != null;
@@ -264,7 +267,9 @@ export function App(_props: AppProps) {
     let marqueeStart = { x: 0, y: 0 };
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.button === 1) {
+      // Pan on the middle button, or the left button while the hand tool is active (toggle / Space).
+      const panActive = store.getState().panMode || store.getState().spacePan;
+      if (e.button === 1 || (e.button === 0 && panActive)) {
         e.preventDefault();
         panning = true;
         lastX = e.clientX;
@@ -356,6 +361,12 @@ export function App(_props: AppProps) {
       // Skip when typing inside an input/textarea/contenteditable (e.g. color popup).
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // Hold Space → temporary pan (a navigation gesture, so allowed even in read-only overlays).
+      if (e.key === ' ' && !e.repeat) {
+        e.preventDefault();
+        store.getState().setSpacePan(true);
+        return;
+      }
       if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no undo/redo (read-only)
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
@@ -373,12 +384,20 @@ export function App(_props: AppProps) {
       }
     };
 
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ') store.getState().setSpacePan(false);
+    };
+    // Releasing focus while Space is held (alt-tab) would otherwise leave pan stuck on.
+    const onBlur = () => store.getState().setSpacePan(false);
+
     el.addEventListener('wheel', onWheel, { passive: false });
     el.addEventListener('pointerdown', onPointerDown);
     el.addEventListener('pointermove', onPointerMove);
     el.addEventListener('pointerup', onPointerUp);
     el.addEventListener('pointercancel', onPointerUp);
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
 
     return () => {
       el.removeEventListener('wheel', onWheel);
@@ -387,6 +406,8 @@ export function App(_props: AppProps) {
       el.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('pointercancel', onPointerUp);
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
     };
   }, [ready, spatialIndex]);
 
@@ -500,7 +521,7 @@ export function App(_props: AppProps) {
 
   return (
     <>
-      <div class="ddd-viewport" ref={viewportRef} tabIndex={0}>
+      <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} ref={viewportRef} tabIndex={0}>
         {ready && schema.tables.length > 0 ? (
           <div class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'} style={{ transform: worldTransform }}>
             {snapToGrid ? (

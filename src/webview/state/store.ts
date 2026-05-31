@@ -110,6 +110,11 @@ export interface AppState {
   diffCursor: number;
   /** Table currently hovered on the canvas — reveals its (otherwise faded) connected edges. */
   hoveredTable: QualifiedName | null;
+  /** Pan-tool toggle (the hand button beside the zoom controls). Ephemeral, not persisted.
+   *  When on (or `spacePan`), left-drag pans the canvas instead of selecting/dragging tables. */
+  panMode: boolean;
+  /** True while the spacebar is held — a temporary pan override regardless of `panMode`. */
+  spacePan: boolean;
 }
 
 export interface AppActions {
@@ -167,6 +172,8 @@ export interface AppActions {
   setFocusDimming(on: boolean): void;
   setDiffCursor(index: number): void;
   setHoveredTable(name: QualifiedName | null): void;
+  setPanMode(on: boolean): void;
+  setSpacePan(on: boolean): void;
 }
 
 const initial: AppState = {
@@ -184,6 +191,8 @@ const initial: AppState = {
   selection: new Set(),
   tooltip: null,
   showOnlyPkFk: false,
+  panMode: false,
+  spacePan: false,
   settings: defaultSettings(),
   exporters: [],
   exportPromptOpen: false,
@@ -578,6 +587,12 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setHoveredTable(name) {
     set((s) => (s.hoveredTable === name ? s : { hoveredTable: name }));
+  },
+  setPanMode(on) {
+    set((s) => (s.panMode === on ? s : { panMode: on }));
+  },
+  setSpacePan(on) {
+    set((s) => (s.spacePan === on ? s : { spacePan: on }));
   },
 }));
 

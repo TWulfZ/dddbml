@@ -302,7 +302,7 @@ Cada magic value en `style.css` actual → su reemplazo.
 4. Color popup → seleccionar chip de paleta BC → header de tabla se actualiza sin flicker; reset → vuelve al color del group.
 5. Estados visualmente distintos: hover de fila, selección de tabla (`outline` accent), columna PK (color accent), columna FK (sin fondo extra, alineación correcta), drag en curso (cursor grabbing global), context menu danger item (color danger).
 6. DevTools → Rendering → `prefers-reduced-motion: reduce`: el modal aparece sin transición, los tooltips no hacen fade.
-7. LOD: zoom-out hasta `lowThreshold` → tabla en modo `rect` muestra fill del BC surface; entre `low` y `medium` → modo `header` mantiene la franja superior con el border BC.
+7. LOD: zoom-out por debajo de `lowThreshold` → tabla en modo `rect` muestra fill del BC surface y revela su nombre al hover; a partir de `lowThreshold` → modo `full` con columnas (sin nivel `header` intermedio).
 8. Color popup muestra los 12 chips BC + input hex custom.
 
 ### Visual baselines
