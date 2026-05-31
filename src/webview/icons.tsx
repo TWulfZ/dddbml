@@ -29,7 +29,11 @@ export type IconName =
   | 'redo'
   | 'discard'
   | 'magnet'
-  | 'wand';
+  | 'wand'
+  | 'info'
+  | 'layout'
+  | 'zoom-in'
+  | 'export';
 
 interface IconProps {
   size?: number;
@@ -80,3 +84,7 @@ export const IconRedo = make('redo');
 export const IconReset = make('discard');
 export const IconMagnet = make('magnet');
 export const IconAutoArrange = make('wand');
+export const IconInfo = make('info');
+export const IconLayout = make('layout');
+export const IconZoom = make('zoom-in');
+export const IconExport = make('export');

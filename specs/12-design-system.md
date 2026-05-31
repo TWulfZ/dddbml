@@ -387,6 +387,18 @@ real** (≥2 call sites):
   `<Tooltip label shortcut? placement?>`. Migrado: barra de acciones, zoom, header de Diagram
   Views, edge toolbar. **Las filas densas (group/table rows) siguen con `title` nativo** — son
   listas, no menús; evita el coste de un wrapper por fila.
+- **`HoverCard.tsx`** — **tercer tier de tooltip** (rico). Distinto de `ui/Tooltip` (texto) y de
+  `render/tooltip.tsx` (tooltip de canvas dirigido por store): renderiza **contenido arbitrario**
+  (`content: ComponentChildren`) desde un trigger ícono. Clona su hijo focusable e inyecta
+  hover/focus + `aria-describedby` (igual patrón que `Tooltip`); abre con delay (~300ms) en hover
+  **y** focus de teclado, cierra en pointer-leave / blur / Escape; reduced-motion vía la regla CSS
+  global. **Diferencia clave de implementación:** se dispara desde DENTRO del `<dialog showModal>`
+  de Settings (top-layer); un portal a `<body>` quedaría *detrás* del modal, así que la card usa la
+  **Popover API** (`popover="manual"` + `showPopover()` imperativo en un effect) para promoverse al
+  top-layer por encima del modal sin pelear `z-index`/`overflow`. La card no es interactiva
+  (preview), así que salir del trigger la cierra; el positioner se centra en el trigger y se
+  **clampa al viewport** (`MAX_CARD_WIDTH`) para no recortarse. API: `<HoverCard content placement?>`.
+  Migrado: icono info de LOD en `settingsPanel`.
 
 Se dejan nativos: los radios clásicos de *Scope* en exportModal (`.ddd-radio` con
 contadores + disabled, uso único) y los controles estructurales ya citados.
@@ -465,6 +477,31 @@ con el owner (ver plan):
   (hoy solo existe `selectedEdgeId: string | null`); queda como comando futuro.
 
 State conventions nuevas: `.ddd-actions-bar.is-collapsed` / `.is-expanded`.
+
+## Settings: panel dos-paneles + preview de LOD
+
+Pase de organización del panel de Settings (ver spec 10 para el comportamiento):
+
+- **Superficie dos-paneles `.ddd-settings`** (`@layer components`): `.ddd-settings__rail`
+  (tablist vertical, ítems `.ddd-settings__rail-item` + `.is-active` con `surface-selected`) y
+  `.ddd-settings__content` (panels `.ddd-settings__panel` con `.ddd-settings__panel-head`). El
+  rail-item es `<button role="tab">` nativo — es un tablist, no la familia botón (mismo criterio
+  que `.ddd-radio-group__option`). Solo tokens, sin px/hex crudos.
+- **`.ddd-settings__info`**: trigger ícono del `HoverCard` de LOD (`cursor: help`, hover/focus →
+  `surface-hover` + `accent`).
+- **Preview de LOD `.ddd-lod-preview`** (`render/lodPreview.tsx`): renderiza el **`TableNode` real**
+  una vez por nivel (`full`/`header`/`rect`) sobre una tabla dummy, para que el usuario vea el modo
+  sin hacer zoom-out. **No se toca `TableNode`** (está en el hot-path de 5000 tablas): la
+  interacción se neutraliza solo en CSS — `.ddd-lod-preview { pointer-events: none }` (los handlers
+  de drag/context/gear quedan inertes) y un override de la posición inline absoluta que escribe
+  `TableNode` (`position: static !important; transform: none !important`, scope-ado a
+  `.ddd-lod-preview`) para que las tres tablas fluyan en fila. La densidad se reduce sobreescribiendo
+  los tokens `--ddd-table-*` en `.ddd-lod-preview` (3-up compacto); el modo `rect` (cuyo tamaño es
+  inline desde `estimateSize`) se fuerza con `width/height !important`. El color usa `bcColorFor` +
+  `withAlpha` (paleta BC), sin hex.
+- **Iconos nuevos** (`icons.tsx`, codicons ya cargados por `panel.ts`): `info` (`IconInfo`),
+  `layout` (`IconLayout`), `zoom-in` (`IconZoom`), `export` (`IconExport`). El reset reusa
+  `discard` (`IconReset`) y la categoría LOD reusa `eye` (`IconEye`).
 
 ## Preguntas abiertas (Open Questions)
 

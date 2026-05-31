@@ -229,3 +229,26 @@ export interface FlatSettingsPatch {
   'export.typeorm.includeImports': boolean;
   'export.typeorm.emitNullableExplicit': boolean;
 }
+
+/**
+ * Flatten the nested {@link AppSettings} shape into the dotted-key
+ * {@link FlatSettingsPatch} consumed by `settings:update`. Used to restore
+ * defaults (whole-settings or a per-section slice) from the settings panel.
+ */
+export function flattenSettings(s: AppSettings): FlatSettingsPatch {
+  return {
+    'zoomStep': s.zoomStep,
+    'zoomMin': s.zoomMin,
+    'zoomMax': s.zoomMax,
+    'lod.mediumThreshold': s.lod.mediumThreshold,
+    'lod.lowThreshold': s.lod.lowThreshold,
+    'ui.density': s.ui.density,
+    'ui.snapToGrid': s.ui.snapToGrid,
+    'ui.gridSize': s.ui.gridSize,
+    'export.defaultFormat': s.export.defaultFormat,
+    'export.typeorm.dialect': s.export.typeorm.dialect,
+    'export.typeorm.singularize': s.export.typeorm.singularize,
+    'export.typeorm.includeImports': s.export.typeorm.includeImports,
+    'export.typeorm.emitNullableExplicit': s.export.typeorm.emitNullableExplicit,
+  };
+}

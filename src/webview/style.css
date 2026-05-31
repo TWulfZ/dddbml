@@ -706,6 +706,94 @@
     padding: 0 var(--ddd-space-2);
   }
 
+  /* ----- Hover card (rich info preview, top-layer via Popover API) ----- */
+  .ddd-hovercard-pos {
+    position: fixed;
+    z-index: 1000;
+    margin: 0;
+    inset: auto;
+    padding: 0;
+    border: none;
+    background: transparent;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .ddd-hovercard--top {
+    transform: translate(-50%, -100%);
+  }
+  .ddd-hovercard--bottom {
+    transform: translate(-50%, 0);
+  }
+  .ddd-hovercard {
+    max-width: 460px;
+    padding: var(--ddd-space-5);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    color: var(--ddd-fg);
+    animation: ddd-tip-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+
+  /* ----- LOD mode preview (settings hover card) ----- */
+  .ddd-lod-preview {
+    /* the real TableNode renders here; neutralize interaction + shrink to a 3-up preview */
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-4);
+    --ddd-table-w: 130px;
+    --ddd-table-row-h: 15px;
+    --ddd-table-header-h: 19px;
+    --ddd-table-pad-x: 6px;
+    --ddd-table-pad-y: 1px;
+    --ddd-text-table: 9px;
+  }
+  .ddd-lod-preview__title {
+    font-size: var(--ddd-text-sm);
+    color: var(--ddd-fg-muted);
+  }
+  .ddd-lod-preview__row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ddd-space-5);
+  }
+  .ddd-lod-preview__cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ddd-space-3);
+    margin: 0;
+  }
+  .ddd-lod-preview__stage {
+    position: relative;
+  }
+  /* TableNode writes position/transform inline; override so the previews flow statically. */
+  .ddd-lod-preview .ddd-table {
+    position: static !important;
+    transform: none !important;
+    box-shadow: none;
+  }
+  .ddd-lod-preview .ddd-table--rect {
+    width: 130px !important;
+    height: 52px !important;
+  }
+  .ddd-lod-preview__caption {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: var(--ddd-leading-tight);
+  }
+  .ddd-lod-preview__mode {
+    font-size: var(--ddd-text-sm);
+    font-weight: var(--ddd-weight-semibold);
+    color: var(--ddd-fg-strong);
+  }
+  .ddd-lod-preview__hint {
+    font-size: var(--ddd-text-xs);
+    color: var(--ddd-fg-muted);
+  }
+
   /* ----- Context menu ----- */
   .ddd-context-menu {
     position: fixed;
@@ -1245,6 +1333,97 @@
     gap: var(--ddd-space-4);
     padding: var(--ddd-space-5) var(--ddd-space-6);
     border-top: 1px solid var(--ddd-border-subtle);
+  }
+
+  /* ----- Settings (two-pane: icon rail + content) ----- */
+  .ddd-settings {
+    display: flex;
+    gap: var(--ddd-space-6);
+    min-height: 260px;
+  }
+  .ddd-settings__rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-1);
+    flex-shrink: 0;
+    width: 148px;
+    padding-right: var(--ddd-space-5);
+    border-right: 1px solid var(--ddd-border-subtle);
+  }
+  .ddd-settings__rail-item {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-3);
+    width: 100%;
+    padding: var(--ddd-space-3) var(--ddd-space-4);
+    background: transparent;
+    border: none;
+    border-radius: var(--ddd-radius-sm);
+    color: var(--ddd-fg-muted);
+    font: inherit;
+    font-size: var(--ddd-text-base);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--ddd-duration-instant), color var(--ddd-duration-instant);
+  }
+  .ddd-settings__rail-item:hover {
+    background: var(--ddd-surface-hover);
+    color: var(--ddd-fg);
+  }
+  .ddd-settings__rail-item.is-active {
+    background: var(--ddd-surface-selected);
+    color: var(--ddd-fg-strong);
+    font-weight: var(--ddd-weight-medium);
+  }
+  .ddd-settings__content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .ddd-settings__panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ddd-space-5);
+  }
+  .ddd-settings__panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: var(--ddd-space-3);
+    border-bottom: 1px solid var(--ddd-border-subtle);
+  }
+  .ddd-settings__panel-title {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-3);
+    font-weight: var(--ddd-weight-semibold);
+    font-size: var(--ddd-text-md);
+    color: var(--ddd-fg-strong);
+  }
+  .ddd-settings__panel-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+  }
+  .ddd-settings__info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 22px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--ddd-radius-sm);
+    color: var(--ddd-fg-muted);
+    cursor: help;
+    transition: background var(--ddd-duration-instant), color var(--ddd-duration-instant);
+  }
+  .ddd-settings__info:hover,
+  .ddd-settings__info:focus-visible {
+    background: var(--ddd-surface-hover);
+    color: var(--ddd-accent);
   }
 
   /* ----- Form ----- */

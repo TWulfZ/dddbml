@@ -27,6 +27,9 @@ Exponer knobs configurables al usuario en vez de constantes hardcodeadas. Cubre 
 | `dddbml.zoomMax` | number | `4` | Zoom máximo permitido. |
 | `dddbml.lod.mediumThreshold` | number | `0.6` | Por debajo de este zoom, tablas se renderizan en LOD `header` (solo nombre). |
 | `dddbml.lod.lowThreshold` | number | `0.3` | Por debajo de este zoom, tablas se renderizan en LOD `rect` (sin texto). |
+| `dddbml.ui.density` | enum | `"cozy"` | Densidad visual de tablas/filas. Choices: `compact`, `cozy`, `comfortable`. Ver spec 12. |
+| `dddbml.ui.snapToGrid` | boolean | `false` | Modo imán: snappea posiciones de tabla y bends de edge al grid; muestra fondo punteado. |
+| `dddbml.ui.gridSize` | number | `16` | Espaciado (unidades-mundo) del grid de snap cuando `ui.snapToGrid` está activo. Min 2, max 128. |
 | `dddbml.export.defaultFormat` | string | `"typeorm"` | Formato pre-seleccionado en el modal de export. |
 | `dddbml.export.typeorm.dialect` | enum | `"postgres"` | Dialect SQL para mapeo de tipos. Choices: `postgres`. |
 | `dddbml.export.typeorm.singularize` | boolean | `true` | Singularizar nombres de clase (heurística inglesa). |
@@ -45,6 +48,7 @@ export interface AppSettings {
   zoomMin: number;
   zoomMax: number;
   lod: { mediumThreshold: number; lowThreshold: number };
+  ui: { density: UiDensity; snapToGrid: boolean; gridSize: number };
   export: {
     defaultFormat: string;
     typeorm: {
@@ -57,7 +61,7 @@ export interface AppSettings {
 }
 ```
 
-`defaultSettings()` devuelve esta shape con los defaults declarados arriba. `loadSettings()` lee `vscode.workspace.getConfiguration('dddbml')` y reemplaza key por key (fallback a default si la entrada está mal tipada).
+`defaultSettings()` devuelve esta shape con los defaults declarados arriba. `loadSettings()` lee `vscode.workspace.getConfiguration('dddbml')` y reemplaza key por key (fallback a default si la entrada está mal tipada). `flattenSettings(s)` aplana la shape anidada al `FlatSettingsPatch` de claves punteadas que consume `settings:update` — lo usa el panel para restaurar defaults (todo, o un slice por sección).
 
 ## Propagation
 
@@ -93,14 +97,34 @@ Default inicial = `defaultSettings()` para que el render funcione antes de que `
 
 `lodForZoom` cambia de función pura a función que recibe thresholds (o se lee del store inline en el componente — preferimos pasar como parámetro para no acoplar `lod.ts` al store).
 
-## UI del Settings panel (opcional, v1.1)
+## UI del Settings panel (implementado)
 
-Botón gear en `ActionsPanel`. Click abre panel flotante (similar a `GroupPanel`). Sección Viewport / LOD / Export.
+Botón gear en `ActionsPanel` → `setSettingsPanelOpen(true)`. Abre un `Modal` (`<dialog>`)
+con layout **dos paneles** (`src/webview/render/settingsPanel.tsx`):
 
-- Inputs numéricos con clamp visible (min/max).
-- Toggles para booleans.
-- Selects para enums.
-- Botón "Reset to defaults" → envía `settings:update` con `defaultSettings()` completo.
+- **Rail de categorías** (izquierda, `role="tablist"` vertical) con icono + label:
+  **Interface** (`layout`), **Viewport** (`zoom-in`), **Level of Detail** (`eye`),
+  **Export** (`export`). El estado activo es `useState` local; cada item es un `<button
+  role="tab">` (control estructural nativo, no una variante de `<Button>` — mismo criterio
+  que `.ddd-radio-group__option`). Nuevas secciones = una entrada más en `CATEGORIES`.
+- **Content panel** (derecha, `role="tabpanel"`) con header `[icono] Título … [info?] [reset
+  sección]` y los campos de esa categoría (reusa `RadioGroup` / `NumberField` / `TextField`
+  / `Checkbox` de `ui/Field`):
+  - *Interface*: Density (RadioGroup), **Snap to grid** (Checkbox, `ui.snapToGrid`), **Grid
+    size (px)** (NumberField, `ui.gridSize`, min 2 / max 128). Antes el grid size solo era
+    editable por `settings.json`; el toggle imán ya vivía en la barra de acciones.
+  - *Viewport*: Zoom step / min / max.
+  - *Level of Detail*: Medium / Low threshold **+ icono info con `HoverCard`** que previsualiza
+    los 3 modos de LOD (Full / Medium / Low) renderizando el **`TableNode` real** sobre una
+    tabla dummy — ver spec 12 (`render/lodPreview.tsx`).
+  - *Export*: defaultFormat, typeorm.{dialect, singularize, includeImports, emitNullableExplicit}.
+
+- **Reset (por sección + global).** Cada header de sección tiene un botón reset (`discard`,
+  `<Button variant="subtle" size="icon">`) que envía `settings:update` con `patchFor(CATEGORY_KEYS[cat])`
+  — solo las claves de esa categoría, tomadas de `flattenSettings(defaultSettings())`. El
+  footer del modal tiene **"Reset all to defaults"** (`<Button variant="secondary">`) que
+  envía `flattenSettings(defaultSettings())` completo. `onDidChangeConfiguration` re-pushea
+  `settings:loaded`, así que el render refleja el reset sin recargar.
 
 ## Test plan
 
