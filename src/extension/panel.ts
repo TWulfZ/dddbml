@@ -112,6 +112,10 @@ export class DiagramPanel {
     this.post({ type: 'command:autoArrange', payload: { mode } });
   }
 
+  public sendEdgeOrderOnly(): void {
+    this.post({ type: 'command:orderEdges', payload: {} });
+  }
+
   public async resetLayout(): Promise<void> {
     this.currentLayout = { ...this.currentLayout, tables: {} };
     await this.flushPersist(this.currentLayout);

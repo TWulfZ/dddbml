@@ -51,14 +51,16 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const pick = await vscode.window.showQuickPick(
         [
-          { label: 'Re-arrange all', description: 'Lay out every table', mode: 'all' as const },
+          { label: 'Re-arrange all', description: 'Lay out every table, then order edges', mode: 'all' as const },
           { label: 'Place new tables only', description: 'Keep existing positions, place un-positioned tables', mode: 'new' as const },
           { label: 'Re-arrange selection', description: 'Move only the selected tables', mode: 'selection' as const },
+          { label: 'Order edges only', description: 'Route edges around tables; tables stay fixed', mode: 'orderOnly' as const },
         ],
         { placeHolder: 'Smart auto-layout — choose what to arrange' },
       );
       if (!pick) return;
-      active.sendAutoArrange(pick.mode);
+      if (pick.mode === 'orderOnly') active.sendEdgeOrderOnly();
+      else active.sendAutoArrange(pick.mode);
     }),
 
     vscode.commands.registerCommand('dddbml.zoomIn',       () => DiagramPanel.getActive()?.sendViewportCommand('zoomIn')),

@@ -1,5 +1,22 @@
 import type { EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
 
+/**
+ * Whether an edge carries a user-authored shape: explicit waypoints, a port-side override, or a
+ * legacy dx/dy. The on-demand edge-ordering pass skips these when `preserveManualEdges` is on, and
+ * the same predicate decides whether a table-arrange would strand the shape. Shared so both paths
+ * agree on what "manual" means.
+ */
+export function hasManualShape(layout: EdgeLayout | undefined): boolean {
+  if (!layout) return false;
+  return (
+    (layout.waypoints !== undefined && layout.waypoints.length > 0) ||
+    layout.sourceSide !== undefined ||
+    layout.targetSide !== undefined ||
+    layout.dx !== undefined ||
+    layout.dy !== undefined
+  );
+}
+
 /** Tables whose position changed (or are newly placed) between two position maps. */
 export function movedNames(
   before: Map<QualifiedName, { x: number; y: number }>,

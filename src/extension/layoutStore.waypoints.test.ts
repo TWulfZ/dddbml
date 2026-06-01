@@ -147,3 +147,54 @@ describe('layoutStore — waypoints serialization', () => {
     expect(parsed.edges?.['fractional']?.waypoints).toEqual([{ x: 11, y: 20 }]);
   });
 });
+
+describe('layoutStore — 4-side port persistence (spec 05 §9 / E3)', () => {
+  it('round-trips top/bottom sides (the on-demand A* pass writes these)', () => {
+    const layout = baseLayout({
+      edges: { 'e': { sourceSide: 'top', targetSide: 'bottom' } },
+    });
+    const parsed = parseLayout(serializeLayout(layout));
+    expect(parsed.edges).toEqual(layout.edges);
+  });
+
+  it('keeps top/bottom alongside waypoints', () => {
+    const layout = baseLayout({
+      edges: { 'e': { sourceSide: 'bottom', targetSide: 'top', waypoints: [{ x: 40, y: 50 }] } },
+    });
+    const text = serializeLayout(layout);
+    expect(text).toContain('"sourceSide": "bottom"');
+    expect(text).toContain('"targetSide": "top"');
+    expect(text).toContain('"waypoints"');
+    expect(parseLayout(text).edges).toEqual(layout.edges);
+  });
+
+  it('byte-stable idempotent serialization with top/bottom present', () => {
+    const layout = baseLayout({ edges: { 'e': { sourceSide: 'top', targetSide: 'bottom' } } });
+    const first = serializeLayout(layout);
+    expect(serializeLayout(parseLayout(first))).toBe(first);
+  });
+
+  it('omits side keys when absent (default omitted)', () => {
+    const text = serializeLayout(baseLayout({ edges: { 'e': { waypoints: [{ x: 1, y: 2 }] } } }));
+    expect(text).not.toContain('sourceSide');
+    expect(text).not.toContain('targetSide');
+  });
+
+  it('rejects an invalid side string on parse (whitelist of the 4 sides only)', () => {
+    const text = `{
+  "version": 1,
+  "viewport": { "x": 0, "y": 0, "zoom": 1 },
+  "tables": {
+  },
+  "groups": {
+  },
+  "edges": {
+    "bad": { "sourceSide": "diagonal", "targetSide": "top" }
+  }
+}
+`;
+    const parsed = parseLayout(text);
+    expect(parsed.edges?.['bad']?.sourceSide).toBeUndefined();
+    expect(parsed.edges?.['bad']?.targetSide).toBe('top');
+  });
+});

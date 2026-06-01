@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { EdgeLayout, Layout, GroupLayout, TableLayout, Waypoint } from '../shared/types';
+import { isEdgeSide } from '../shared/types';
 
 export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
   return dbmlUri.with({ path: dbmlUri.path + '.layout.json' });
@@ -105,8 +106,8 @@ function toEdges(raw: unknown): Record<string, EdgeLayout> {
     if (typeof vv.dx === 'number' && Number.isFinite(vv.dx)) e.dx = Math.round(vv.dx);
     if (typeof vv.dy === 'number' && Number.isFinite(vv.dy)) e.dy = Math.round(vv.dy);
     if (typeof vv.color === 'string' && vv.color.length > 0) e.color = vv.color;
-    if (vv.sourceSide === 'left' || vv.sourceSide === 'right') e.sourceSide = vv.sourceSide;
-    if (vv.targetSide === 'left' || vv.targetSide === 'right') e.targetSide = vv.targetSide;
+    if (isEdgeSide(vv.sourceSide)) e.sourceSide = vv.sourceSide;
+    if (isEdgeSide(vv.targetSide)) e.targetSide = vv.targetSide;
     if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) out[k] = e;
   }
   return out;

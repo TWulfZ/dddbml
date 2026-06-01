@@ -3,7 +3,7 @@ import type { Column, ColumnDiffEntry, Table, TableDiffStatus } from '../../shar
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag } from '../drag/dragController';
-import { countResettableSelectionEdges, resetSelectedEdges, runSmartLayout } from '../layout/smartLayout';
+import { countResettableSelectionEdges, resetSelectedEdges, runEdgeOrdering, runSmartLayout } from '../layout/smartLayout';
 import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
 import { store, useAppStore } from '../state/store';
@@ -121,6 +121,10 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
     ctxItems.push({
       label: `Auto-arrange selected (${selection.size})`,
       onClick: () => { void runSmartLayout('selection'); },
+    });
+    ctxItems.push({
+      label: 'Order edges only',
+      onClick: () => { void runEdgeOrdering(); },
     });
     ctxItems.push({
       label: `Reset relations (${resettable})`,

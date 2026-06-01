@@ -19,6 +19,7 @@ import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
 import { SettingsPanel } from './render/settingsPanel';
 import { GitPanel } from './render/gitPanel';
+import { EdgeOrderProgress } from './render/edgeOrderProgress';
 import { GitBanner, type DiffTarget } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
 import type { QualifiedName, Ref, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
@@ -651,6 +652,7 @@ export function App(_props: AppProps) {
       <ExportModal />
       <SettingsPanel />
       <GitPanel />
+      <EdgeOrderProgress />
     </>
   );
 }

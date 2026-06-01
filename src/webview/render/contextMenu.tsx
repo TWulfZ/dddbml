@@ -7,6 +7,12 @@ export interface ContextMenuItem {
   danger?: boolean;
   disabled?: boolean;
   separator?: boolean;
+  /**
+   * When defined, the row renders as a checkbox (a check glyph shown iff `true`) and clicking it
+   * TOGGLES without closing the menu — so a run of toggles can be flipped before choosing an action.
+   * Plain action items (no `checked`) close the menu on click, as before.
+   */
+  checked?: boolean;
 }
 
 export interface ContextMenuProps {
@@ -59,6 +65,18 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       {items.map((item, i) =>
         item.separator ? (
           <hr key={i} class="ddd-context-menu__separator" />
+        ) : item.checked !== undefined ? (
+          <button
+            key={i}
+            class={`ddd-context-menu__item is-checkbox${item.checked ? ' is-checked' : ''}`}
+            role="menuitemcheckbox"
+            aria-checked={item.checked}
+            disabled={item.disabled}
+            onClick={() => { if (!item.disabled) item.onClick(); /* toggle: keep menu open */ }}
+          >
+            <span class="ddd-context-menu__check" aria-hidden="true">{item.checked ? '✓' : ''}</span>
+            {item.label}
+          </button>
         ) : (
           <button
             key={i}

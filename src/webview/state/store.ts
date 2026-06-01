@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useEffect, useReducer } from 'preact/hooks';
-import type { AppSettings, ColumnDiffEntry, EdgeLayout, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
-import { defaultSettings } from '../../shared/types';
+import type { AppSettings, ColumnDiffEntry, EdgeLayout, EdgeSide, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
+import { defaultSettings, isEdgeSide } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
 
@@ -115,6 +115,12 @@ export interface AppState {
   panMode: boolean;
   /** True while the spacebar is held — a temporary pan override regardless of `panMode`. */
   spacePan: boolean;
+  /**
+   * On-demand edge-ordering progress (spec 05 §9). `null` ⇒ idle; non-null ⇒ a run is in flight and
+   * the cancelable progress overlay is shown. Ephemeral, never persisted, and NOT read by the edge
+   * route memo, so pumping it never re-routes edges.
+   */
+  edgeOrderProgress: { pct: number } | null;
 }
 
 export interface AppActions {
@@ -131,7 +137,7 @@ export interface AppActions {
   setEdgeWaypoints(refId: string, waypoints: Waypoint[]): void;
   applyEdgeLayouts(entries: Array<[string, EdgeLayout | null]>): void;
   setEdgeColor(refId: string, color: string | null): void;
-  setEdgeSide(refId: string, end: 'source' | 'target', side: 'left' | 'right' | null): void;
+  setEdgeSide(refId: string, end: 'source' | 'target', side: EdgeSide | null): void;
   resetEdgeShape(refId: string): void;
   setSelectedEdge(refId: string | null): void;
   setSelection(names: Iterable<QualifiedName>): void;
@@ -174,6 +180,12 @@ export interface AppActions {
   setHoveredTable(name: QualifiedName | null): void;
   setPanMode(on: boolean): void;
   setSpacePan(on: boolean): void;
+  /** Show the edge-ordering overlay at 0% (start of an on-demand run). */
+  startEdgeOrderProgress(): void;
+  /** Update the overlay percentage, monotonically (ignores a lower value than the current one). */
+  setEdgeOrderProgress(pct: number): void;
+  /** Hide the edge-ordering overlay (run finished or canceled). */
+  endEdgeOrderProgress(): void;
 }
 
 const initial: AppState = {
@@ -193,6 +205,7 @@ const initial: AppState = {
   showOnlyPkFk: false,
   panMode: false,
   spacePan: false,
+  edgeOrderProgress: null,
   settings: defaultSettings(),
   exporters: [],
   exportPromptOpen: false,
@@ -267,8 +280,8 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
         if (eo.dy !== undefined) e.dy = eo.dy;
       }
       if (eo.color) e.color = eo.color;
-      if (eo.sourceSide === 'left' || eo.sourceSide === 'right') e.sourceSide = eo.sourceSide;
-      if (eo.targetSide === 'left' || eo.targetSide === 'right') e.targetSide = eo.targetSide;
+      if (isEdgeSide(eo.sourceSide)) e.sourceSide = eo.sourceSide;
+      if (isEdgeSide(eo.targetSide)) e.targetSide = eo.targetSide;
       if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
         edgeLayouts.set(id, e);
       }
@@ -593,6 +606,19 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setSpacePan(on) {
     set((s) => (s.spacePan === on ? s : { spacePan: on }));
+  },
+  startEdgeOrderProgress() {
+    set({ edgeOrderProgress: { pct: 0 } });
+  },
+  setEdgeOrderProgress(pct) {
+    set((s) => {
+      if (!s.edgeOrderProgress) return s;
+      const next = Math.max(s.edgeOrderProgress.pct, Math.min(100, Math.round(pct)));
+      return next === s.edgeOrderProgress.pct ? s : { edgeOrderProgress: { pct: next } };
+    });
+  },
+  endEdgeOrderProgress() {
+    set((s) => (s.edgeOrderProgress === null ? s : { edgeOrderProgress: null }));
   },
 }));
 

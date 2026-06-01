@@ -51,8 +51,8 @@ requestAnimationFrame(tick);
 
 | Artefacto | Budget | Actual |
 |---|---|---|
-| `dist/webview/webview.js` (gzipped) | < 40kb (objetivo histórico) | ~29kb post-M2 · **~88kb** (sin ELK, con smart-layout dagre) |
-| `dist/webview/webview.js` (uncompressed) | < 200kb (objetivo histórico) | ~106kb post-M2 · ~410kb |
+| `dist/webview/webview.js` (gzipped) | < 40kb (objetivo histórico) | ~29kb post-M2 · ~88kb (dagre) · **~95kb** (+ router A* edge-ordering, spec 05 §9) |
+| `dist/webview/webview.js` (uncompressed) | < 200kb (objetivo histórico) | ~106kb post-M2 · ~441kb |
 | `dist/extension/**` (uncompressed) | < 50kb | tbd |
 
 > **ELK eliminado — motor de layout = dagre dos niveles (v0.3.x, 2026-05-31).** El smart

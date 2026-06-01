@@ -6,7 +6,8 @@ export type { TableMeta, Role } from './classify';
 export type { Cluster, ClusterKind } from './cluster';
 export { smartLayout } from './layout';
 export type { SmartLayoutInput, SmartLayoutMode, Orientation } from './layout';
-export { runSmartLayout, resetSelectedEdges, countResettableSelectionEdges } from './runner';
+export { runSmartLayout, runEdgeOrdering, cancelEdgeOrdering, resetSelectedEdges, countResettableSelectionEdges } from './runner';
+export type { ArrangeOptions } from './runner';
 
 export interface Analysis {
   meta: Map<QualifiedName, TableMeta>;
