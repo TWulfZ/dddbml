@@ -38,6 +38,11 @@ const GROUP_CONTAINER_HEADER = 20;
 
 const GROUP_PREFIX = '__group__:';
 const groupId = (name: string) => GROUP_PREFIX + name;
+/** Expanded group boxes live in the spatial index too (culled like tables) under this prefix. */
+const CONTAINER_PREFIX = '__container__:';
+const containerId = (name: string) => CONTAINER_PREFIX + name;
+/** Synthetic index entries (collapsed groups, containers) — never selectable, never counted. */
+const isSynthetic = (name: string) => name.startsWith('__');
 
 export function App(_props: AppProps) {
   const schema = useAppStore((s) => s.schema);
@@ -226,6 +231,9 @@ export function App(_props: AppProps) {
     for (const g of derived.collapsedNodes) {
       idx.insert(groupId(g.name), { x: g.x, y: g.y, w: g.w, h: g.h });
     }
+    for (const c of derived.containers) {
+      idx.insert(containerId(c.name), { x: c.x, y: c.y, w: c.w, h: c.h });
+    }
     return idx;
   }, [schema, positions, derived, density]);
 
@@ -365,7 +373,7 @@ export function App(_props: AppProps) {
         const hits = spatialIndexRef.current.query(world);
         // Exclude synthetic group ids from selection.
         const realHits: string[] = [];
-        for (const h of hits) if (!h.startsWith(GROUP_PREFIX)) realHits.push(h);
+        for (const h of hits) if (!isSynthetic(h)) realHits.push(h);
         if (e.shiftKey) {
           const merged = new Set(store.getState().selection);
           for (const n of realHits) merged.add(n);
@@ -541,6 +549,12 @@ export function App(_props: AppProps) {
   );
 
   const visibleTableCount = renderedTables.length + derived.collapsedNodes.length;
+  const visibleCount = useMemo(() => {
+    if (!visibleNames) return visibleTableCount;
+    let n = 0;
+    for (const name of visibleNames) if (!name.startsWith(CONTAINER_PREFIX)) n++;
+    return n;
+  }, [visibleNames, visibleTableCount]);
   const totalTableCount = schema.tables.length - derived.hiddenTables.size;
 
   return (
@@ -561,9 +575,10 @@ export function App(_props: AppProps) {
                 }}
               />
             ) : null}
-            {derived.containers.map((c) => (
-              <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} />
-            ))}
+            {derived.containers.map((c) => {
+              if (visibleNames && !visibleNames.has(containerId(c.name))) return null;
+              return <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} />;
+            })}
             <EdgeLayer
               refs={derived.effectiveRefs}
               visibleRefIds={visibleRefIds}
@@ -657,7 +672,7 @@ export function App(_props: AppProps) {
       ) : null}
       {ready ? (
         <div class="ddd-statusbar">
-          {visibleNames ? visibleNames.size : visibleTableCount}/{totalTableCount} visible · {derived.effectiveRefs.length} refs · zoom <ZoomPct />% · LOD {lod}
+          {visibleCount}/{totalTableCount} visible · {derived.effectiveRefs.length} refs · zoom <ZoomPct />% · LOD {lod}
           {selection.size > 0 ? ` · ${selection.size} selected` : ''}
         </div>
       ) : null}
