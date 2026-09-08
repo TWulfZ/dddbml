@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import { useEffect, useReducer } from 'preact/hooks';
+import { useEffect, useReducer, useRef } from 'preact/hooks';
 import type { AppSettings, ColumnDiffEntry, EdgeLayout, EdgeSide, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
 import { defaultSettings, isEdgeSide } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
@@ -698,18 +698,26 @@ function writeLayout(map: Map<string, EdgeLayout>, refId: string, layout: EdgeLa
 
 export function useAppStore<T>(selector: (state: AppState & AppActions) => T): T {
   const [, forceUpdate] = useReducer((c: number, _action: void) => c + 1, 0);
+  const value = selector(store.getState());
+  // Refs, not closure captures: the effect runs once, but the selector may close over props and
+  // the store may change between this render and the subscription below.
+  const selectorRef = useRef(selector);
+  const lastRef = useRef(value);
+  selectorRef.current = selector;
+  lastRef.current = value;
   useEffect(() => {
-    let last = selector(store.getState());
-    const unsub = store.subscribe(() => {
-      const next = selector(store.getState());
-      if (!Object.is(last, next)) {
-        last = next;
+    const check = () => {
+      const next = selectorRef.current(store.getState());
+      if (!Object.is(lastRef.current, next)) {
+        lastRef.current = next;
         forceUpdate();
       }
-    });
+    };
+    const unsub = store.subscribe(check);
+    check();
     return unsub;
   }, []);
-  return selector(store.getState());
+  return value;
 }
 
 export function toTableLayoutRecord(
