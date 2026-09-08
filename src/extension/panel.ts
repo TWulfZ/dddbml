@@ -49,6 +49,9 @@ export class DiagramPanel {
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
   private currentLayout: Layout = emptyLayout();
   private lastWrittenSerialized: string | null = null;
+  /** True once the webview has sent `ready` and received schema/layout; prompts wait for this. */
+  private hydrated = false;
+  private afterHydrate: Array<() => void> = [];
   private pendingPersist: Layout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
   /** Set while a conflicted sidecar awaits in-webview resolution; null otherwise. Holds the
@@ -97,11 +100,18 @@ export class DiagramPanel {
   }
 
   public openExportModal(): void {
-    this.post({ type: 'export:prompt' });
+    this.whenHydrated(() => this.post({ type: 'export:prompt' }));
   }
 
   public openExportImageModal(): void {
-    this.post({ type: 'exportImage:prompt' });
+    this.whenHydrated(() => this.post({ type: 'exportImage:prompt' }));
+  }
+
+  /** Run now if the webview is hydrated, else right after hydration. Replaces the old fixed
+   *  250 ms timer, which lost the prompt on large schemas that took longer to hydrate. */
+  private whenHydrated(fn: () => void): void {
+    if (this.hydrated) fn();
+    else this.afterHydrate.push(fn);
   }
 
   public reveal(): void {
@@ -351,6 +361,10 @@ export class DiagramPanel {
     this.post({ type: 'settings:loaded', payload: loadSettings() });
     this.post({ type: 'exporters:list', payload: { exporters: listExporters() } });
     void this.sendGitStatus();
+    this.hydrated = true;
+    const queued = this.afterHydrate;
+    this.afterHydrate = [];
+    for (const fn of queued) fn();
   }
 
   private async sendSchema(): Promise<void> {

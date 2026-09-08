@@ -39,8 +39,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       DiagramPanel.createOrShow(context, uri);
-      // Defer the prompt until the panel is hydrated; the webview will be ready shortly.
-      setTimeout(() => DiagramPanel.get(uri)?.openExportModal(), 250);
+      DiagramPanel.get(uri)?.openExportModal(); // queued by the panel until the webview is hydrated
     }),
 
     vscode.commands.registerCommand('dddbml.exportImage', async () => {
@@ -55,7 +54,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       DiagramPanel.createOrShow(context, uri);
-      setTimeout(() => DiagramPanel.get(uri)?.openExportImageModal(), 250);
+      DiagramPanel.get(uri)?.openExportImageModal();
     }),
 
     vscode.commands.registerCommand('dddbml.autoArrange', async () => {
