@@ -30,6 +30,13 @@ dentro del webview. **Cero dependencias nuevas** (presupuesto de bundle, spec 07
   los tokens computados actuales** al exportar (usuario, 2026-06-01).
 - [x] **¿Respetar el filtro PK/FK (`showOnlyPkFk`)?** **Decisión:** no — el export
   siempre incluye todas las columnas (un export debe ser completo).
+- [ ] **Alcance por defecto en esquemas grandes.** Hoy `all` (o `selection` si hay
+  selección). Con miles de tablas el SVG "todo" pesa decenas de MB y el build síncrono
+  congela el webview varios segundos. ¿Forzar `view` por encima de N tablas (¿500?) con
+  aviso, o mantener `all` y trocear el build con yields? **Pendiente de decidir con el
+  usuario.**
+- [ ] **Tope de bytes del PNG por `postMessage`.** El base64 cruza el puente en un solo
+  mensaje sin límite. ¿Cap explícito (p. ej. 50 MB → "usa SVG") o troceo? Pendiente.
 - [x] **Iconos de columna (codicon).** El CSP no permite `font-src data:`, y el
   codicon no viaja en un SVG autónomo. **Decisión:** PK se indica con **texto en
   color de acento + negrita** (sin glifo de llave); NN/U como sufijo de texto.
@@ -126,7 +133,11 @@ Los edges se dibujan a opacidad completa (sin el fade de hover del canvas).
   snapshot estructural.
 - **Tamaño de canvas**: un diagrama enorme a 3× supera el tope del navegador →
   `fitScale` reduce la escala y el modal avisa; **SVG** es vectorial e ileso
-  (recomendado para diagramas grandes).
+  (recomendado para diagramas grandes). Tope de área **64 Mpx** (~256 MB RGBA): el
+  anterior (256 Mpx ≈ 1 GB + la `<img>` decodificada) podía matar el renderer.
+- **Build síncrono**: `buildImageSvg` corre en el hilo principal. El modal pone `busy`
+  y cede un frame **antes** de construir (si no, el estado deshabilitado no llegaba a
+  pintarse y un segundo clic lanzaba un segundo build).
 - **Fuentes**: stack de sistema; se espera `document.fonts.ready` antes de rasterizar.
 - **Tamaño de `postMessage`**: el SVG viaja como texto (pequeño); el PNG queda acotado
   por el clamp.

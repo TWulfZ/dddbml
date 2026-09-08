@@ -22,8 +22,8 @@ describe('fitScale', () => {
   it('clamps when total area would exceed the budget', () => {
     const r = fitScale(8000, 8000, 3);
     expect(r.clamped).toBe(true);
-    // area stays under ~256MP
-    expect(r.scale * 8000 * r.scale * 8000).toBeLessThanOrEqual(256 * 1024 * 1024 + 1);
+    // area stays under the 64 Mpx budget (~256 MB RGBA)
+    expect(r.scale * 8000 * r.scale * 8000).toBeLessThanOrEqual(64 * 1024 * 1024 + 1);
   });
 
   it('is a no-op for degenerate sizes', () => {

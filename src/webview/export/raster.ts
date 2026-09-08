@@ -10,7 +10,9 @@
  */
 
 const MAX_DIM = 16384;
-const MAX_AREA = 256 * 1024 * 1024; // ~268M px²
+// 64 Mpx ≈ 256 MB of RGBA backing store — the previous 256 Mpx cap allowed ~1 GB plus a decoded
+// <img> of the same size, enough to OOM the webview renderer on a large diagram.
+const MAX_AREA = 64 * 1024 * 1024;
 
 /**
  * Clamp `desired` scale so neither raster dimension exceeds MAX_DIM and total area

@@ -76,13 +76,16 @@ export function ExportImageModal({ derived }: ExportImageModalProps) {
   const exportAs = async (kind: 'png' | 'svg' | 'copy') => {
     if (busy) return;
     setNote(null);
-    const built = build();
-    if (!built) {
-      setNote(scope === 'selection' ? 'Nothing selected to export.' : 'Nothing to export.');
-      return;
-    }
+    // Busy first, then a frame, so the disabled state paints before the synchronous SVG build
+    // (seconds on a large diagram) and a second click cannot start a second build.
     setBusy(true);
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
     try {
+      const built = build();
+      if (!built) {
+        setNote(scope === 'selection' ? 'Nothing selected to export.' : 'Nothing to export.');
+        return;
+      }
       if (kind === 'svg') {
         const base64 = await blobToBase64(new Blob([built.svg], { type: 'image/svg+xml' }));
         postToHost({ type: 'command:saveImage', payload: { dataBase64: base64, mime: 'image/svg+xml', suggestedName: `${safeName()}.svg` } });
