@@ -252,9 +252,9 @@ function searchGrid(
 }
 
 /**
- * Route ONE edge between its stubs, choosing the lower-cost of two candidate side-pairs (the given
- * Phase-1 sides, plus a 4-side `chooseSides` that may pick top/bottom). Pure: takes a prepared grid,
- * returns a `RoutedEdge`. Falls back to `{ok:false, waypoints:[]}` on no-path / cap / degenerate grid.
+ * Route ONE edge between its stubs on the caller-supplied Phase-1 sides (`chooseSides4` picks them
+ * before routing; no per-edge cost comparison happens here). Pure: takes a prepared grid, returns a
+ * `RoutedEdge`. Falls back to `{ok:false, waypoints:[]}` on no-path / cap / degenerate grid.
  */
 export function routeOneEdge(ep: OrderEdgeInput, grid: RouteGrid, maxExplored = MAX_EXPLORED): RoutedEdge {
   const fallback: RoutedEdge = {

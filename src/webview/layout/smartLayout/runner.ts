@@ -120,8 +120,9 @@ export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions
       onProgress,
     });
     ordered = res.resets;
-  } catch {
+  } catch (err) {
     // Aborted (or engine error): apply NOTHING. Tables were never moved → true no-op.
+    if (!signal.aborted) console.error('[dddbml] edge ordering failed', err);
     store.getState().endEdgeOrderProgress();
     activeArrange = null;
     return;
@@ -165,7 +166,8 @@ export async function runEdgeOrdering(opts: { preserveManual?: boolean } = {}): 
       onProgress,
     });
     ordered = res.resets;
-  } catch {
+  } catch (err) {
+    if (!signal.aborted) console.error('[dddbml] edge ordering failed', err);
     store.getState().endEdgeOrderProgress();
     activeArrange = null;
     return;

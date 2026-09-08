@@ -21,8 +21,13 @@ export const CLEARANCE = 16;
  */
 export const GRID_MARGIN = 128;
 
-/** Hard ceiling on cols*rows per A* call. Above it the edge falls back to default H-V-H. */
-export const MAX_GRID_CELLS = 4_000_000;
+/**
+ * Hard ceiling on cols*rows per A* call. Above it the edge falls back to default H-V-H.
+ * `searchGrid` eagerly allocates ~105 bytes per cell (5 directions × g/cameFrom/closed/f) before
+ * the first pop, so this is really a memory cap: 250k cells ≈ 26 MB; the old 4M cap ≈ 420 MB per
+ * edge, which stalled (or OOM-killed) the webview on one outlier-positioned table.
+ */
+export const MAX_GRID_CELLS = 250_000;
 
 /** Cost of one cell of straight travel. */
 export const STEP_COST = 10;
