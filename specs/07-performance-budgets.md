@@ -8,9 +8,12 @@ DBML de 5000 tablas abierto en una laptop decente (Chromium webview, sin WebGL),
 
 | Fixture | Tablas | Refs | Uso |
 |---|---|---|---|
-| `test/fixtures/tiny.dbml` | 5 | 4 | Smoke test M1/M2 |
-| `test/fixtures/medium.dbml` | ~200 | ~150 | Benchmark día-a-día, regresión |
-| `test/fixtures/huge.dbml` | ~5000 | ~1000 | Stress test, generated por `scripts/gen-huge-fixture.mjs` |
+| `test/fixtures/small.dbml` (+ sidecar) | 30 | — | Smoke test; `node scripts/gen-fixtures.mjs small` |
+| `test/fixtures/isga.generated.dbml` (+ sidecar) | ~real | ~real | Esquema real de tamaño medio; regresión día a día |
+| `test/fixtures/huge.dbml` | 5000 | 1000 | Stress test (20 grupos, 8 col/tabla); `node scripts/gen-fixtures.mjs huge` |
+
+> `tiny.dbml` / `medium.dbml` / `gen-huge-fixture.mjs` ya no existen; el generador único es
+> `scripts/gen-fixtures.mjs` (`small` | `huge` | `merge <n>`).
 
 ## Budgets numéricos (medir en M3 y regresar en M5, M6, M7)
 
