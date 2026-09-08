@@ -12,6 +12,14 @@ export function emptyLayout(): Layout {
 
 /** Raised by `readLayout` when the sidecar still holds unresolved git conflict markers.
  *  Callers route this to the 3-way merge resolver instead of silently wiping the layout. */
+/** The sidecar exists but is not valid JSON (hand edit gone wrong). Distinct from a conflict. */
+export class LayoutParseError extends Error {
+  constructor(public readonly parseError: unknown) {
+    super('dddbml: layout sidecar is not valid JSON');
+    this.name = 'LayoutParseError';
+  }
+}
+
 export class LayoutConflictError extends Error {
   constructor(public readonly conflictedText: string) {
     super('dddbml: layout sidecar contains unresolved git conflict markers');
@@ -53,6 +61,13 @@ export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
   // Do NOT feed conflict-marker soup to JSON.parse: it throws and the old catch wiped the
   // layout to empty. Signal the conflict so the caller can run the 3-way merge instead.
   if (hasConflictMarkers(text)) throw new LayoutConflictError(text);
+  // parseLayout is deliberately lenient (merge/diff paths need it); the live read is not — a
+  // corrupt file must surface instead of being adopted as "empty" and overwritten on next persist.
+  try {
+    JSON.parse(text);
+  } catch (err) {
+    throw new LayoutParseError(err);
+  }
   return parseLayout(text);
 }
 

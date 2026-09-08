@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
-import { emptyLayout, LayoutConflictError, mergeLayout, parseLayout, readLayout, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
+import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
 import { applyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
@@ -53,6 +53,8 @@ export class DiagramPanel {
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
   private currentLayout: Layout = emptyLayout();
   private lastWrittenSerialized: string | null = null;
+  /** Set while the sidecar on disk is unparseable; shared writes are refused until a clean read. */
+  private sidecarCorrupt = false;
   /** True once the webview has sent `ready` and received schema/layout; prompts wait for this. */
   private hydrated = false;
   private afterHydrate: Array<() => void> = [];
@@ -450,10 +452,18 @@ export class DiagramPanel {
     try {
       const layout = await readLayout(this.dbmlUri);
       this.pendingMerge = null; // a clean read clears any stale conflict state
+      this.sidecarCorrupt = false;
       return layout;
     } catch (err) {
       if (err instanceof LayoutConflictError) {
         return this.handleConflict();
+      }
+      if (err instanceof LayoutParseError) {
+        this.sidecarCorrupt = true;
+        void vscode.window.showWarningMessage(
+          'dddbml: the layout file is not valid JSON — fix it (or restore it from git) to save layout changes. The diagram is read from the last good layout meanwhile.',
+        );
+        return this.currentLayout;
       }
       return emptyLayout();
     }
@@ -707,7 +717,12 @@ export class DiagramPanel {
       return;
     }
     const parsed = parseDbml(dbmlSrc);
-    const schema = parsed.error ? this.lastValidSchema : parsed.schema;
+    if (parsed.error) {
+      // Substituting today's schema under the old label would silently show the wrong tables.
+      void vscode.window.showWarningMessage(`dddbml: the diagram at ${label} does not parse — ${parsed.error.message}`);
+      return;
+    }
+    const schema = parsed.schema;
     const sidecarSrc = await showBlob(scope.repoRoot, sha, scope.sidecarRel);
     const shared = sidecarSrc != null ? parseLayout(sidecarSrc) : emptyLayout();
     const vs = await readViewState(this.context, this.dbmlUri);
@@ -734,8 +749,12 @@ export class DiagramPanel {
     const baseDbml = await showBlob(scope.repoRoot, 'HEAD', scope.dbmlRel);
     if (baseDbml == null) { void vscode.window.showWarningMessage('dddbml: the diagram has no committed version at HEAD yet.'); return; }
     const parsedBase = parseDbml(baseDbml);
-    const baseSchema = parsedBase.error ? { tables: [], refs: [], groups: [] } : parsedBase.schema;
-    const diff = diffSchemas(baseSchema, this.lastValidSchema);
+    if (parsedBase.error) {
+      // An empty base would report every table as "added" — a false diff, not a degraded one.
+      void vscode.window.showWarningMessage(`dddbml: the diagram at HEAD does not parse — ${parsedBase.error.message}`);
+      return;
+    }
+    const diff = diffSchemas(parsedBase.schema, this.lastValidSchema);
     if (diff.tables.length === 0 && diff.refs.length === 0) {
       void vscode.window.showInformationMessage('dddbml: no schema changes vs HEAD.');
       return;
@@ -771,7 +790,9 @@ export class DiagramPanel {
     let sharedChanged = false;
     try {
       const sharedSerialized = serializeSharedLayout(layout);
-      if (sharedSerialized !== this.lastWrittenSerialized) {
+      if (this.sidecarCorrupt) {
+        // Never clobber a corrupt sidecar with a layout derived from it; the watcher re-reads on fix.
+      } else if (sharedSerialized !== this.lastWrittenSerialized) {
         await writeSharedLayout(this.dbmlUri, layout);
         this.lastWrittenSerialized = sharedSerialized;
         sharedChanged = true;
