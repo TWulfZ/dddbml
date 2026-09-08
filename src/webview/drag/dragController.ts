@@ -77,7 +77,7 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
       const ny = snap(o.y + dy);
       entries.push([n, { x: nx, y: ny }]);
       if (n === tableName) {
-        node.style.transform = `translate3d(${nx}px, ${ny}px, 0)`;
+        node.style.transform = `translate(${nx}px, ${ny}px)`;
       }
     }
     store.getState().setPositionsBatch(entries);

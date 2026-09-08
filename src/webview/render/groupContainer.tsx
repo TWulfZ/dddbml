@@ -46,7 +46,7 @@ function GroupContainerImpl({ name, x, y, w, h, color }: GroupContainerProps) {
       data-group-id={name}
       style={{
         position: 'absolute',
-        transform: `translate3d(${x}px, ${y}px, 0)`,
+        transform: `translate(${x}px, ${y}px)`,
         width: `${w}px`,
         height: `${h}px`,
         borderColor: color,

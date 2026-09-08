@@ -159,7 +159,8 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
           onMouseLeave={onRectLeave}
           style={{
             position: 'absolute',
-            transform: `translate3d(${x}px, ${y}px, 0)`,
+            // 2D on purpose: a 3D transform would promote every node to its own GPU layer (spec 04 §Capas).
+            transform: `translate(${x}px, ${y}px)`,
             width: `${size.width}px`,
             height: `${size.height}px`,
             background: color ?? 'var(--ddd-accent)',
@@ -195,7 +196,7 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
         onMouseLeave={onTableLeave}
         style={{
           position: 'absolute',
-          transform: `translate3d(${x}px, ${y}px, 0)`,
+          transform: `translate(${x}px, ${y}px)`,
           borderTopColor: color ?? undefined,
         }}
       >

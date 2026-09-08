@@ -93,7 +93,7 @@ function Ghost({
     return (
       <div
         class={`ddd-merge-ghost ddd-merge-ghost--chip is-${emphasis}${removed ? ' is-removed' : ''}`}
-        style={{ position: 'absolute', transform: `translate3d(${pos.x}px, ${pos.y}px, 0)` }}
+        style={{ position: 'absolute', transform: `translate(${pos.x}px, ${pos.y}px)` }}
         title={`${table?.tableName ?? conflict.key}: this side removes the saved position`}
         {...handlers}
       >
@@ -107,7 +107,7 @@ function Ghost({
   return (
     <div
       class={`ddd-table ddd-merge-ghost is-${emphasis}`}
-      style={{ position: 'absolute', transform: `translate3d(${pos.x}px, ${pos.y}px, 0)`, width: `${size.width}px` }}
+      style={{ position: 'absolute', transform: `translate(${pos.x}px, ${pos.y}px)`, width: `${size.width}px` }}
       title={`${table.name} (${pos.x}, ${pos.y})`}
       {...handlers}
     >

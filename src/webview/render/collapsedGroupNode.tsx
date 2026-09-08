@@ -39,7 +39,7 @@ function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color }: Collaps
       title={`${name} — ${tableCount} tables (double-click to expand)`}
       style={{
         position: 'absolute',
-        transform: `translate3d(${x}px, ${y}px, 0)`,
+        transform: `translate(${x}px, ${y}px)`,
         width: `${w}px`,
         height: `${h}px`,
         background: color,

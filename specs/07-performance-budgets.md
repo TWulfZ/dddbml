@@ -81,6 +81,7 @@ Librerías pesadas (cuidado):
 - **Routing de aristas en el render path**: síntoma = FPS cae al panear con muchas relaciones. Check: `routeRefs` debe estar memoizado por geometría (`useMemo`), nunca llamado en el cuerpo del render; pan/zoom y hover/selección no deben invalidar el memo (ver spec 05 §8).
 - **Overlay de aristas con hit-DOM por segmento**: si cada arista visible monta `<line>` hit por segmento, el conteo de nodos explota. Check: sólo la arista **seleccionada** monta handles por-segmento; el resto, un único `path.ddd-edge-hit`.
 - **Dagre call en render path**: auto-layout sólo en effect post-schema-change, nunca en render puro.
+- **Un layer GPU por tabla**: síntoma = zoom lento con muchas tablas visibles y chrome que desaparece/se parte. Check: DevTools → Layers debe mostrar **un** layer para `.ddd-world` (más el nodo en drag), no uno por tabla; `grep translate3d src/webview` debe devolver 0. Ver spec 04 "Capas compositadas".
 
 ## Notas de ingeniería
 

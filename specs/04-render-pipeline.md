@@ -190,12 +190,34 @@ flotante "desaparecía o se partía".
   `spatialIndex` → 10 listeners se re-ataban y el estado del gesto se reseteaba en cada
   cambio de posiciones.
 
+## Capas compositadas (GPU)
+
+**Regla:** un único layer compositado para el mundo (`.ddd-world { will-change: transform }`);
+tablas, contenedores de grupo, nodos colapsados y ghosts se posicionan con `translate(x, y)`
+**2D** y pintan dentro de ese layer.
+
+**Por qué (2026-09):** los nodos usaban `translate3d(x, y, 0)`. En Blink una transformación 3D
+es *direct compositing reason*: cada tabla visible se convertía en su propio layer con
+textura propia, re-rasterizado en cada cambio de escala (zoom). Con cientos de tablas
+visibles el presupuesto de memoria GPU se agotaba y Chromium evictaba tiles de **todo el
+proceso** — el chrome flotante (fuera de `.ddd-world`) desaparecía o se pintaba a pedazos. Con
+2D, el mundo es un layer tileado: al panear sólo cambia su transform (sin re-raster), y al
+zoomear se re-rasterizan sólo los tiles visibles. El único nodo que gana `will-change`
+temporalmente es el que se arrastra (`dragController` lo pone en `startDrag` y lo limpia en
+`pointerup`).
+
+**Superficies world-size (SVG de aristas, `.ddd-grid`).** Siguen dimensionadas al bbox
+completo del mundo. Al no estar promovidas viven dentro del layer tileado del mundo, por lo
+que su tamaño no crea texturas gigantes; el coste es sólo de *paint records*. Si la medición
+en DevTools → Layers sigue mostrando presión de memoria tras este cambio, el siguiente paso
+es acotar esas superficies al rect visible cuantizado (Preguntas abiertas).
+
 ## Rendering framework decisions
 
 - **Preact** no React: bundle más chico, compat aliases en vite para zustand.
 - **`useAppStore(selector)`** sobre zustand vanilla (hook propio con `Object.is`): selectores granulares → solo los componentes que miran el slice afectado re-renderizan. **Nunca un selector que devuelva objeto/array/Set nuevo** (siempre "cambia").
 - **Mutación DOM directa durante drag** (M5): bypass Preact re-render, sólo se commit al store al `pointerup`.
-- **`transform: translate3d(...)`**: GPU compositing, no layout/paint per-frame durante pan/zoom.
+- **`transform: translate(x, y)` (2D) en los nodos; sólo `.ddd-world` lleva `will-change: transform`.** Ver "Capas compositadas".
 - **SVG overlay único**: reduce DOM node count vs un `<svg>` por edge.
 
 ## Performance budgets
