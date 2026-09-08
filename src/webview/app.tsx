@@ -73,21 +73,6 @@ export function App(_props: AppProps) {
     document.body.dataset.density = density;
   }, [density]);
 
-  useEffect(() => {
-    if (!ready) return;
-    const missing = schema.tables.filter((t) => !positions.has(t.name));
-    if (missing.length === 0) return;
-    const sizeOf = (name: QualifiedName) => {
-      const t = schema.tables.find((x) => x.name === name);
-      return estimateSize(t?.columns.length ?? 0);
-    };
-    const layoutTargets = positions.size === 0 ? schema.tables : missing;
-    const laidOut = autoLayout(layoutTargets, schema.refs, sizeOf);
-    const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
-    for (const [name, pos] of laidOut) entries.push([name, pos]);
-    if (entries.length > 0) store.getState().setPositionsBatch(entries);
-  }, [schema, ready]);
-
   const columnCountByTable = useMemo(() => {
     const m = new Map<QualifiedName, number>();
     for (const t of schema.tables) m.set(t.name, t.columns.length);
@@ -99,6 +84,20 @@ export function App(_props: AppProps) {
     for (const t of schema.tables) m.set(t.name, t);
     return m;
   }, [schema]);
+
+  // Auto-layout tables that have no position. Depends on `positions` too: "Reset layout" empties
+  // them without touching the schema, and the effect must re-run or the canvas stays blank.
+  useEffect(() => {
+    if (!ready) return;
+    const missing = schema.tables.filter((t) => !positions.has(t.name));
+    if (missing.length === 0) return;
+    const sizeOf = (name: QualifiedName) => estimateSize(tablesByName.get(name)?.columns.length ?? 0);
+    const layoutTargets = positions.size === 0 ? schema.tables : missing;
+    const laidOut = autoLayout(layoutTargets, schema.refs, sizeOf);
+    const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
+    for (const [name, pos] of laidOut) entries.push([name, pos]);
+    if (entries.length > 0) store.getState().setPositionsBatch(entries);
+  }, [schema, tablesByName, positions, ready]);
 
   /** Set of "table::column" keys for every column that participates in any ref. */
   const fkColumnsByTable = useMemo(() => {
@@ -134,8 +133,7 @@ export function App(_props: AppProps) {
           if (hiddenTables.has(t)) continue;
           const pos = positions.get(t);
           if (!pos) continue;
-          const table = schema.tables.find((x) => x.name === t);
-          const size = estimateSize(table?.columns.length ?? 0);
+          const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
           if (pos.x < minX) minX = pos.x;
           if (pos.y < minY) minY = pos.y;
           if (pos.x + size.width > maxX) maxX = pos.x + size.width;
@@ -159,8 +157,7 @@ export function App(_props: AppProps) {
         for (const t of g.tables) {
           const pos = positions.get(t);
           if (!pos) continue;
-          const table = schema.tables.find((x) => x.name === t);
-          const size = estimateSize(table?.columns.length ?? 0);
+          const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
           sumX += pos.x + size.width / 2;
           sumY += pos.y + size.height / 2;
           n++;
@@ -185,7 +182,7 @@ export function App(_props: AppProps) {
     const mapEndpoint = (table: QualifiedName): QualifiedName | null => {
       if (hiddenTables.has(table)) return null;
       if (collapsedTables.has(table)) {
-        const tbl = schema.tables.find((t) => t.name === table);
+        const tbl = tablesByName.get(table);
         if (tbl?.groupName) return groupId(tbl.groupName);
         return null;
       }
@@ -215,7 +212,7 @@ export function App(_props: AppProps) {
     }
 
     return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs, refKeyByStableId };
-  }, [schema, positions, groupState, individuallyHidden, density]);
+  }, [schema, tablesByName, positions, groupState, individuallyHidden, density]);
 
   const spatialIndex = useMemo(() => {
     const idx = new SpatialIndex();

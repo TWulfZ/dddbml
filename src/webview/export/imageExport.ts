@@ -139,6 +139,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     return idx < 0 ? undefined : columnCenterY(idx);
   };
 
+  const colorByGroup = groupColorMap(derived);
   // Candidate rendered tables (mirror app.tsx: not hidden, not collapsed, has a position).
   const rendered = schema.tables.filter(
     (t) => !derived.hiddenTables.has(t.name) && !derived.collapsedTables.has(t.name) && positions.has(t.name),
@@ -170,7 +171,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     if (!includedTables.has(t.name)) continue;
     const pos = positions.get(t.name)!;
     const size = estimateSize(t.columns.length);
-    const groupColor = t.groupName ? colorOfGroup(derived, t.groupName) : undefined;
+    const groupColor = t.groupName ? colorByGroup.get(t.groupName) : undefined;
     const accent = tableColors.get(t.name) ?? groupColor ?? null;
     tables.push({
       x: pos.x, y: pos.y, w: size.width, h: size.height,
@@ -247,9 +248,11 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
   return { bounds, background: opts.background, density, tables, containers, collapsed, edges };
 }
 
-function colorOfGroup(derived: ExportDerived, groupName: string): string | undefined {
-  const c = derived.containers.find((g) => g.name === groupName) ?? derived.collapsedNodes.find((g) => g.name === groupName);
-  return c?.color;
+function groupColorMap(derived: ExportDerived): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const g of derived.collapsedNodes) m.set(g.name, g.color);
+  for (const g of derived.containers) m.set(g.name, g.color);
+  return m;
 }
 
 /* ----- SVG emission (pure given a ThemeTokens + color resolver) ----- */
