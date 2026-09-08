@@ -7,7 +7,7 @@ Built for:
 - **Large schemas** — viewport culling + LOD rendering keeps pan/zoom smooth up to **~5000 tables**.
 - **Git-based teams** — position and group state live in a sibling JSON file with stable key ordering, so diffs are minimal and reviewable.
 
-![Overview](docs/screenshots/overview.png)
+<img width="1917" height="1001" alt="image" src="https://github.com/user-attachments/assets/021105af-da16-4f30-8e5b-313f72ac43a6" />
 
 ---
 
