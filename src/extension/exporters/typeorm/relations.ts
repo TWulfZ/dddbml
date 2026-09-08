@@ -149,27 +149,40 @@ export function relationsByOwner(
 ): { byOwner: Map<QualifiedName, RelationSide[]>; orphanedRefIds: Set<string> } {
   const byOwner = new Map<QualifiedName, RelationSide[]>();
   const orphanedRefIds = new Set<string>();
+  type End = 'source' | 'target';
+  const key = (refId: string, end: End) => `${refId}:${end}`;
 
-  const push = (side: RelationSide) => {
+  // Pass 1: resolve every side's property name (suffix `_N` on collisions within an entity).
+  // Pass 2: point each side's inverse callback at its SIBLING's resolved name — the pair captured
+  // the pre-collision name, so two FKs between the same tables used to emit `user => user.orders`
+  // on both owning sides while the entity actually had `orders` and `orders_2`.
+  const resolvedName = new Map<string, string>();
+  const usedByOwner = new Map<QualifiedName, Set<string>>();
+  const resolved: Array<{ side: RelationSide; end: End; name: string }> = [];
+  const resolve = (side: RelationSide, end: End) => {
     if (!liveTables.has(side.ownerTable) || !liveTables.has(side.targetTable)) {
       orphanedRefIds.add(side.refId);
       return;
     }
-    const list = byOwner.get(side.ownerTable) ?? [];
-    // Avoid name collisions on the same entity.
-    const used = new Set(list.map((s) => s.propertyName));
+    let used = usedByOwner.get(side.ownerTable);
+    if (!used) { used = new Set(); usedByOwner.set(side.ownerTable, used); }
     let candidate = side.propertyName;
     let i = 2;
-    while (used.has(candidate)) {
-      candidate = `${side.propertyName}_${i++}`;
-    }
-    list.push({ ...side, propertyName: candidate });
-    byOwner.set(side.ownerTable, list);
+    while (used.has(candidate)) candidate = `${side.propertyName}_${i++}`;
+    used.add(candidate);
+    resolvedName.set(key(side.refId, end), candidate);
+    resolved.push({ side, end, name: candidate });
   };
-
   for (const pair of pairs) {
-    push(pair.source);
-    push(pair.target);
+    resolve(pair.source, 'source');
+    resolve(pair.target, 'target');
+  }
+  for (const { side, end, name } of resolved) {
+    const sibling: End = end === 'source' ? 'target' : 'source';
+    const inverse = resolvedName.get(key(side.refId, sibling)) ?? side.inversePropertyName;
+    const list = byOwner.get(side.ownerTable) ?? [];
+    list.push({ ...side, propertyName: name, inversePropertyName: inverse });
+    byOwner.set(side.ownerTable, list);
   }
 
   return { byOwner, orphanedRefIds };

@@ -56,7 +56,7 @@ export function DiffGhosts({ ghosts, removedRefs, positions, tablesByName }: Dif
             class="ddd-table ddd-diff-ghost"
             style={{
               position: 'absolute',
-              transform: `translate3d(${g.pos.x}px, ${g.pos.y}px, 0)`,
+              transform: `translate(${g.pos.x}px, ${g.pos.y}px)`,
               width: `${s.width}px`,
               pointerEvents: 'none',
             }}

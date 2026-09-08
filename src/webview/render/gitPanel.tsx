@@ -1,4 +1,5 @@
 import type { VNode } from 'preact';
+import { memo } from 'preact/compat';
 import { useEffect, useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
@@ -39,7 +40,7 @@ function close() {
  * settings panel shell (`.ddd-settings__*` = the generic two-pane layout). All actions are scoped to
  * the diagram files only (the `.dbml` + its layout sidecar).
  */
-export function GitPanel() {
+function GitPanelImpl() {
   const open = useAppStore((s) => s.gitPanelOpen);
   const gitStatus = useAppStore((s) => s.gitStatus);
   const [active, setActive] = useState<Section>('commit');
@@ -130,15 +131,21 @@ function FileList({ status }: { status: GitStatusSummary }) {
 
 function CommitPane({ status }: { status: GitStatusSummary }) {
   const busy = useAppStore((s) => s.gitBusy);
+  const commitOkCount = useAppStore((s) => s.gitCommitOkCount);
   const [message, setMessage] = useState('');
   const [confirmRevert, setConfirmRevert] = useState(false);
   const canCommit = status.dirty && message.trim().length > 0 && !busy;
+
+  // Clear only once the host reports success; a failed commit (no user.email, rejected hook)
+  // used to wipe the message before the error toast arrived.
+  useEffect(() => {
+    if (commitOkCount > 0) setMessage('');
+  }, [commitOkCount]);
 
   const commit = () => {
     if (!canCommit) return;
     store.getState().setGitBusy(true);
     postToHost({ type: 'git:commit', payload: { message: message.trim() } });
-    setMessage('');
   };
 
   const revert = () => {
@@ -363,3 +370,6 @@ function DiffPane({ status }: { status: GitStatusSummary }) {
     </section>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const GitPanel = memo(GitPanelImpl);

@@ -8,9 +8,12 @@ DBML de 5000 tablas abierto en una laptop decente (Chromium webview, sin WebGL),
 
 | Fixture | Tablas | Refs | Uso |
 |---|---|---|---|
-| `test/fixtures/tiny.dbml` | 5 | 4 | Smoke test M1/M2 |
-| `test/fixtures/medium.dbml` | ~200 | ~150 | Benchmark día-a-día, regresión |
-| `test/fixtures/huge.dbml` | ~5000 | ~1000 | Stress test, generated por `scripts/gen-huge-fixture.mjs` |
+| `test/fixtures/small.dbml` (+ sidecar) | 30 | — | Smoke test; `node scripts/gen-fixtures.mjs small` |
+| `test/fixtures/isga.generated.dbml` (+ sidecar) | ~real | ~real | Esquema real de tamaño medio; regresión día a día |
+| `test/fixtures/huge.dbml` | 5000 | 1000 | Stress test (20 grupos, 8 col/tabla); `node scripts/gen-fixtures.mjs huge` |
+
+> `tiny.dbml` / `medium.dbml` / `gen-huge-fixture.mjs` ya no existen; el generador único es
+> `scripts/gen-fixtures.mjs` (`small` | `huge` | `merge <n>`).
 
 ## Budgets numéricos (medir en M3 y regresar en M5, M6, M7)
 
@@ -51,8 +54,8 @@ requestAnimationFrame(tick);
 
 | Artefacto | Budget | Actual |
 |---|---|---|
-| `dist/webview/webview.js` (gzipped) | < 40kb (objetivo histórico) | ~29kb post-M2 · **~88kb** (sin ELK, con smart-layout dagre) |
-| `dist/webview/webview.js` (uncompressed) | < 200kb (objetivo histórico) | ~106kb post-M2 · ~410kb |
+| `dist/webview/webview.js` (gzipped) | < 40kb (objetivo histórico) | ~29kb post-M2 · ~88kb (dagre) · **~95kb** (+ router A* edge-ordering, spec 05 §9) |
+| `dist/webview/webview.js` (uncompressed) | < 200kb (objetivo histórico) | ~106kb post-M2 · ~441kb |
 | `dist/extension/**` (uncompressed) | < 50kb | tbd |
 
 > **ELK eliminado — motor de layout = dagre dos niveles (v0.3.x, 2026-05-31).** El smart
@@ -75,12 +78,13 @@ Librerías pesadas (cuidado):
 
 ## Regresiones conocidas a vigilar
 
-- **Re-render en cada pan frame**: síntoma = FPS cae a <30 durante pan. Check: `React DevTools Profiler` (o `preact/devtools`), identificar componentes que re-renderizan sin necesidad. Memoize con `useMemo`.
+- **Re-render en cada pan frame**: síntoma = FPS cae a <30 durante pan y, en esquemas grandes, el chrome flotante desaparece/se parte (ocurrió en 2026-09). Check: `App` **no** debe seleccionar `s.viewport` (sólo `lodForZoom(...)`); el transform de `.ddd-world` se aplica imperativo; `useVisibleNames` devuelve la misma instancia si la membresía no cambió; ningún selector devuelve objeto nuevo (`preact/devtools` Profiler para confirmar). Ver spec 04 "Cámara fuera de Preact".
 - **Spatial index rebuild en pan**: `useEffect` deps incluye `viewport` por error. Check: effect de `idx.clear()` debe depender sólo de `schema` y `positions`, nunca viewport.
 - **Edge overlay sin culling**: si se dibujan 1000 paths SVG innecesarios, perf cae. Check: refs visibles (`visibleRefIds`) en statusbar con diagrama grande.
 - **Routing de aristas en el render path**: síntoma = FPS cae al panear con muchas relaciones. Check: `routeRefs` debe estar memoizado por geometría (`useMemo`), nunca llamado en el cuerpo del render; pan/zoom y hover/selección no deben invalidar el memo (ver spec 05 §8).
 - **Overlay de aristas con hit-DOM por segmento**: si cada arista visible monta `<line>` hit por segmento, el conteo de nodos explota. Check: sólo la arista **seleccionada** monta handles por-segmento; el resto, un único `path.ddd-edge-hit`.
 - **Dagre call en render path**: auto-layout sólo en effect post-schema-change, nunca en render puro.
+- **Un layer GPU por tabla**: síntoma = zoom lento con muchas tablas visibles y chrome que desaparece/se parte. Check: DevTools → Layers debe mostrar **un** layer para `.ddd-world` (más el nodo en drag), no uno por tabla; `grep translate3d src/webview` debe devolver 0. Ver spec 04 "Capas compositadas".
 
 ## Notas de ingeniería
 

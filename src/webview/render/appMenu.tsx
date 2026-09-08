@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { createPortal } from 'preact/compat';
+import { createPortal, memo } from 'preact/compat';
 import { store, useAppStore } from '../state/store';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
-import { IconMenu, IconSettings, IconExport, IconGit, IconChevronRight } from '../icons';
+import { IconMenu, IconSettings, IconExport, IconImage, IconGit, IconChevronRight } from '../icons';
 import { clampMenuAnchor } from './contextMenu';
 
 /**
@@ -19,10 +19,10 @@ import { clampMenuAnchor } from './contextMenu';
  */
 
 const MENU_WIDTH = 200;
-const MENU_HEIGHT_EST = 140;
+const MENU_HEIGHT_EST = 176;
 const ANCHOR_GAP = 4;
 
-export function AppMenu() {
+function AppMenuImpl() {
   const open = useAppStore((s) => s.appMenuOpen);
   const wrapRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -112,6 +112,14 @@ export function AppMenu() {
                 <IconExport size={14} />
                 <span class="ddd-app-menu__label">Export…</span>
               </button>
+              <button
+                class="ddd-app-menu__item"
+                role="menuitem"
+                onClick={pick(() => store.getState().setExportImagePromptOpen(true))}
+              >
+                <IconImage size={14} />
+                <span class="ddd-app-menu__label">Export image…</span>
+              </button>
               <hr class="ddd-app-menu__separator" />
               <button
                 class="ddd-app-menu__item"
@@ -131,3 +139,6 @@ export function AppMenu() {
     </div>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const AppMenu = memo(AppMenuImpl);

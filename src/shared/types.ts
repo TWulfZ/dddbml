@@ -81,6 +81,14 @@ export interface Waypoint {
   y: number;
 }
 
+/** The four table sides an edge endpoint can attach to (persisted in `EdgeLayout`). */
+export type EdgeSide = 'left' | 'right' | 'top' | 'bottom';
+
+/** Runtime guard for a persisted/validated edge side (read-validators, host + webview). */
+export function isEdgeSide(v: unknown): v is EdgeSide {
+  return v === 'left' || v === 'right' || v === 'top' || v === 'bottom';
+}
+
 export interface EdgeLayout {
   /**
    * Orthogonal bend vertices in absolute world coords. Empty/undefined = auto H-V-H routing.
@@ -91,10 +99,15 @@ export interface EdgeLayout {
   waypoints?: Waypoint[];
   /** Per-edge stroke color (BC palette value or custom hex). Absent = theme default. */
   color?: string;
-  /** Manual override of the auto-chosen source port side. Absent = `chooseSides`. */
-  sourceSide?: 'left' | 'right';
-  /** Manual override of the auto-chosen target port side. Absent = `chooseSides`. */
-  targetSide?: 'left' | 'right';
+  /**
+   * Manual override of the auto-chosen source port side. Absent = `chooseSides`.
+   * `left`/`right` anchor the port to a column row (`columnYResolver`); `top`/`bottom` use an
+   * x-ratio with no column-row anchor. The always-on render path (`chooseSides`) only ever picks
+   * `left`/`right`; `top`/`bottom` are written by the on-demand A* edge-ordering pass (spec 05 §9).
+   */
+  sourceSide?: EdgeSide;
+  /** Manual override of the auto-chosen target port side. Absent = `chooseSides`. See `sourceSide`. */
+  targetSide?: EdgeSide;
   /** @deprecated v1 — single H-V-H midX offset. Migrated to a single waypoint on first persist. */
   dx?: number;
   /** @deprecated v1 — see `dx`. */
@@ -275,7 +288,8 @@ export type HostToWebview =
   | { type: 'layout:external-change'; payload: Layout }
   | { type: 'theme:change'; payload: { kind: 'light' | 'dark' } }
   | { type: 'viewport:command'; payload: { action: ViewportCommand } }
-  | { type: 'command:autoArrange'; payload: { mode: AutoArrangeMode } }
+  | { type: 'command:autoArrange'; payload: { mode: AutoArrangeMode; orderEdges?: boolean; preserveManualEdges?: boolean } }
+  | { type: 'command:orderEdges'; payload: { preserveManualEdges?: boolean } }
   | { type: 'exporters:list'; payload: { exporters: ExporterMeta[] } }
   | { type: 'export:result'; payload: { ok: boolean; warnings?: string[]; message?: string } }
   | { type: 'settings:loaded'; payload: AppSettings }
@@ -289,7 +303,9 @@ export type HostToWebview =
   | { type: 'git:timeTravel:enter'; payload: { rev: string; label: string; schema: Schema; layout: Layout } }
   | { type: 'git:timeTravel:exit' }
   | { type: 'git:diff:enter'; payload: { baseLabel: string; headLabel: string; diff: SchemaDiff } }
-  | { type: 'export:prompt' };
+  | { type: 'export:prompt' }
+  | { type: 'exportImage:prompt' }
+  | { type: 'image:result'; payload: { ok: boolean; path?: string; message?: string } };
 
 /* ----- Protocol: Webview → Host ----- */
 
@@ -299,6 +315,7 @@ export type WebviewToHost =
   | { type: 'command:reveal'; payload: { tableName: QualifiedName } }
   | { type: 'command:pruneOrphans' }
   | { type: 'command:export'; payload: ExportCommandPayload }
+  | { type: 'command:saveImage'; payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string } }
   | { type: 'settings:update'; payload: Partial<FlatSettingsPatch> }
   | { type: 'merge:resolve'; payload: { decisions: Record<string, 'ours' | 'theirs'> } }
   | { type: 'git:requestStatus' }

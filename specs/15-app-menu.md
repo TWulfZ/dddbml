@@ -64,12 +64,14 @@ ancla a coords de click, es label-only y lo comparte el scope-menu de ActionsPan
 - **Filas (mínimo):**
   - `IconSettings` "Settings" → cerrar menú + `setSettingsPanelOpen(true)`.
   - `IconExport` "Export…" → cerrar menú + `setExportPromptOpen(true)`.
+  - `IconImage` "Export image…" → cerrar menú + `setExportImagePromptOpen(true)`
+    (export del diagrama a PNG/SVG/portapapeles; ver [`17-export-image.md`](17-export-image.md)).
   - separador.
   - `IconGit` "Git" → abre el `GitPanel` (`setGitPanelOpen(true)`) con chevron
     derecho como afordancia del panel (ver [`16-git-integration.md`](16-git-integration.md)).
 
-Las filas **re-disparan los modales existentes** (`SettingsPanel`, `ExportModal`):
-no se duplica su lógica, es un segundo trigger.
+Las filas **re-disparan los modales existentes** (`SettingsPanel`, `ExportModal`,
+`ExportImageModal`): no se duplica su lógica, es un segundo trigger.
 
 ### Render / motion / CSS (`style.css`, `@layer components`)
 

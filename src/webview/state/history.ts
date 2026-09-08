@@ -1,4 +1,4 @@
-import type { EdgeLayout, QualifiedName, Waypoint } from '../../shared/types';
+import type { EdgeLayout, EdgeSide, QualifiedName, Waypoint } from '../../shared/types';
 
 /**
  * Action history entry for a table move (single or batch).
@@ -32,8 +32,8 @@ export interface WaypointCommand {
 /** Snapshot of an edge's non-shape style fields (color + port side overrides). */
 export interface EdgeStyle {
   color?: string;
-  sourceSide?: 'left' | 'right';
-  targetSide?: 'left' | 'right';
+  sourceSide?: EdgeSide;
+  targetSide?: EdgeSide;
 }
 
 /**

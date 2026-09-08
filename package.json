@@ -55,6 +55,11 @@
         "category": "dddbml"
       },
       {
+        "command": "dddbml.exportImage",
+        "title": "dddbml: Export Image…",
+        "category": "dddbml"
+      },
+      {
         "command": "dddbml.autoArrange",
         "title": "dddbml: Auto-arrange Diagram…",
         "category": "dddbml"

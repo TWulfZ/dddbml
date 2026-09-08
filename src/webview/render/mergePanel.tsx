@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { GroupLayout, SerializableMergeConflict } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
@@ -21,7 +22,7 @@ export const SIDE_LABEL: Record<'ours' | 'theirs', string> = { ours: 'current', 
  * not jump. `Apply` opens a confirm dialog (the only place the conflict count is restated) and is the
  * sole step that writes the clean sidecar + `git add`.
  */
-export function MergePanel() {
+function MergePanelImpl() {
   const conflicts = useAppStore((s) => s.mergeConflicts);
   const decisions = useAppStore((s) => s.mergeDecisions);
   const applying = useAppStore((s) => s.mergeApplying);
@@ -163,3 +164,6 @@ function colorOf(v: SerializableMergeConflict['ours']): string | null {
   if (v && typeof v === 'object' && 'color' in v) return (v as GroupLayout).color ?? null;
   return null;
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const MergePanel = memo(MergePanelImpl);

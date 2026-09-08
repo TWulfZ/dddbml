@@ -20,6 +20,8 @@ import type { Waypoint } from '../../shared/types';
  */
 
 let active = false;
+/** One edge gesture at a time: a second pointerdown mid-drag would stack a second listener set. */
+let edgeDragActive = false;
 
 /** Min screen-px the pointer must travel between down and up to count as a drag (not a click). */
 const CLICK_THRESHOLD_PX = 4;
@@ -77,7 +79,7 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
       const ny = snap(o.y + dy);
       entries.push([n, { x: nx, y: ny }]);
       if (n === tableName) {
-        node.style.transform = `translate3d(${nx}px, ${ny}px, 0)`;
+        node.style.transform = `translate(${nx}px, ${ny}px)`;
       }
     }
     store.getState().setPositionsBatch(entries);
@@ -133,7 +135,8 @@ function runEdgeDrag(
   target: SVGElement | HTMLElement,
   build: (dxWorld: number, dyWorld: number, ev: PointerEvent, startX: number, startY: number) => Waypoint[] | null,
 ): void {
-  if (e.button !== 0) return;
+  if (edgeDragActive || e.button !== 0) return;
+  edgeDragActive = true;
   e.stopPropagation();
   e.preventDefault();
   const from = snapshotWaypoints(refId);
@@ -151,6 +154,7 @@ function runEdgeDrag(
   };
 
   const onUp = (ev: PointerEvent) => {
+    edgeDragActive = false;
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
@@ -256,7 +260,8 @@ export function startEndpointDrag(
   target: SVGElement | HTMLElement,
   toWorldX: (clientX: number) => number | null,
 ): void {
-  if (e.button !== 0) return;
+  if (edgeDragActive || e.button !== 0) return;
+  edgeDragActive = true;
   e.stopPropagation();
   e.preventDefault();
   const before = readEdgeStyle(refId);
@@ -270,6 +275,7 @@ export function startEndpointDrag(
   };
 
   const onUp = (ev: PointerEvent) => {
+    edgeDragActive = false;
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);

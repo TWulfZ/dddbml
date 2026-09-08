@@ -4,7 +4,7 @@ import styleSource from './style.css?inline';
 import { store } from './state/store';
 import { postToHost } from './vscode';
 import { fitToContent, resetView, zoomAtCenter } from './render/viewport';
-import { runSmartLayout } from './layout/smartLayout';
+import { runSmartLayout, runEdgeOrdering } from './layout/smartLayout';
 import type { HostToWebview } from '../shared/types';
 
 {
@@ -39,6 +39,13 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
     case 'export:result':
       state.setExportPromptOpen(false);
       return;
+    case 'exportImage:prompt':
+      state.setExportImagePromptOpen(true);
+      return;
+    case 'image:result':
+      // Only close on success; on failure/cancel keep the dialog open so the user can retry.
+      if (msg.payload.ok) state.setExportImagePromptOpen(false);
+      return;
     case 'viewport:command': {
       const el = document.querySelector<HTMLElement>('.ddd-viewport');
       if (!el) return;
@@ -52,7 +59,13 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
       return;
     }
     case 'command:autoArrange':
-      void runSmartLayout(msg.payload.mode);
+      void runSmartLayout(msg.payload.mode, {
+        orderEdges: msg.payload.orderEdges,
+        preserveManualEdges: msg.payload.preserveManualEdges,
+      });
+      return;
+    case 'command:orderEdges':
+      void runEdgeOrdering({ preserveManual: msg.payload.preserveManualEdges });
       return;
     case 'merge:begin':
       state.beginMerge(msg.payload.conflicts);
@@ -65,6 +78,7 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
       return;
     case 'git:commitResult':
       state.setGitBusy(false);
+      if (msg.payload.ok) state.noteGitCommitOk();
       return;
     case 'git:stashes':
       state.setGitStashes(msg.payload.stashes);

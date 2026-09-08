@@ -1,9 +1,10 @@
 import { useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { Column, ColumnDiffEntry, Table, TableDiffStatus } from '../../shared/types';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag } from '../drag/dragController';
-import { countResettableSelectionEdges, resetSelectedEdges, runSmartLayout } from '../layout/smartLayout';
+import { countResettableSelectionEdges, resetSelectedEdges, runEdgeOrdering, runSmartLayout } from '../layout/smartLayout';
 import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
 import { store, useAppStore } from '../state/store';
@@ -57,8 +58,13 @@ function buildDiffRows(current: Column[], base: Column[] | undefined, changed: S
   for (const cc of current) {
     const bc = baseByName.get(cc.name);
     if (bc) {
-      flushRemovedBefore(base.indexOf(bc));
-      bi = base.indexOf(bc) + 1;
+      // Never rewind: a kept column that moved ahead of an already-flushed range would otherwise
+      // make the final flush re-emit a removed column (duplicate `-` row and duplicate key).
+      const idx = base.indexOf(bc);
+      if (idx >= bi) {
+        flushRemovedBefore(idx);
+        bi = idx + 1;
+      }
       if (changed.has(cc.name)) {
         rows.push({ key: `-${cc.name}`, kind: 'changed-old', col: bc, isFk: false });
         rows.push({ key: `+${cc.name}`, kind: 'changed-new', col: cc, isFk: isFk(cc.name) });
@@ -73,10 +79,9 @@ function buildDiffRows(current: Column[], base: Column[] | undefined, changed: S
   return rows;
 }
 
-export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
+function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
   const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
-  const selection = useAppStore((s) => s.selection);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   const onPointerDown = (e: PointerEvent) => {
@@ -114,13 +119,20 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
     { label: 'Copy table name', onClick: () => { void navigator.clipboard.writeText(table.tableName); } },
   ];
 
-  // Selection actions, shown only when right-clicking a selected table.
-  if (selection.size > 0 && selection.has(table.name)) {
+  // Selection actions, shown only when right-clicking a selected table. Read from the store at
+  // menu-open time rather than subscribing: a `selection` subscription re-rendered EVERY mounted
+  // table on each selection change (the `selected` prop already covers the visual state).
+  const selection = ctxMenu ? store.getState().selection : null;
+  if (selection && selection.size > 0 && selection.has(table.name)) {
     const resettable = countResettableSelectionEdges();
     ctxItems.push({ label: '', onClick: () => {}, separator: true });
     ctxItems.push({
       label: `Auto-arrange selected (${selection.size})`,
       onClick: () => { void runSmartLayout('selection'); },
+    });
+    ctxItems.push({
+      label: 'Order edges only',
+      onClick: () => { void runEdgeOrdering(); },
     });
     ctxItems.push({
       label: `Reset relations (${resettable})`,
@@ -154,7 +166,8 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
           onMouseLeave={onRectLeave}
           style={{
             position: 'absolute',
-            transform: `translate3d(${x}px, ${y}px, 0)`,
+            // 2D on purpose: a 3D transform would promote every node to its own GPU layer (spec 04 §Capas).
+            transform: `translate(${x}px, ${y}px)`,
             width: `${size.width}px`,
             height: `${size.height}px`,
             background: color ?? 'var(--ddd-accent)',
@@ -190,7 +203,7 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffSt
         onMouseLeave={onTableLeave}
         style={{
           position: 'absolute',
-          transform: `translate3d(${x}px, ${y}px, 0)`,
+          transform: `translate(${x}px, ${y}px)`,
           borderTopColor: color ?? undefined,
         }}
       >
@@ -327,3 +340,6 @@ function TableNoteIcon({ note, name }: { note: string; name: string }) {
     </span>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const TableNode = memo(TableNodeImpl);

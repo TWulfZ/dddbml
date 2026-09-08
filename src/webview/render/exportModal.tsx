@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { Button } from '../ui/Button';
@@ -8,7 +9,7 @@ import type { ExporterMeta, ExporterOptionField } from '../../shared/exporters/t
 
 type Scope = 'all' | 'selected';
 
-export function ExportModal() {
+function ExportModalImpl() {
   const open = useAppStore((s) => s.exportPromptOpen);
   const exporters = useAppStore((s) => s.exporters);
   const defaultFormat = useAppStore((s) => s.settings.export.defaultFormat);
@@ -164,3 +165,6 @@ function settingsDefaultFor(
   }
   return field.default;
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const ExportModal = memo(ExportModalImpl);

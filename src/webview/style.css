@@ -851,6 +851,18 @@
     border-top: 1px solid var(--ddd-border-subtle);
     margin: var(--ddd-space-2) 0;
   }
+  /* Checkbox row: a fixed-width check gutter so labels align whether ticked or not. */
+  .ddd-context-menu__item.is-checkbox {
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-2);
+  }
+  .ddd-context-menu__check {
+    display: inline-block;
+    width: 1em;
+    text-align: center;
+    color: var(--ddd-accent);
+  }
 
   /* ---- App menu (top-left, Excalidraw-style) ---- */
   /* Always-visible trigger surface; matches the bottom-corner chrome (.ddd-zoom). */
@@ -1980,6 +1992,60 @@
                 background-color var(--ddd-duration-fast) var(--ddd-ease-out);
   }
   .ddd-merge-progress__fill[data-complete] { background: var(--ddd-success); }
+
+  /* On-demand edge-ordering progress overlay (spec 05 §9). Bottom-center floating card with a real
+     percentage bar + Cancel. Honors reduced-motion (the fill jumps instead of animating). */
+  .ddd-edge-order-overlay {
+    position: fixed;
+    left: 50%;
+    bottom: var(--ddd-space-7);
+    transform: translateX(-50%);
+    z-index: 40;
+    pointer-events: none;
+  }
+  .ddd-edge-order-overlay__card {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--ddd-space-4);
+    padding: var(--ddd-space-3) var(--ddd-space-5);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border-subtle);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    font-size: var(--ddd-text-base);
+  }
+  .ddd-edge-order-overlay__label {
+    white-space: nowrap;
+    color: var(--ddd-fg);
+  }
+  .ddd-edge-order-overlay__bar {
+    width: 160px;
+    height: var(--ddd-space-2);
+    border-radius: var(--ddd-radius-full);
+    background: var(--ddd-surface-active);
+    overflow: hidden;
+  }
+  .ddd-edge-order-overlay__fill {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--ddd-accent);
+    transition: width var(--ddd-duration-medium) var(--ddd-ease-out);
+  }
+  .ddd-edge-order-overlay__cancel {
+    padding: var(--ddd-space-2) var(--ddd-space-4);
+    background: transparent;
+    color: var(--ddd-accent);
+    border: 1px solid var(--ddd-border-subtle);
+    border-radius: var(--ddd-radius-sm);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--ddd-text-base);
+  }
+  .ddd-edge-order-overlay__cancel:hover { background: var(--ddd-surface-hover); }
+  @media (prefers-reduced-motion: reduce) {
+    .ddd-edge-order-overlay__fill { transition: none; }
+  }
 
   /* Step-view dot rail — clickable per-conflict jump + status mirror. The orb is the small visible
      circle; the <button> around it carries transparent hit padding and the rail gap is 0, so the

@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
-import { useEffect, useReducer } from 'preact/hooks';
-import type { AppSettings, ColumnDiffEntry, EdgeLayout, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
-import { defaultSettings } from '../../shared/types';
+import { useEffect, useReducer, useRef } from 'preact/hooks';
+import type { AppSettings, ColumnDiffEntry, EdgeLayout, EdgeSide, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
+import { defaultSettings, isEdgeSide } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
 
@@ -48,8 +48,10 @@ export interface AppState {
   showOnlyPkFk: boolean;
   settings: AppSettings;
   exporters: ExporterMeta[];
-  /** When true, the Export modal is open. */
+  /** When true, the Export (schema) modal is open. */
   exportPromptOpen: boolean;
+  /** When true, the Export image modal is open. */
+  exportImagePromptOpen: boolean;
   /** When true, the Settings panel is open. */
   settingsPanelOpen: boolean;
   /** When true, the top-left application menu popover is open (spec 15). */
@@ -84,6 +86,8 @@ export interface AppState {
   gitPanelOpen: boolean;
   /** True while a git write op (commit/stash/restore) is in flight — disables the action buttons. */
   gitBusy: boolean;
+  /** Bumped on every successful commit — the commit pane clears its message on this, not optimistically. */
+  gitCommitOkCount: number;
   /** Repo-global stash entries, newest first (spec 16). */
   gitStashes: GitStashEntry[];
   /** Commits touching the diagram files (History pane), newest first. */
@@ -115,6 +119,12 @@ export interface AppState {
   panMode: boolean;
   /** True while the spacebar is held — a temporary pan override regardless of `panMode`. */
   spacePan: boolean;
+  /**
+   * On-demand edge-ordering progress (spec 05 §9). `null` ⇒ idle; non-null ⇒ a run is in flight and
+   * the cancelable progress overlay is shown. Ephemeral, never persisted, and NOT read by the edge
+   * route memo, so pumping it never re-routes edges.
+   */
+  edgeOrderProgress: { pct: number } | null;
 }
 
 export interface AppActions {
@@ -131,7 +141,7 @@ export interface AppActions {
   setEdgeWaypoints(refId: string, waypoints: Waypoint[]): void;
   applyEdgeLayouts(entries: Array<[string, EdgeLayout | null]>): void;
   setEdgeColor(refId: string, color: string | null): void;
-  setEdgeSide(refId: string, end: 'source' | 'target', side: 'left' | 'right' | null): void;
+  setEdgeSide(refId: string, end: 'source' | 'target', side: EdgeSide | null): void;
   resetEdgeShape(refId: string): void;
   setSelectedEdge(refId: string | null): void;
   setSelection(names: Iterable<QualifiedName>): void;
@@ -141,6 +151,7 @@ export interface AppActions {
   setSettings(s: AppSettings): void;
   setExporters(list: ExporterMeta[]): void;
   setExportPromptOpen(open: boolean): void;
+  setExportImagePromptOpen(open: boolean): void;
   setSettingsPanelOpen(open: boolean): void;
   setAppMenuOpen(open: boolean): void;
   setViewsPanelOpen(open: boolean): void;
@@ -164,6 +175,7 @@ export interface AppActions {
   setGitStatus(status: GitStatusSummary): void;
   setGitPanelOpen(open: boolean): void;
   setGitBusy(busy: boolean): void;
+  noteGitCommitOk(): void;
   setGitStashes(stashes: GitStashEntry[]): void;
   setGitCommits(commits: GitCommitMeta[]): void;
   enterTimeTravel(rev: string, label: string): void;
@@ -174,6 +186,12 @@ export interface AppActions {
   setHoveredTable(name: QualifiedName | null): void;
   setPanMode(on: boolean): void;
   setSpacePan(on: boolean): void;
+  /** Show the edge-ordering overlay at 0% (start of an on-demand run). */
+  startEdgeOrderProgress(): void;
+  /** Update the overlay percentage, monotonically (ignores a lower value than the current one). */
+  setEdgeOrderProgress(pct: number): void;
+  /** Hide the edge-ordering overlay (run finished or canceled). */
+  endEdgeOrderProgress(): void;
 }
 
 const initial: AppState = {
@@ -193,9 +211,11 @@ const initial: AppState = {
   showOnlyPkFk: false,
   panMode: false,
   spacePan: false,
+  edgeOrderProgress: null,
   settings: defaultSettings(),
   exporters: [],
   exportPromptOpen: false,
+  exportImagePromptOpen: false,
   settingsPanelOpen: false,
   appMenuOpen: false,
   viewsPanelOpen: true,
@@ -212,6 +232,7 @@ const initial: AppState = {
   gitStatus: null,
   gitPanelOpen: false,
   gitBusy: false,
+  gitCommitOkCount: 0,
   gitStashes: [],
   gitCommits: [],
   gitView: null,
@@ -267,8 +288,8 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
         if (eo.dy !== undefined) e.dy = eo.dy;
       }
       if (eo.color) e.color = eo.color;
-      if (eo.sourceSide === 'left' || eo.sourceSide === 'right') e.sourceSide = eo.sourceSide;
-      if (eo.targetSide === 'left' || eo.targetSide === 'right') e.targetSide = eo.targetSide;
+      if (isEdgeSide(eo.sourceSide)) e.sourceSide = eo.sourceSide;
+      if (isEdgeSide(eo.targetSide)) e.targetSide = eo.targetSide;
       if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
         edgeLayouts.set(id, e);
       }
@@ -299,7 +320,11 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
     });
   },
   setViewport(vp) {
-    set((s) => ({ viewport: { ...s.viewport, ...vp } }));
+    // Identity guard: pan/zoom call this per pointer frame; an unchanged camera must not notify.
+    set((s) => {
+      const next = { ...s.viewport, ...vp };
+      return next.x === s.viewport.x && next.y === s.viewport.y && next.zoom === s.viewport.zoom ? s : { viewport: next };
+    });
   },
   setTheme(kind) {
     set({ theme: kind });
@@ -340,9 +365,11 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setEdgeWaypoints(refId, waypoints) {
     set((s) => {
+      const wps = waypoints.map((w) => ({ x: Math.round(w.x), y: Math.round(w.y) }));
+      // Per-pointermove caller: an unchanged list must not mint a new Map (that re-routes every ref).
+      if (sameWaypoints(s.edgeLayouts.get(refId)?.waypoints, wps)) return s;
       const next = new Map(s.edgeLayouts);
       const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
-      const wps = waypoints.map((w) => ({ x: Math.round(w.x), y: Math.round(w.y) }));
       if (wps.length > 0) merged.waypoints = wps; else delete merged.waypoints;
       writeLayout(next, refId, merged);
       return { edgeLayouts: next };
@@ -369,6 +396,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setEdgeSide(refId, end, side) {
     set((s) => {
+      const current = s.edgeLayouts.get(refId);
+      const currentSide = end === 'source' ? current?.sourceSide : current?.targetSide;
+      if ((currentSide ?? null) === side) return s;
       const next = new Map(s.edgeLayouts);
       const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
       if (end === 'source') {
@@ -415,6 +445,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setExportPromptOpen(open) {
     set({ exportPromptOpen: open });
+  },
+  setExportImagePromptOpen(open) {
+    set({ exportImagePromptOpen: open });
   },
   setSettingsPanelOpen(open) {
     set({ settingsPanelOpen: open });
@@ -520,6 +553,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   setGitBusy(busy) {
     set({ gitBusy: busy });
   },
+  noteGitCommitOk() {
+    set((s) => ({ gitCommitOkCount: s.gitCommitOkCount + 1 }));
+  },
   setGitStashes(stashes) {
     set({ gitStashes: stashes });
   },
@@ -594,6 +630,19 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   setSpacePan(on) {
     set((s) => (s.spacePan === on ? s : { spacePan: on }));
   },
+  startEdgeOrderProgress() {
+    set({ edgeOrderProgress: { pct: 0 } });
+  },
+  setEdgeOrderProgress(pct) {
+    set((s) => {
+      if (!s.edgeOrderProgress) return s;
+      const next = Math.max(s.edgeOrderProgress.pct, Math.min(100, Math.round(pct)));
+      return next === s.edgeOrderProgress.pct ? s : { edgeOrderProgress: { pct: next } };
+    });
+  },
+  endEdgeOrderProgress() {
+    set((s) => (s.edgeOrderProgress === null ? s : { edgeOrderProgress: null }));
+  },
 }));
 
 function pushHistory(s: AppState, cmd: EditCommand): Partial<AppState> {
@@ -659,20 +708,37 @@ function writeLayout(map: Map<string, EdgeLayout>, refId: string, layout: EdgeLa
   else map.delete(refId);
 }
 
+function sameWaypoints(a: Waypoint[] | undefined, b: Waypoint[]): boolean {
+  const aa = a ?? [];
+  if (aa.length !== b.length) return false;
+  for (let i = 0; i < aa.length; i++) {
+    if (aa[i]!.x !== b[i]!.x || aa[i]!.y !== b[i]!.y) return false;
+  }
+  return true;
+}
+
 export function useAppStore<T>(selector: (state: AppState & AppActions) => T): T {
   const [, forceUpdate] = useReducer((c: number, _action: void) => c + 1, 0);
+  const value = selector(store.getState());
+  // Refs, not closure captures: the effect runs once, but the selector may close over props and
+  // the store may change between this render and the subscription below.
+  const selectorRef = useRef(selector);
+  const lastRef = useRef(value);
+  selectorRef.current = selector;
+  lastRef.current = value;
   useEffect(() => {
-    let last = selector(store.getState());
-    const unsub = store.subscribe(() => {
-      const next = selector(store.getState());
-      if (!Object.is(last, next)) {
-        last = next;
+    const check = () => {
+      const next = selectorRef.current(store.getState());
+      if (!Object.is(lastRef.current, next)) {
+        lastRef.current = next;
         forceUpdate();
       }
-    });
+    };
+    const unsub = store.subscribe(check);
+    check();
     return unsub;
   }, []);
-  return selector(store.getState());
+  return value;
 }
 
 export function toTableLayoutRecord(

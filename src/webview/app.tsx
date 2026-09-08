@@ -14,20 +14,23 @@ import { schedulePersist } from './persistence';
 import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
 import { lodForZoom } from './render/lod';
+import { useVisibleNames } from './render/useVisibleNames';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
+import { ExportImageModal } from './render/exportImageModal';
 import { SettingsPanel } from './render/settingsPanel';
 import { GitPanel } from './render/gitPanel';
+import { EdgeOrderProgress } from './render/edgeOrderProgress';
 import { GitBanner, type DiffTarget } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import type { QualifiedName, Ref, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
 
 interface AppProps {
   post: (msg: WebviewToHost) => void;
 }
 
-const VISIBILITY_MARGIN = 256;
 const GROUP_NODE_W = 220;
 const GROUP_NODE_H = 80;
 const GROUP_CONTAINER_PADDING = 24;
@@ -35,12 +38,16 @@ const GROUP_CONTAINER_HEADER = 20;
 
 const GROUP_PREFIX = '__group__:';
 const groupId = (name: string) => GROUP_PREFIX + name;
+/** Expanded group boxes live in the spatial index too (culled like tables) under this prefix. */
+const CONTAINER_PREFIX = '__container__:';
+const containerId = (name: string) => CONTAINER_PREFIX + name;
+/** Synthetic index entries (collapsed groups, containers) — never selectable, never counted. */
+const isSynthetic = (name: string) => name.startsWith('__');
 
 export function App(_props: AppProps) {
   const schema = useAppStore((s) => s.schema);
   const parseError = useAppStore((s) => s.parseError);
   const positions = useAppStore((s) => s.positions);
-  const viewport = useAppStore((s) => s.viewport);
   const ready = useAppStore((s) => s.ready);
   const groupState = useAppStore((s) => s.groups);
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
@@ -60,7 +67,9 @@ export function App(_props: AppProps) {
   const diffRemovedRefs = useAppStore((s) => s.diffRemovedRefs);
   const focusDimming = useAppStore((s) => s.focusDimming);
   const diffActive = gitView?.kind === 'diff';
-  const lodThresholds = useAppStore((s) => s.settings.lod);
+  // `viewport` itself is deliberately NOT selected here: it changes on every pan/zoom frame and
+  // would re-render the whole tree (spec 04). Only its LOD projection (a stable string) is.
+  const lod = useAppStore((s) => lodForZoom(s.viewport.zoom, s.settings.lod));
   const density = useAppStore((s) => s.settings.ui.density);
   const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
   const gridSize = useAppStore((s) => s.settings.ui.gridSize);
@@ -68,21 +77,6 @@ export function App(_props: AppProps) {
   useEffect(() => {
     document.body.dataset.density = density;
   }, [density]);
-
-  useEffect(() => {
-    if (!ready) return;
-    const missing = schema.tables.filter((t) => !positions.has(t.name));
-    if (missing.length === 0) return;
-    const sizeOf = (name: QualifiedName) => {
-      const t = schema.tables.find((x) => x.name === name);
-      return estimateSize(t?.columns.length ?? 0);
-    };
-    const layoutTargets = positions.size === 0 ? schema.tables : missing;
-    const laidOut = autoLayout(layoutTargets, schema.refs, sizeOf);
-    const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
-    for (const [name, pos] of laidOut) entries.push([name, pos]);
-    if (entries.length > 0) store.getState().setPositionsBatch(entries);
-  }, [schema, ready]);
 
   const columnCountByTable = useMemo(() => {
     const m = new Map<QualifiedName, number>();
@@ -95,6 +89,20 @@ export function App(_props: AppProps) {
     for (const t of schema.tables) m.set(t.name, t);
     return m;
   }, [schema]);
+
+  // Auto-layout tables that have no position. Depends on `positions` too: "Reset layout" empties
+  // them without touching the schema, and the effect must re-run or the canvas stays blank.
+  useEffect(() => {
+    if (!ready) return;
+    const missing = schema.tables.filter((t) => !positions.has(t.name));
+    if (missing.length === 0) return;
+    const sizeOf = (name: QualifiedName) => estimateSize(tablesByName.get(name)?.columns.length ?? 0);
+    const layoutTargets = positions.size === 0 ? schema.tables : missing;
+    const laidOut = autoLayout(layoutTargets, schema.refs, sizeOf);
+    const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
+    for (const [name, pos] of laidOut) entries.push([name, pos]);
+    if (entries.length > 0) store.getState().setPositionsBatch(entries);
+  }, [schema, tablesByName, positions, ready]);
 
   /** Set of "table::column" keys for every column that participates in any ref. */
   const fkColumnsByTable = useMemo(() => {
@@ -130,8 +138,7 @@ export function App(_props: AppProps) {
           if (hiddenTables.has(t)) continue;
           const pos = positions.get(t);
           if (!pos) continue;
-          const table = schema.tables.find((x) => x.name === t);
-          const size = estimateSize(table?.columns.length ?? 0);
+          const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
           if (pos.x < minX) minX = pos.x;
           if (pos.y < minY) minY = pos.y;
           if (pos.x + size.width > maxX) maxX = pos.x + size.width;
@@ -155,8 +162,7 @@ export function App(_props: AppProps) {
         for (const t of g.tables) {
           const pos = positions.get(t);
           if (!pos) continue;
-          const table = schema.tables.find((x) => x.name === t);
-          const size = estimateSize(table?.columns.length ?? 0);
+          const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
           sumX += pos.x + size.width / 2;
           sumY += pos.y + size.height / 2;
           n++;
@@ -181,7 +187,7 @@ export function App(_props: AppProps) {
     const mapEndpoint = (table: QualifiedName): QualifiedName | null => {
       if (hiddenTables.has(table)) return null;
       if (collapsedTables.has(table)) {
-        const tbl = schema.tables.find((t) => t.name === table);
+        const tbl = tablesByName.get(table);
         if (tbl?.groupName) return groupId(tbl.groupName);
         return null;
       }
@@ -211,7 +217,7 @@ export function App(_props: AppProps) {
     }
 
     return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs, refKeyByStableId };
-  }, [schema, positions, groupState, individuallyHidden, density]);
+  }, [schema, tablesByName, positions, groupState, individuallyHidden, density]);
 
   const spatialIndex = useMemo(() => {
     const idx = new SpatialIndex();
@@ -225,11 +231,33 @@ export function App(_props: AppProps) {
     for (const g of derived.collapsedNodes) {
       idx.insert(groupId(g.name), { x: g.x, y: g.y, w: g.w, h: g.h });
     }
+    for (const c of derived.containers) {
+      idx.insert(containerId(c.name), { x: c.x, y: c.y, w: c.w, h: c.h });
+    }
     return idx;
   }, [schema, positions, derived, density]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement>(null);
   const [viewportRect, setViewportRect] = useState({ w: 0, h: 0 });
+  const worldMounted = ready && schema.tables.length > 0;
+
+  // The camera is applied imperatively (same technique as the drag controller): Preact never owns
+  // `.ddd-world`'s transform, so pan/zoom frames touch one style property and nothing re-renders.
+  useEffect(() => {
+    const apply = (vp: { x: number; y: number; zoom: number }) => {
+      const el = worldRef.current;
+      if (el) el.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`;
+    };
+    apply(store.getState().viewport);
+    return store.subscribe((s, prev) => {
+      if (s.viewport !== prev.viewport) apply(s.viewport);
+    });
+  }, [worldMounted]);
+
+  // Read by the marquee pointerup without re-binding the listeners on every index rebuild.
+  const spatialIndexRef = useRef(spatialIndex);
+  spatialIndexRef.current = spatialIndex;
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   useEffect(() => {
@@ -342,10 +370,10 @@ export function App(_props: AppProps) {
           w: (x1 - x0) / vp.zoom,
           h: (y1 - y0) / vp.zoom,
         };
-        const hits = spatialIndex.query(world);
+        const hits = spatialIndexRef.current.query(world);
         // Exclude synthetic group ids from selection.
         const realHits: string[] = [];
-        for (const h of hits) if (!h.startsWith(GROUP_PREFIX)) realHits.push(h);
+        for (const h of hits) if (!isSynthetic(h)) realHits.push(h);
         if (e.shiftKey) {
           const merged = new Set(store.getState().selection);
           for (const n of realHits) merged.add(n);
@@ -423,18 +451,10 @@ export function App(_props: AppProps) {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [ready, spatialIndex]);
+  }, [ready]);
 
-  const visibleNames = useMemo(() => {
-    if (!ready || viewportRect.w === 0 || viewportRect.h === 0) return null;
-    const worldBbox = {
-      x: (-viewport.x) / viewport.zoom - VISIBILITY_MARGIN,
-      y: (-viewport.y) / viewport.zoom - VISIBILITY_MARGIN,
-      w: viewportRect.w / viewport.zoom + VISIBILITY_MARGIN * 2,
-      h: viewportRect.h / viewport.zoom + VISIBILITY_MARGIN * 2,
-    };
-    return spatialIndex.query(worldBbox);
-  }, [spatialIndex, viewport, viewportRect, ready]);
+  // Culled set; same Set instance while membership is unchanged (see useVisibleNames).
+  const visibleNames = useVisibleNames(spatialIndex, viewportRect, ready);
 
   // Visible edge ids (≥ 1 endpoint visible). Memoized so EdgeLayer can route ALL refs once
   // (route-all-then-cull, spec 05 §8) and just filter the resulting routes by this set.
@@ -485,24 +505,22 @@ export function App(_props: AppProps) {
     return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
   }, [schema, positions, derived, density]);
 
-  const lod = lodForZoom(viewport.zoom, lodThresholds);
-  const worldTransform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
-
   // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
   const mergeTableKeys = new Set<QualifiedName>();
   if (mergeConflicts) for (const c of mergeConflicts) if (c.section === 'tables') mergeTableKeys.add(c.key);
 
   // Diff overlay (spec 16): translate added refs' stable ids to the edge layer's composite keys so
   // the matching edges can be tinted. Removed refs are drawn by DiffGhosts, not here.
-  let edgeRefDiff: Map<string, RefDiffStatus> | null = null;
-  if (refDiff) {
-    edgeRefDiff = new Map();
+  const edgeRefDiff = useMemo(() => {
+    if (!refDiff) return null;
+    const m = new Map<string, RefDiffStatus>();
     for (const [stableId, status] of refDiff) {
       if (status !== 'added') continue;
       const key = derived.refKeyByStableId.get(stableId);
-      if (key) edgeRefDiff.set(key, status);
+      if (key) m.set(key, status);
     }
-  }
+    return m;
+  }, [refDiff, derived.refKeyByStableId]);
 
   // Diff change targets (changed live tables + removed ghosts) — feed the hover hit-layer and the
   // banner's prev/next camera navigation. Sorted for a stable step order.
@@ -531,13 +549,20 @@ export function App(_props: AppProps) {
   );
 
   const visibleTableCount = renderedTables.length + derived.collapsedNodes.length;
+  const visibleCount = useMemo(() => {
+    if (!visibleNames) return visibleTableCount;
+    let n = 0;
+    for (const name of visibleNames) if (!name.startsWith(CONTAINER_PREFIX)) n++;
+    return n;
+  }, [visibleNames, visibleTableCount]);
   const totalTableCount = schema.tables.length - derived.hiddenTables.size;
 
   return (
     <>
       <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} ref={viewportRef} tabIndex={0}>
-        {ready && schema.tables.length > 0 ? (
-          <div class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'} style={{ transform: worldTransform }}>
+        {worldMounted ? (
+          <ErrorBoundary scope="canvas">
+          <div ref={worldRef} class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'}>
             {snapToGrid ? (
               <div
                 class="ddd-grid"
@@ -550,9 +575,10 @@ export function App(_props: AppProps) {
                 }}
               />
             ) : null}
-            {derived.containers.map((c) => (
-              <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} />
-            ))}
+            {derived.containers.map((c) => {
+              if (visibleNames && !visibleNames.has(containerId(c.name))) return null;
+              return <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} />;
+            })}
             <EdgeLayer
               refs={derived.effectiveRefs}
               visibleRefIds={visibleRefIds}
@@ -612,6 +638,7 @@ export function App(_props: AppProps) {
               />
             ) : null}
           </div>
+          </ErrorBoundary>
         ) : null}
         {marquee ? (
           <div
@@ -628,12 +655,14 @@ export function App(_props: AppProps) {
         {ready && schema.tables.length === 0 && !parseError ? (
           <div class="ddd-empty">empty DBML — define a Table to see it here.</div>
         ) : null}
-        {ready ? <AppMenu /> : null}
-        {ready ? <GroupPanel /> : null}
-        {ready ? <ZoomButtons /> : null}
-        {ready && !readOnly ? <ActionsPanel /> : null}
-        {ready && mergeConflicts ? <MergePanel /> : null}
-        {ready && gitView ? <GitBanner diffTargets={diffTargets} /> : null}
+        <ErrorBoundary scope="toolbars">
+          {ready ? <AppMenu /> : null}
+          {ready ? <GroupPanel /> : null}
+          {ready ? <ZoomButtons /> : null}
+          {ready && !readOnly ? <ActionsPanel /> : null}
+          {ready && mergeConflicts ? <MergePanel /> : null}
+          {ready && gitView ? <GitBanner diffTargets={diffTargets} /> : null}
+        </ErrorBoundary>
       </div>
       {parseError ? (
         <div class="ddd-banner" title={parseError.message}>
@@ -643,14 +672,24 @@ export function App(_props: AppProps) {
       ) : null}
       {ready ? (
         <div class="ddd-statusbar">
-          {visibleNames ? visibleNames.size : visibleTableCount}/{totalTableCount} visible · {derived.effectiveRefs.length} refs · zoom {Math.round(viewport.zoom * 100)}% · LOD {lod}
+          {visibleCount}/{totalTableCount} visible · {derived.effectiveRefs.length} refs · zoom <ZoomPct />% · LOD {lod}
           {selection.size > 0 ? ` · ${selection.size} selected` : ''}
         </div>
       ) : null}
-      <Tooltip />
-      <ExportModal />
-      <SettingsPanel />
-      <GitPanel />
+      <ErrorBoundary scope="overlays">
+        <Tooltip />
+        <ExportModal />
+        <ExportImageModal derived={derived} />
+        <SettingsPanel />
+        <GitPanel />
+        <EdgeOrderProgress />
+      </ErrorBoundary>
     </>
   );
+}
+
+/** Statusbar zoom readout — the only piece of `App` that follows the camera, kept in its own leaf. */
+function ZoomPct() {
+  const pct = useAppStore((s) => Math.round(s.viewport.zoom * 100));
+  return <>{pct}</>;
 }

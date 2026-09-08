@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
-import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, Ref, ViewportCommand, WebviewToHost, Schema, QualifiedName } from '../shared/types';
+import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
-import { emptyLayout, LayoutConflictError, mergeLayout, parseLayout, readLayout, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
+import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
 import { applyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
@@ -13,6 +13,10 @@ import { getExporter, listExporters } from './exporters';
 import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
 
 const PERSIST_DEBOUNCE_MS = 200;
+/** Editor autosave fires the .dbml watcher on a timer while typing; coalesce bursts. */
+const SCHEMA_DEBOUNCE_MS = 150;
+/** Each git status spawns 2-3 processes; a drag+save burst used to spawn ~6 of them. */
+const GIT_STATUS_DEBOUNCE_MS = 200;
 
 export class DiagramPanel {
   private static panels = new Map<string, DiagramPanel>();
@@ -49,8 +53,17 @@ export class DiagramPanel {
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
   private currentLayout: Layout = emptyLayout();
   private lastWrittenSerialized: string | null = null;
+  /** Set while the sidecar on disk is unparseable; shared writes are refused until a clean read. */
+  private sidecarCorrupt = false;
+  /** True once the webview has sent `ready` and received schema/layout; prompts wait for this. */
+  private hydrated = false;
+  private afterHydrate: Array<() => void> = [];
   private pendingPersist: Layout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
+  private schemaTimer: NodeJS.Timeout | null = null;
+  private gitStatusTimer: NodeJS.Timeout | null = null;
+  /** Serialized form of the last `schema:update` posted — lets the watcher skip no-op reparses. */
+  private lastPostedSchema: string | null = null;
   /** Set while a conflicted sidecar awaits in-webview resolution; null otherwise. Holds the
    *  retained host-side conflicts so the webview only has to return per-conflict decisions. */
   private pendingMerge: { conflicts: MergeConflict[]; merged: Layout; repoRoot: string; relpath: string } | null = null;
@@ -97,7 +110,18 @@ export class DiagramPanel {
   }
 
   public openExportModal(): void {
-    this.post({ type: 'export:prompt' });
+    this.whenHydrated(() => this.post({ type: 'export:prompt' }));
+  }
+
+  public openExportImageModal(): void {
+    this.whenHydrated(() => this.post({ type: 'exportImage:prompt' }));
+  }
+
+  /** Run now if the webview is hydrated, else right after hydration. Replaces the old fixed
+   *  250 ms timer, which lost the prompt on large schemas that took longer to hydrate. */
+  private whenHydrated(fn: () => void): void {
+    if (this.hydrated) fn();
+    else this.afterHydrate.push(fn);
   }
 
   public reveal(): void {
@@ -110,6 +134,10 @@ export class DiagramPanel {
 
   public sendAutoArrange(mode: AutoArrangeMode): void {
     this.post({ type: 'command:autoArrange', payload: { mode } });
+  }
+
+  public sendEdgeOrderOnly(): void {
+    this.post({ type: 'command:orderEdges', payload: {} });
   }
 
   public async resetLayout(): Promise<void> {
@@ -144,6 +172,8 @@ export class DiagramPanel {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
     }
+    if (this.schemaTimer) clearTimeout(this.schemaTimer);
+    if (this.gitStatusTimer) clearTimeout(this.gitStatusTimer);
     while (this.disposables.length) {
       const d = this.disposables.pop();
       try { d?.dispose(); } catch { /* noop */ }
@@ -171,6 +201,9 @@ export class DiagramPanel {
         return;
       case 'command:export':
         void this.runExport(msg.payload);
+        return;
+      case 'command:saveImage':
+        void this.saveImage(msg.payload);
         return;
       case 'settings:update':
         void applySettingsPatch(msg.payload as Partial<FlatSettingsPatch>);
@@ -268,6 +301,34 @@ export class DiagramPanel {
     }
   }
 
+  /**
+   * Save an image the webview rendered (PNG/SVG bytes, base64). Prompts for a location with a
+   * save dialog (defaulting beside the .dbml), writes the bytes, and reports back so the webview
+   * can close the dialog. Cancelling the dialog is a no-op (ok:false, no error).
+   */
+  private async saveImage(payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string }): Promise<void> {
+    const ext = payload.mime === 'image/svg+xml' ? 'svg' : 'png';
+    const defaultUri = vscode.Uri.joinPath(this.dbmlUri, '..', payload.suggestedName);
+    try {
+      const target = await vscode.window.showSaveDialog({
+        defaultUri,
+        filters: ext === 'svg' ? { 'SVG image': ['svg'] } : { 'PNG image': ['png'] },
+      });
+      if (!target) {
+        this.post({ type: 'image:result', payload: { ok: false } });
+        return;
+      }
+      const bytes = Buffer.from(payload.dataBase64, 'base64');
+      await vscode.workspace.fs.writeFile(target, bytes);
+      this.post({ type: 'image:result', payload: { ok: true, path: target.fsPath } });
+      void vscode.window.showInformationMessage(`dddbml: image saved — ${this.shortName(target)}.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      void vscode.window.showErrorMessage(`dddbml: image export failed — ${message}`);
+      this.post({ type: 'image:result', payload: { ok: false, message } });
+    }
+  }
+
   private async revealTable(qualifiedName: string): Promise<void> {
     // qualifiedName is "schema.tableName". DBML allows either `Table name` (public) or `Table schema.name`.
     try {
@@ -312,32 +373,54 @@ export class DiagramPanel {
     this.post({ type: 'settings:loaded', payload: loadSettings() });
     this.post({ type: 'exporters:list', payload: { exporters: listExporters() } });
     void this.sendGitStatus();
+    this.hydrated = true;
+    const queued = this.afterHydrate;
+    this.afterHydrate = [];
+    for (const fn of queued) fn();
   }
 
-  private async sendSchema(): Promise<void> {
+  /**
+   * Re-parse the .dbml and post `schema:update`. With `skipIfUnchanged` (watcher path) an
+   * identical payload is not re-posted: a save that changes nothing (or only comments) used to
+   * hand the webview a fresh schema object and force every derived memo to recompute. Direct
+   * callers (hydrate, time-travel exit) must always post, since the webview state differs.
+   */
+  private async sendSchema(opts: { skipIfUnchanged?: boolean } = {}): Promise<void> {
+    let payload: { schema: Schema; parseError: ParseError | null };
     try {
       const bytes = await vscode.workspace.fs.readFile(this.dbmlUri);
       const source = new TextDecoder('utf-8').decode(bytes);
       const result = parseDbml(source);
       if (result.error) {
-        this.post({
-          type: 'schema:update',
-          payload: { schema: this.lastValidSchema, parseError: result.error },
-        });
+        payload = { schema: this.lastValidSchema, parseError: result.error };
       } else {
         this.lastValidSchema = result.schema;
-        this.post({
-          type: 'schema:update',
-          payload: { schema: result.schema, parseError: null },
-        });
+        payload = { schema: result.schema, parseError: null };
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.post({
-        type: 'schema:update',
-        payload: { schema: this.lastValidSchema, parseError: { message } },
-      });
+      payload = { schema: this.lastValidSchema, parseError: { message } };
     }
+    const serialized = JSON.stringify(payload);
+    if (opts.skipIfUnchanged && serialized === this.lastPostedSchema) return;
+    this.lastPostedSchema = serialized;
+    this.post({ type: 'schema:update', payload });
+  }
+
+  private scheduleSchemaRefresh(): void {
+    if (this.schemaTimer) clearTimeout(this.schemaTimer);
+    this.schemaTimer = setTimeout(() => {
+      this.schemaTimer = null;
+      void this.sendSchema({ skipIfUnchanged: true });
+    }, SCHEMA_DEBOUNCE_MS);
+  }
+
+  private scheduleGitStatus(): void {
+    if (this.gitStatusTimer) clearTimeout(this.gitStatusTimer);
+    this.gitStatusTimer = setTimeout(() => {
+      this.gitStatusTimer = null;
+      void this.sendGitStatus();
+    }, GIT_STATUS_DEBOUNCE_MS);
   }
 
   private async sendLayout(isExternal = false): Promise<void> {
@@ -369,10 +452,18 @@ export class DiagramPanel {
     try {
       const layout = await readLayout(this.dbmlUri);
       this.pendingMerge = null; // a clean read clears any stale conflict state
+      this.sidecarCorrupt = false;
       return layout;
     } catch (err) {
       if (err instanceof LayoutConflictError) {
         return this.handleConflict();
+      }
+      if (err instanceof LayoutParseError) {
+        this.sidecarCorrupt = true;
+        void vscode.window.showWarningMessage(
+          'dddbml: the layout file is not valid JSON — fix it (or restore it from git) to save layout changes. The diagram is read from the last good layout meanwhile.',
+        );
+        return this.currentLayout;
       }
       return emptyLayout();
     }
@@ -626,7 +717,12 @@ export class DiagramPanel {
       return;
     }
     const parsed = parseDbml(dbmlSrc);
-    const schema = parsed.error ? this.lastValidSchema : parsed.schema;
+    if (parsed.error) {
+      // Substituting today's schema under the old label would silently show the wrong tables.
+      void vscode.window.showWarningMessage(`dddbml: the diagram at ${label} does not parse — ${parsed.error.message}`);
+      return;
+    }
+    const schema = parsed.schema;
     const sidecarSrc = await showBlob(scope.repoRoot, sha, scope.sidecarRel);
     const shared = sidecarSrc != null ? parseLayout(sidecarSrc) : emptyLayout();
     const vs = await readViewState(this.context, this.dbmlUri);
@@ -653,8 +749,12 @@ export class DiagramPanel {
     const baseDbml = await showBlob(scope.repoRoot, 'HEAD', scope.dbmlRel);
     if (baseDbml == null) { void vscode.window.showWarningMessage('dddbml: the diagram has no committed version at HEAD yet.'); return; }
     const parsedBase = parseDbml(baseDbml);
-    const baseSchema = parsedBase.error ? { tables: [], refs: [], groups: [] } : parsedBase.schema;
-    const diff = diffSchemas(baseSchema, this.lastValidSchema);
+    if (parsedBase.error) {
+      // An empty base would report every table as "added" — a false diff, not a degraded one.
+      void vscode.window.showWarningMessage(`dddbml: the diagram at HEAD does not parse — ${parsedBase.error.message}`);
+      return;
+    }
+    const diff = diffSchemas(parsedBase.schema, this.lastValidSchema);
     if (diff.tables.length === 0 && diff.refs.length === 0) {
       void vscode.window.showInformationMessage('dddbml: no schema changes vs HEAD.');
       return;
@@ -690,7 +790,9 @@ export class DiagramPanel {
     let sharedChanged = false;
     try {
       const sharedSerialized = serializeSharedLayout(layout);
-      if (sharedSerialized !== this.lastWrittenSerialized) {
+      if (this.sidecarCorrupt) {
+        // Never clobber a corrupt sidecar with a layout derived from it; the watcher re-reads on fix.
+      } else if (sharedSerialized !== this.lastWrittenSerialized) {
         await writeSharedLayout(this.dbmlUri, layout);
         this.lastWrittenSerialized = sharedSerialized;
         sharedChanged = true;
@@ -707,7 +809,7 @@ export class DiagramPanel {
     }
     // Only a real shared-layout write flips the sidecar dirty/clean — refresh the Git panel's status
     // then (NOT on pure pan/zoom, which would spawn `git status` on every frame's debounced flush).
-    if (sharedChanged) void this.sendGitStatus();
+    if (sharedChanged) this.scheduleGitStatus();
   }
 
   private setupWatchers(): void {
@@ -721,8 +823,8 @@ export class DiagramPanel {
     );
     dbmlWatcher.onDidChange((uri) => {
       if (uri.toString() !== this.dbmlUri.toString()) return;
-      void this.sendSchema();
-      void this.sendGitStatus();
+      this.scheduleSchemaRefresh();
+      this.scheduleGitStatus();
     });
 
     const layoutWatcher = vscode.workspace.createFileSystemWatcher(
@@ -730,7 +832,7 @@ export class DiagramPanel {
     );
     const onLayoutFs = async (uri: vscode.Uri) => {
       if (uri.toString() !== layoutSidecar.toString()) return;
-      void this.sendGitStatus(); // sidecar touched on disk → dirty/clean may have flipped
+      this.scheduleGitStatus(); // sidecar touched on disk → dirty/clean may have flipped
       try {
         const bytes = await vscode.workspace.fs.readFile(uri);
         const text = new TextDecoder('utf-8').decode(bytes);

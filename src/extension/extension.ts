@@ -39,8 +39,22 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       DiagramPanel.createOrShow(context, uri);
-      // Defer the prompt until the panel is hydrated; the webview will be ready shortly.
-      setTimeout(() => DiagramPanel.get(uri)?.openExportModal(), 250);
+      DiagramPanel.get(uri)?.openExportModal(); // queued by the panel until the webview is hydrated
+    }),
+
+    vscode.commands.registerCommand('dddbml.exportImage', async () => {
+      const active = DiagramPanel.getActive();
+      if (active) {
+        active.openExportImageModal();
+        return;
+      }
+      const uri = resolveActiveDbmlUri();
+      if (!uri) {
+        vscode.window.showErrorMessage('dddbml: open a .dbml file first.');
+        return;
+      }
+      DiagramPanel.createOrShow(context, uri);
+      DiagramPanel.get(uri)?.openExportImageModal();
     }),
 
     vscode.commands.registerCommand('dddbml.autoArrange', async () => {
@@ -51,14 +65,16 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const pick = await vscode.window.showQuickPick(
         [
-          { label: 'Re-arrange all', description: 'Lay out every table', mode: 'all' as const },
+          { label: 'Re-arrange all', description: 'Lay out every table, then order edges', mode: 'all' as const },
           { label: 'Place new tables only', description: 'Keep existing positions, place un-positioned tables', mode: 'new' as const },
           { label: 'Re-arrange selection', description: 'Move only the selected tables', mode: 'selection' as const },
+          { label: 'Order edges only', description: 'Route edges around tables; tables stay fixed', mode: 'orderOnly' as const },
         ],
         { placeHolder: 'Smart auto-layout — choose what to arrange' },
       );
       if (!pick) return;
-      active.sendAutoArrange(pick.mode);
+      if (pick.mode === 'orderOnly') active.sendEdgeOrderOnly();
+      else active.sendAutoArrange(pick.mode);
     }),
 
     vscode.commands.registerCommand('dddbml.zoomIn',       () => DiagramPanel.getActive()?.sendViewportCommand('zoomIn')),

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { EdgeLayout, Layout, GroupLayout, TableLayout, Waypoint } from '../shared/types';
+import { isEdgeSide } from '../shared/types';
 
 export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
   return dbmlUri.with({ path: dbmlUri.path + '.layout.json' });
@@ -11,6 +12,14 @@ export function emptyLayout(): Layout {
 
 /** Raised by `readLayout` when the sidecar still holds unresolved git conflict markers.
  *  Callers route this to the 3-way merge resolver instead of silently wiping the layout. */
+/** The sidecar exists but is not valid JSON (hand edit gone wrong). Distinct from a conflict. */
+export class LayoutParseError extends Error {
+  constructor(public readonly parseError: unknown) {
+    super('dddbml: layout sidecar is not valid JSON');
+    this.name = 'LayoutParseError';
+  }
+}
+
 export class LayoutConflictError extends Error {
   constructor(public readonly conflictedText: string) {
     super('dddbml: layout sidecar contains unresolved git conflict markers');
@@ -52,6 +61,13 @@ export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
   // Do NOT feed conflict-marker soup to JSON.parse: it throws and the old catch wiped the
   // layout to empty. Signal the conflict so the caller can run the 3-way merge instead.
   if (hasConflictMarkers(text)) throw new LayoutConflictError(text);
+  // parseLayout is deliberately lenient (merge/diff paths need it); the live read is not — a
+  // corrupt file must surface instead of being adopted as "empty" and overwritten on next persist.
+  try {
+    JSON.parse(text);
+  } catch (err) {
+    throw new LayoutParseError(err);
+  }
   return parseLayout(text);
 }
 
@@ -105,8 +121,8 @@ function toEdges(raw: unknown): Record<string, EdgeLayout> {
     if (typeof vv.dx === 'number' && Number.isFinite(vv.dx)) e.dx = Math.round(vv.dx);
     if (typeof vv.dy === 'number' && Number.isFinite(vv.dy)) e.dy = Math.round(vv.dy);
     if (typeof vv.color === 'string' && vv.color.length > 0) e.color = vv.color;
-    if (vv.sourceSide === 'left' || vv.sourceSide === 'right') e.sourceSide = vv.sourceSide;
-    if (vv.targetSide === 'left' || vv.targetSide === 'right') e.targetSide = vv.targetSide;
+    if (isEdgeSide(vv.sourceSide)) e.sourceSide = vv.sourceSide;
+    if (isEdgeSide(vv.targetSide)) e.targetSide = vv.targetSide;
     if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) out[k] = e;
   }
   return out;

@@ -1,4 +1,5 @@
 import { store } from '../state/store';
+import { memo } from 'preact/compat';
 import { schedulePersist } from '../persistence';
 import { withAlpha } from '../groups/bcPalette';
 import { lodForZoom } from './lod';
@@ -21,7 +22,7 @@ interface GroupContainerProps {
  *     and clicks on tables inside are unaffected.
  *   - Label is clickable: double-click collapses the group.
  */
-export function GroupContainer({ name, x, y, w, h, color }: GroupContainerProps) {
+function GroupContainerImpl({ name, x, y, w, h, color }: GroupContainerProps) {
   const onLabelDblClick = (e: Event) => {
     e.stopPropagation();
     store.getState().setGroup(name, { collapsed: true });
@@ -45,7 +46,7 @@ export function GroupContainer({ name, x, y, w, h, color }: GroupContainerProps)
       data-group-id={name}
       style={{
         position: 'absolute',
-        transform: `translate3d(${x}px, ${y}px, 0)`,
+        transform: `translate(${x}px, ${y}px)`,
         width: `${w}px`,
         height: `${h}px`,
         borderColor: color,
@@ -65,3 +66,6 @@ export function GroupContainer({ name, x, y, w, h, color }: GroupContainerProps)
     </div>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const GroupContainer = memo(GroupContainerImpl);
