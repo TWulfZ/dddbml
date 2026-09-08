@@ -58,8 +58,13 @@ function buildDiffRows(current: Column[], base: Column[] | undefined, changed: S
   for (const cc of current) {
     const bc = baseByName.get(cc.name);
     if (bc) {
-      flushRemovedBefore(base.indexOf(bc));
-      bi = base.indexOf(bc) + 1;
+      // Never rewind: a kept column that moved ahead of an already-flushed range would otherwise
+      // make the final flush re-emit a removed column (duplicate `-` row and duplicate key).
+      const idx = base.indexOf(bc);
+      if (idx >= bi) {
+        flushRemovedBefore(idx);
+        bi = idx + 1;
+      }
       if (changed.has(cc.name)) {
         rows.push({ key: `-${cc.name}`, kind: 'changed-old', col: bc, isFk: false });
         rows.push({ key: `+${cc.name}`, kind: 'changed-new', col: cc, isFk: isFk(cc.name) });
