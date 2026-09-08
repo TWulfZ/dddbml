@@ -77,7 +77,6 @@ function buildDiffRows(current: Column[], base: Column[] | undefined, changed: S
 function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
   const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
-  const selection = useAppStore((s) => s.selection);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   const onPointerDown = (e: PointerEvent) => {
@@ -115,8 +114,11 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
     { label: 'Copy table name', onClick: () => { void navigator.clipboard.writeText(table.tableName); } },
   ];
 
-  // Selection actions, shown only when right-clicking a selected table.
-  if (selection.size > 0 && selection.has(table.name)) {
+  // Selection actions, shown only when right-clicking a selected table. Read from the store at
+  // menu-open time rather than subscribing: a `selection` subscription re-rendered EVERY mounted
+  // table on each selection change (the `selected` prop already covers the visual state).
+  const selection = ctxMenu ? store.getState().selection : null;
+  if (selection && selection.size > 0 && selection.has(table.name)) {
     const resettable = countResettableSelectionEdges();
     ctxItems.push({ label: '', onClick: () => {}, separator: true });
     ctxItems.push({
