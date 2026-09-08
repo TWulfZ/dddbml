@@ -303,7 +303,9 @@ export type HostToWebview =
   | { type: 'git:timeTravel:enter'; payload: { rev: string; label: string; schema: Schema; layout: Layout } }
   | { type: 'git:timeTravel:exit' }
   | { type: 'git:diff:enter'; payload: { baseLabel: string; headLabel: string; diff: SchemaDiff } }
-  | { type: 'export:prompt' };
+  | { type: 'export:prompt' }
+  | { type: 'exportImage:prompt' }
+  | { type: 'image:result'; payload: { ok: boolean; path?: string; message?: string } };
 
 /* ----- Protocol: Webview → Host ----- */
 
@@ -313,6 +315,7 @@ export type WebviewToHost =
   | { type: 'command:reveal'; payload: { tableName: QualifiedName } }
   | { type: 'command:pruneOrphans' }
   | { type: 'command:export'; payload: ExportCommandPayload }
+  | { type: 'command:saveImage'; payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string } }
   | { type: 'settings:update'; payload: Partial<FlatSettingsPatch> }
   | { type: 'merge:resolve'; payload: { decisions: Record<string, 'ours' | 'theirs'> } }
   | { type: 'git:requestStatus' }

@@ -48,8 +48,10 @@ export interface AppState {
   showOnlyPkFk: boolean;
   settings: AppSettings;
   exporters: ExporterMeta[];
-  /** When true, the Export modal is open. */
+  /** When true, the Export (schema) modal is open. */
   exportPromptOpen: boolean;
+  /** When true, the Export image modal is open. */
+  exportImagePromptOpen: boolean;
   /** When true, the Settings panel is open. */
   settingsPanelOpen: boolean;
   /** When true, the top-left application menu popover is open (spec 15). */
@@ -147,6 +149,7 @@ export interface AppActions {
   setSettings(s: AppSettings): void;
   setExporters(list: ExporterMeta[]): void;
   setExportPromptOpen(open: boolean): void;
+  setExportImagePromptOpen(open: boolean): void;
   setSettingsPanelOpen(open: boolean): void;
   setAppMenuOpen(open: boolean): void;
   setViewsPanelOpen(open: boolean): void;
@@ -209,6 +212,7 @@ const initial: AppState = {
   settings: defaultSettings(),
   exporters: [],
   exportPromptOpen: false,
+  exportImagePromptOpen: false,
   settingsPanelOpen: false,
   appMenuOpen: false,
   viewsPanelOpen: true,
@@ -428,6 +432,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setExportPromptOpen(open) {
     set({ exportPromptOpen: open });
+  },
+  setExportImagePromptOpen(open) {
+    set({ exportImagePromptOpen: open });
   },
   setSettingsPanelOpen(open) {
     set({ settingsPanelOpen: open });

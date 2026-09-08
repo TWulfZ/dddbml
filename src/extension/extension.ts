@@ -43,6 +43,21 @@ export function activate(context: vscode.ExtensionContext): void {
       setTimeout(() => DiagramPanel.get(uri)?.openExportModal(), 250);
     }),
 
+    vscode.commands.registerCommand('dddbml.exportImage', async () => {
+      const active = DiagramPanel.getActive();
+      if (active) {
+        active.openExportImageModal();
+        return;
+      }
+      const uri = resolveActiveDbmlUri();
+      if (!uri) {
+        vscode.window.showErrorMessage('dddbml: open a .dbml file first.');
+        return;
+      }
+      DiagramPanel.createOrShow(context, uri);
+      setTimeout(() => DiagramPanel.get(uri)?.openExportImageModal(), 250);
+    }),
+
     vscode.commands.registerCommand('dddbml.autoArrange', async () => {
       const active = DiagramPanel.getActive();
       if (!active) {

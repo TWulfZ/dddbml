@@ -100,6 +100,10 @@ export class DiagramPanel {
     this.post({ type: 'export:prompt' });
   }
 
+  public openExportImageModal(): void {
+    this.post({ type: 'exportImage:prompt' });
+  }
+
   public reveal(): void {
     this.webviewPanel.reveal(vscode.ViewColumn.Beside, true);
   }
@@ -175,6 +179,9 @@ export class DiagramPanel {
         return;
       case 'command:export':
         void this.runExport(msg.payload);
+        return;
+      case 'command:saveImage':
+        void this.saveImage(msg.payload);
         return;
       case 'settings:update':
         void applySettingsPatch(msg.payload as Partial<FlatSettingsPatch>);
@@ -269,6 +276,34 @@ export class DiagramPanel {
       const message = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`dddbml: export failed — ${message}`);
       this.post({ type: 'export:result', payload: { ok: false, message } });
+    }
+  }
+
+  /**
+   * Save an image the webview rendered (PNG/SVG bytes, base64). Prompts for a location with a
+   * save dialog (defaulting beside the .dbml), writes the bytes, and reports back so the webview
+   * can close the dialog. Cancelling the dialog is a no-op (ok:false, no error).
+   */
+  private async saveImage(payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string }): Promise<void> {
+    const ext = payload.mime === 'image/svg+xml' ? 'svg' : 'png';
+    const defaultUri = vscode.Uri.joinPath(this.dbmlUri, '..', payload.suggestedName);
+    try {
+      const target = await vscode.window.showSaveDialog({
+        defaultUri,
+        filters: ext === 'svg' ? { 'SVG image': ['svg'] } : { 'PNG image': ['png'] },
+      });
+      if (!target) {
+        this.post({ type: 'image:result', payload: { ok: false } });
+        return;
+      }
+      const bytes = Buffer.from(payload.dataBase64, 'base64');
+      await vscode.workspace.fs.writeFile(target, bytes);
+      this.post({ type: 'image:result', payload: { ok: true, path: target.fsPath } });
+      void vscode.window.showInformationMessage(`dddbml: image saved — ${this.shortName(target)}.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      void vscode.window.showErrorMessage(`dddbml: image export failed — ${message}`);
+      this.post({ type: 'image:result', payload: { ok: false, message } });
     }
   }
 

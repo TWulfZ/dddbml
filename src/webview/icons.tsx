@@ -35,6 +35,7 @@ export type IconName =
   | 'zoom-in'
   | 'move'
   | 'export'
+  | 'file-media'
   | 'menu'
   | 'source-control'
   | 'git-commit'
@@ -97,6 +98,7 @@ export const IconLayout = make('layout');
 export const IconZoom = make('zoom-in');
 export const IconPan = make('move');
 export const IconExport = make('export');
+export const IconImage = make('file-media');
 export const IconMenu = make('menu');
 export const IconGit = make('source-control');
 export const IconGitCommit = make('git-commit');

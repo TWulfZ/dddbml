@@ -17,6 +17,7 @@ import { lodForZoom } from './render/lod';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
+import { ExportImageModal } from './render/exportImageModal';
 import { SettingsPanel } from './render/settingsPanel';
 import { GitPanel } from './render/gitPanel';
 import { EdgeOrderProgress } from './render/edgeOrderProgress';
@@ -650,6 +651,7 @@ export function App(_props: AppProps) {
       ) : null}
       <Tooltip />
       <ExportModal />
+      <ExportImageModal derived={derived} />
       <SettingsPanel />
       <GitPanel />
       <EdgeOrderProgress />

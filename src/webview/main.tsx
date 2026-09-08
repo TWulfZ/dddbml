@@ -39,6 +39,13 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
     case 'export:result':
       state.setExportPromptOpen(false);
       return;
+    case 'exportImage:prompt':
+      state.setExportImagePromptOpen(true);
+      return;
+    case 'image:result':
+      // Only close on success; on failure/cancel keep the dialog open so the user can retry.
+      if (msg.payload.ok) state.setExportImagePromptOpen(false);
+      return;
     case 'viewport:command': {
       const el = document.querySelector<HTMLElement>('.ddd-viewport');
       if (!el) return;
