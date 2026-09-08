@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { Field } from './Field';
 
 /**
@@ -25,6 +25,7 @@ export interface SliderProps {
 export function Slider({ label, hint, value, min, max, step, minLabel, maxLabel, format, onCommit }: SliderProps) {
   const [live, setLive] = useState(value);
   // Keep the readout in sync when the committed value changes from outside (e.g. reset to default).
+  useEffect(() => setLive(value), [value]);
   const shown = format ? format(live) : String(live);
 
   return (
