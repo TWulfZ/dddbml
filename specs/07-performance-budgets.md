@@ -75,7 +75,7 @@ Librerías pesadas (cuidado):
 
 ## Regresiones conocidas a vigilar
 
-- **Re-render en cada pan frame**: síntoma = FPS cae a <30 durante pan. Check: `React DevTools Profiler` (o `preact/devtools`), identificar componentes que re-renderizan sin necesidad. Memoize con `useMemo`.
+- **Re-render en cada pan frame**: síntoma = FPS cae a <30 durante pan y, en esquemas grandes, el chrome flotante desaparece/se parte (ocurrió en 2026-09). Check: `App` **no** debe seleccionar `s.viewport` (sólo `lodForZoom(...)`); el transform de `.ddd-world` se aplica imperativo; `useVisibleNames` devuelve la misma instancia si la membresía no cambió; ningún selector devuelve objeto nuevo (`preact/devtools` Profiler para confirmar). Ver spec 04 "Cámara fuera de Preact".
 - **Spatial index rebuild en pan**: `useEffect` deps incluye `viewport` por error. Check: effect de `idx.clear()` debe depender sólo de `schema` y `positions`, nunca viewport.
 - **Edge overlay sin culling**: si se dibujan 1000 paths SVG innecesarios, perf cae. Check: refs visibles (`visibleRefIds`) en statusbar con diagrama grande.
 - **Routing de aristas en el render path**: síntoma = FPS cae al panear con muchas relaciones. Check: `routeRefs` debe estar memoizado por geometría (`useMemo`), nunca llamado en el cuerpo del render; pan/zoom y hover/selección no deben invalidar el memo (ver spec 05 §8).

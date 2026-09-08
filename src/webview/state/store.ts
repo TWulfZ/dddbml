@@ -316,7 +316,11 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
     });
   },
   setViewport(vp) {
-    set((s) => ({ viewport: { ...s.viewport, ...vp } }));
+    // Identity guard: pan/zoom call this per pointer frame; an unchanged camera must not notify.
+    set((s) => {
+      const next = { ...s.viewport, ...vp };
+      return next.x === s.viewport.x && next.y === s.viewport.y && next.zoom === s.viewport.zoom ? s : { viewport: next };
+    });
   },
   setTheme(kind) {
     set({ theme: kind });

@@ -1,4 +1,5 @@
 import { store } from '../state/store';
+import { memo } from 'preact/compat';
 import { schedulePersist } from '../persistence';
 import { lodForZoom } from './lod';
 
@@ -12,7 +13,7 @@ interface CollapsedGroupNodeProps {
   color: string;
 }
 
-export function CollapsedGroupNode({ name, tableCount, x, y, w, h, color }: CollapsedGroupNodeProps) {
+function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color }: CollapsedGroupNodeProps) {
   const onDblClick = () => {
     store.getState().setGroup(name, { collapsed: false });
     schedulePersist();
@@ -50,3 +51,6 @@ export function CollapsedGroupNode({ name, tableCount, x, y, w, h, color }: Coll
     </div>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const CollapsedGroupNode = memo(CollapsedGroupNodeImpl);

@@ -1,4 +1,5 @@
 import { useAppStore } from '../state/store';
+import { memo } from 'preact/compat';
 import { cancelEdgeOrdering } from '../layout/smartLayout';
 
 /**
@@ -7,7 +8,7 @@ import { cancelEdgeOrdering } from '../layout/smartLayout';
  * edge-route memo does NOT read, so pumping progress never re-routes edges. Tokens only; the bar
  * transition is gated on `prefers-reduced-motion` in style.css.
  */
-export function EdgeOrderProgress() {
+function EdgeOrderProgressImpl() {
   const prog = useAppStore((s) => s.edgeOrderProgress);
   if (!prog) return null;
   return (
@@ -28,3 +29,6 @@ export function EdgeOrderProgress() {
     </div>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const EdgeOrderProgress = memo(EdgeOrderProgressImpl);

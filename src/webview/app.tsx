@@ -14,6 +14,7 @@ import { schedulePersist } from './persistence';
 import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
 import { lodForZoom } from './render/lod';
+import { useVisibleNames } from './render/useVisibleNames';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
@@ -29,7 +30,6 @@ interface AppProps {
   post: (msg: WebviewToHost) => void;
 }
 
-const VISIBILITY_MARGIN = 256;
 const GROUP_NODE_W = 220;
 const GROUP_NODE_H = 80;
 const GROUP_CONTAINER_PADDING = 24;
@@ -42,7 +42,6 @@ export function App(_props: AppProps) {
   const schema = useAppStore((s) => s.schema);
   const parseError = useAppStore((s) => s.parseError);
   const positions = useAppStore((s) => s.positions);
-  const viewport = useAppStore((s) => s.viewport);
   const ready = useAppStore((s) => s.ready);
   const groupState = useAppStore((s) => s.groups);
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
@@ -62,7 +61,9 @@ export function App(_props: AppProps) {
   const diffRemovedRefs = useAppStore((s) => s.diffRemovedRefs);
   const focusDimming = useAppStore((s) => s.focusDimming);
   const diffActive = gitView?.kind === 'diff';
-  const lodThresholds = useAppStore((s) => s.settings.lod);
+  // `viewport` itself is deliberately NOT selected here: it changes on every pan/zoom frame and
+  // would re-render the whole tree (spec 04). Only its LOD projection (a stable string) is.
+  const lod = useAppStore((s) => lodForZoom(s.viewport.zoom, s.settings.lod));
   const density = useAppStore((s) => s.settings.ui.density);
   const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
   const gridSize = useAppStore((s) => s.settings.ui.gridSize);
@@ -231,7 +232,26 @@ export function App(_props: AppProps) {
   }, [schema, positions, derived, density]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement>(null);
   const [viewportRect, setViewportRect] = useState({ w: 0, h: 0 });
+  const worldMounted = ready && schema.tables.length > 0;
+
+  // The camera is applied imperatively (same technique as the drag controller): Preact never owns
+  // `.ddd-world`'s transform, so pan/zoom frames touch one style property and nothing re-renders.
+  useEffect(() => {
+    const apply = (vp: { x: number; y: number; zoom: number }) => {
+      const el = worldRef.current;
+      if (el) el.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`;
+    };
+    apply(store.getState().viewport);
+    return store.subscribe((s, prev) => {
+      if (s.viewport !== prev.viewport) apply(s.viewport);
+    });
+  }, [worldMounted]);
+
+  // Read by the marquee pointerup without re-binding the listeners on every index rebuild.
+  const spatialIndexRef = useRef(spatialIndex);
+  spatialIndexRef.current = spatialIndex;
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
 
   useEffect(() => {
@@ -344,7 +364,7 @@ export function App(_props: AppProps) {
           w: (x1 - x0) / vp.zoom,
           h: (y1 - y0) / vp.zoom,
         };
-        const hits = spatialIndex.query(world);
+        const hits = spatialIndexRef.current.query(world);
         // Exclude synthetic group ids from selection.
         const realHits: string[] = [];
         for (const h of hits) if (!h.startsWith(GROUP_PREFIX)) realHits.push(h);
@@ -425,18 +445,10 @@ export function App(_props: AppProps) {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [ready, spatialIndex]);
+  }, [ready]);
 
-  const visibleNames = useMemo(() => {
-    if (!ready || viewportRect.w === 0 || viewportRect.h === 0) return null;
-    const worldBbox = {
-      x: (-viewport.x) / viewport.zoom - VISIBILITY_MARGIN,
-      y: (-viewport.y) / viewport.zoom - VISIBILITY_MARGIN,
-      w: viewportRect.w / viewport.zoom + VISIBILITY_MARGIN * 2,
-      h: viewportRect.h / viewport.zoom + VISIBILITY_MARGIN * 2,
-    };
-    return spatialIndex.query(worldBbox);
-  }, [spatialIndex, viewport, viewportRect, ready]);
+  // Culled set; same Set instance while membership is unchanged (see useVisibleNames).
+  const visibleNames = useVisibleNames(spatialIndex, viewportRect, ready);
 
   // Visible edge ids (≥ 1 endpoint visible). Memoized so EdgeLayer can route ALL refs once
   // (route-all-then-cull, spec 05 §8) and just filter the resulting routes by this set.
@@ -487,24 +499,22 @@ export function App(_props: AppProps) {
     return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
   }, [schema, positions, derived, density]);
 
-  const lod = lodForZoom(viewport.zoom, lodThresholds);
-  const worldTransform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
-
   // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
   const mergeTableKeys = new Set<QualifiedName>();
   if (mergeConflicts) for (const c of mergeConflicts) if (c.section === 'tables') mergeTableKeys.add(c.key);
 
   // Diff overlay (spec 16): translate added refs' stable ids to the edge layer's composite keys so
   // the matching edges can be tinted. Removed refs are drawn by DiffGhosts, not here.
-  let edgeRefDiff: Map<string, RefDiffStatus> | null = null;
-  if (refDiff) {
-    edgeRefDiff = new Map();
+  const edgeRefDiff = useMemo(() => {
+    if (!refDiff) return null;
+    const m = new Map<string, RefDiffStatus>();
     for (const [stableId, status] of refDiff) {
       if (status !== 'added') continue;
       const key = derived.refKeyByStableId.get(stableId);
-      if (key) edgeRefDiff.set(key, status);
+      if (key) m.set(key, status);
     }
-  }
+    return m;
+  }, [refDiff, derived.refKeyByStableId]);
 
   // Diff change targets (changed live tables + removed ghosts) — feed the hover hit-layer and the
   // banner's prev/next camera navigation. Sorted for a stable step order.
@@ -538,8 +548,8 @@ export function App(_props: AppProps) {
   return (
     <>
       <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} ref={viewportRef} tabIndex={0}>
-        {ready && schema.tables.length > 0 ? (
-          <div class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'} style={{ transform: worldTransform }}>
+        {worldMounted ? (
+          <div ref={worldRef} class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'}>
             {snapToGrid ? (
               <div
                 class="ddd-grid"
@@ -645,7 +655,7 @@ export function App(_props: AppProps) {
       ) : null}
       {ready ? (
         <div class="ddd-statusbar">
-          {visibleNames ? visibleNames.size : visibleTableCount}/{totalTableCount} visible · {derived.effectiveRefs.length} refs · zoom {Math.round(viewport.zoom * 100)}% · LOD {lod}
+          {visibleNames ? visibleNames.size : visibleTableCount}/{totalTableCount} visible · {derived.effectiveRefs.length} refs · zoom <ZoomPct />% · LOD {lod}
           {selection.size > 0 ? ` · ${selection.size} selected` : ''}
         </div>
       ) : null}
@@ -657,4 +667,10 @@ export function App(_props: AppProps) {
       <EdgeOrderProgress />
     </>
   );
+}
+
+/** Statusbar zoom readout — the only piece of `App` that follows the camera, kept in its own leaf. */
+function ZoomPct() {
+  const pct = useAppStore((s) => Math.round(s.viewport.zoom * 100));
+  return <>{pct}</>;
 }

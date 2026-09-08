@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { createPortal } from 'preact/compat';
+import { createPortal, memo } from 'preact/compat';
 import { store, useAppStore } from '../state/store';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
@@ -22,7 +22,7 @@ const MENU_WIDTH = 200;
 const MENU_HEIGHT_EST = 176;
 const ANCHOR_GAP = 4;
 
-export function AppMenu() {
+function AppMenuImpl() {
   const open = useAppStore((s) => s.appMenuOpen);
   const wrapRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -139,3 +139,6 @@ export function AppMenu() {
     </div>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const AppMenu = memo(AppMenuImpl);

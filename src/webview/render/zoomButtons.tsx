@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { fitToContent, zoomAtCenter } from './viewport';
@@ -6,8 +7,8 @@ import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
 import { IconFitScreen, IconMinus, IconPan, IconPlus, IconRedo, IconUndo } from '../icons';
 
-export function ZoomButtons() {
-  const viewport = useAppStore((s) => s.viewport);
+function ZoomButtonsImpl() {
+  const zoom = useAppStore((s) => s.viewport.zoom);
   const zoomStep = useAppStore((s) => s.settings.zoomStep);
   const pastLen = useAppStore((s) => s.past.length);
   const futureLen = useAppStore((s) => s.future.length);
@@ -56,7 +57,7 @@ export function ZoomButtons() {
           <IconMinus size={14} />
         </Button>
       </Tooltip>
-      <ZoomInput zoom={viewport.zoom} />
+      <ZoomInput zoom={zoom} />
       <Tooltip label="Zoom in" shortcut="Ctrl+=">
         <Button variant="zoom" size="tool" onClick={() => { const el = getEl(); if (el) zoomAtCenter(zoomStep, el); }}>
           <IconPlus size={14} />
@@ -73,7 +74,10 @@ export function ZoomButtons() {
 
 function ZoomInput({ zoom }: { zoom: number }) {
   const [draft, setDraft] = useState<string | null>(null);
-  const { zoomMin, zoomMax } = useAppStore((s) => ({ zoomMin: s.settings.zoomMin, zoomMax: s.settings.zoomMax }));
+  // Two primitive selectors: an object-returning selector is never Object.is-equal, so it would
+  // re-render this input on every store mutation (every pan/drag frame).
+  const zoomMin = useAppStore((s) => s.settings.zoomMin);
+  const zoomMax = useAppStore((s) => s.settings.zoomMax);
   const displayed = draft ?? String(Math.round(zoom * 100));
 
   const commit = () => {
@@ -109,3 +113,6 @@ function ZoomInput({ zoom }: { zoom: number }) {
     </label>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const ZoomButtons = memo(ZoomButtonsImpl);

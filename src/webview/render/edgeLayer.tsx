@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'preact/hooks';
-import { createPortal } from 'preact/compat';
+import { createPortal, memo } from 'preact/compat';
 import type { QualifiedName, Ref, RefDiffStatus, Schema } from '../../shared/types';
 import { columnCenterY, estimateSize } from '../layout/autoLayout';
 import { routeRefs, isDipRun, type EdgeRoute } from './edgeRouter';
@@ -60,7 +60,7 @@ interface HoverState {
   near: number;
 }
 
-export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, groupSizes, worldBbox, refDiff }: EdgeLayerProps) {
+function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, tablesByName, groupSizes, worldBbox, refDiff }: EdgeLayerProps) {
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
   // Edges are faded by default; they reveal (full opacity) when their table or the edge is focused.
@@ -71,8 +71,11 @@ export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, g
   const [hover, setHover] = useState<HoverState | null>(null);
   const [clickPos, setClickPos] = useState<{ x: number; y: number } | null>(null);
 
-  const groupByName = new Map<string, GroupSize>();
-  if (groupSizes) for (const g of groupSizes) groupByName.set(g.name, g);
+  const groupByName = useMemo(() => {
+    const m = new Map<string, GroupSize>();
+    if (groupSizes) for (const g of groupSizes) m.set(g.name, g);
+    return m;
+  }, [groupSizes]);
 
   const bboxOf = (name: QualifiedName): Bbox | undefined => {
     if (name.startsWith(GROUP_PREFIX)) {
@@ -117,8 +120,11 @@ export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, g
   const lowZoom = lod === 'rect';
   const straightPath = (r: EdgeRoute) => `M ${r.source.x} ${r.source.y} L ${r.target.x} ${r.target.y}`;
 
-  const refById = new Map<string, Ref>();
-  for (const r of refs) refById.set(r.id, r);
+  const refById = useMemo(() => {
+    const m = new Map<string, Ref>();
+    for (const r of refs) m.set(r.id, r);
+    return m;
+  }, [refs]);
 
   const worldToScreen = (x: number, y: number): { x: number; y: number } | null => {
     const svg = svgRef.current;
@@ -458,3 +464,6 @@ export function EdgeLayer({ refs, visibleRefIds, lod, positions, tablesByName, g
     </>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const EdgeLayer = memo(EdgeLayerImpl);

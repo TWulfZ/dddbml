@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { Column, ColumnDiffEntry, Table, TableDiffStatus } from '../../shared/types';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
@@ -73,7 +74,7 @@ function buildDiffRows(current: Column[], base: Column[] | undefined, changed: S
   return rows;
 }
 
-export function TableNode({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
+function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
   const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
   const selection = useAppStore((s) => s.selection);
@@ -331,3 +332,6 @@ function TableNoteIcon({ note, name }: { note: string; name: string }) {
     </span>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const TableNode = memo(TableNodeImpl);

@@ -1,4 +1,5 @@
 import type { ComponentChildren, VNode } from 'preact';
+import { memo } from 'preact/compat';
 import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
@@ -48,7 +49,7 @@ function update(patch: Partial<FlatSettingsPatch>) {
   postToHost({ type: 'settings:update', payload: patch });
 }
 
-export function SettingsPanel() {
+function SettingsPanelImpl() {
   const open = useAppStore((s) => s.settingsPanelOpen);
   const settings = useAppStore((s) => s.settings);
   const [active, setActive] = useState<Category>('interface');
@@ -209,3 +210,6 @@ function Section({ category, info, children }: { category: Category; info?: VNod
 function close() {
   store.getState().setSettingsPanelOpen(false);
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const SettingsPanel = memo(SettingsPanelImpl);

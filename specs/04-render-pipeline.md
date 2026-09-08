@@ -153,10 +153,47 @@ foco), de modo que mantener Space sobre el canvas arma el paneo de inmediato.
   difieren la decisión al click. El multi-drag (press sobre miembro de una
   multi-selección) mueve todo el set.
 
+## Cámara fuera de Preact (pan/zoom sin re-render)
+
+**Problema (2026-09, reportado con esquemas grandes):** `App` seleccionaba `s.viewport` y
+`setViewport` creaba un objeto nuevo por llamada; `panBy` lo llama en cada `pointermove`.
+Resultado: **todo el árbol** (tablas visibles, `EdgeLayer`, menús flotantes, modales cerradas)
+re-renderizaba por frame de pan/zoom. Con miles de tablas/refs el hilo principal se saturaba y,
+al agotarse el presupuesto de la GPU, Chromium evictaba tiles de todo el proceso → el chrome
+flotante "desaparecía o se partía".
+
+**Diseño vigente:**
+- **`App` no se suscribe a `viewport`.** Sólo a su proyección LOD
+  (`useAppStore(s => lodForZoom(s.viewport.zoom, s.settings.lod))`, un string estable).
+- **Transform imperativo.** Un `useEffect` hace `store.subscribe` y escribe
+  `worldRef.current.style.transform` cuando cambia `viewport` — la misma técnica que el drag.
+  `.ddd-world` **no** recibe `style` desde JSX (si lo recibiera, Preact re-aplicaría el valor
+  viejo en cada render).
+- **Culling estable: `useVisibleNames`** (`render/useVisibleNames.ts`). Se suscribe al store
+  fuera de Preact, consulta el spatial index y **devuelve la misma instancia de `Set`** mientras
+  la membresía no cambie. Sólo fuerza render de `App` cuando una tabla entra o sale del
+  viewport (+ margen 256 px). Así `visibleRefIds` → `visibleRoutes` → vnodes SVG se cachean
+  entre frames. Recalcula sincrónicamente si cambian `spatialIndex`, `viewportRect` o `ready`.
+- **`setViewport` con identity guard:** una cámara sin cambios no notifica (mismo patrón que
+  `setHoveredTable`).
+- **Lo único que sigue la cámara en `App` es el `%` del statusbar**, aislado en el leaf
+  `ZoomPct` (selector primitivo). `ZoomButtons` selecciona `s.viewport.zoom`, no el objeto.
+- **`memo()` como cortafuegos.** `TableNode`, `EdgeLayer`, `GroupContainer`,
+  `CollapsedGroupNode`, `AppMenu`, `GroupPanel`, `ZoomButtons`, `ActionsPanel`, `SettingsPanel`,
+  `GitPanel`, `ExportModal`, `MergePanel`, `EdgeOrderProgress` están envueltos en `memo`
+  (`preact/compat`, ya en bundle por `createPortal`): un render de `App` por otro slice
+  (selección, hover, tooltip) ya no arrastra al chrome ni a las modales cerradas. Cada uno
+  sigue re-renderizando por **sus propias** suscripciones. Las props que llegan desde `App`
+  deben ser estables (primitivos o memos) — `edgeRefDiff` se memoiza por eso.
+- **Listeners del canvas** (`app.tsx` effect de pointer/teclado) dependen sólo de `[ready]`;
+  el spatial index se lee por `ref` en el `pointerup` del marquee. Antes dependía de
+  `spatialIndex` → 10 listeners se re-ataban y el estado del gesto se reseteaba en cada
+  cambio de posiciones.
+
 ## Rendering framework decisions
 
 - **Preact** no React: bundle más chico, compat aliases en vite para zustand.
-- **useSyncExternalStore** sobre zustand vanilla: selectores granulares → solo los componentes que miran el slice afectado re-renderizan.
+- **`useAppStore(selector)`** sobre zustand vanilla (hook propio con `Object.is`): selectores granulares → solo los componentes que miran el slice afectado re-renderizan. **Nunca un selector que devuelva objeto/array/Set nuevo** (siempre "cambia").
 - **Mutación DOM directa durante drag** (M5): bypass Preact re-render, sólo se commit al store al `pointerup`.
 - **`transform: translate3d(...)`**: GPU compositing, no layout/paint per-frame durante pan/zoom.
 - **SVG overlay único**: reduce DOM node count vs un `<svg>` por edge.
@@ -167,7 +204,7 @@ Ver `07-performance-budgets.md` para targets numéricos y fixtures de benchmark.
 
 ## Anti-patterns a evitar
 
-- **Re-render full tree en cada pan/zoom frame**: fatal a 5000 tablas. Por eso culling memoized + Preact keys estables.
+- **Re-render full tree en cada pan/zoom frame**: fatal a 5000 tablas. Por eso la cámara vive fuera de Preact (ver "Cámara fuera de Preact"), culling con `Set` estable y `memo()` en los hijos. **Nunca** volver a seleccionar `s.viewport` desde `App` ni pasar el transform por `style`.
 - **Uso de `width`/`left`/`top`** para posicionar tablas: causa layout. Usar `transform`.
 - **Rebuild spatial index en cada pan**: sólo cuando posiciones cambian (raro).
 - **Recomputar dagre completo en cada frame**: sólo al cambio de schema para tablas sin posición.

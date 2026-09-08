@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { Button } from '../ui/Button';
@@ -21,7 +22,7 @@ import {
  * generic ContextMenu) for its scope options. Undo/redo live in the zoom cluster and the PK/FK view
  * filter lives in Diagram Views — see spec 12 / spec 06.
  */
-export function ActionsPanel() {
+function ActionsPanelImpl() {
   const [open, setOpen] = useState(false);
   const [arrangeMenu, setArrangeMenu] = useState<{ x: number; y: number } | null>(null);
   // Per-run intents (not durable settings): both default ON, reset each session (spec 05 §9).
@@ -113,3 +114,6 @@ export function ActionsPanel() {
     </div>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const ActionsPanel = memo(ActionsPanelImpl);

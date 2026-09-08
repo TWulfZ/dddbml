@@ -1,4 +1,5 @@
 import type { VNode } from 'preact';
+import { memo } from 'preact/compat';
 import { useEffect, useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
@@ -39,7 +40,7 @@ function close() {
  * settings panel shell (`.ddd-settings__*` = the generic two-pane layout). All actions are scoped to
  * the diagram files only (the `.dbml` + its layout sidecar).
  */
-export function GitPanel() {
+function GitPanelImpl() {
   const open = useAppStore((s) => s.gitPanelOpen);
   const gitStatus = useAppStore((s) => s.gitStatus);
   const [active, setActive] = useState<Section>('commit');
@@ -363,3 +364,6 @@ function DiffPane({ status }: { status: GitStatusSummary }) {
     </section>
   );
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const GitPanel = memo(GitPanelImpl);

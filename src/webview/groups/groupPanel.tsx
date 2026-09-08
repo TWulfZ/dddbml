@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { TableGroup } from '../../shared/types';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
@@ -19,7 +20,7 @@ import {
   IconSettings,
 } from '../icons';
 
-export function GroupPanel() {
+function GroupPanelImpl() {
   const groups = useAppStore((s) => s.schema.groups);
   const groupState = useAppStore((s) => s.groups);
   const hiddenTables = useAppStore((s) => s.hiddenTables);
@@ -265,3 +266,6 @@ function TableRow({ tableName, hidden }: { tableName: string; hidden: boolean })
 export function colorForGroup(name: string): string {
   return bcColorFor(name);
 }
+
+// memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
+export const GroupPanel = memo(GroupPanelImpl);
