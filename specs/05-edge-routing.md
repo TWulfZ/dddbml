@@ -419,7 +419,10 @@ cancelar = no-op puro (tablas nunca se movieron, no se empuja comando).
 
 **Progreso (E4):** como **nosotros** controlamos el loop de A* (una arista a la vez), el indicador es
 un **porcentaje real** (aristas ruteadas / total), no un spinner opaco. El loop cede (yield) cada
-`YIELD_EVERY` aristas y emite progreso monótono 0→100; **cancelable** vía `AbortSignal`
+`YIELD_EVERY` aristas **como macrotarea** (`MessageChannel`, fallback `setTimeout 0`) — un
+`await Promise.resolve()` sólo vacía la cola de microtareas y el navegador nunca pintaba el
+overlay ni despachaba el click de Cancel (bug corregido 2026-09) — y emite progreso monótono
+0→100; **cancelable** vía `AbortSignal`
 (`cancelEdgeOrdering`). UI: overlay flotante `EdgeOrderProgress` (slice de store `edgeOrderProgress`,
 selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; respeta
 `prefers-reduced-motion`).

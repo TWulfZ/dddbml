@@ -316,6 +316,26 @@ export function routeOneEdge(ep: OrderEdgeInput, grid: RouteGrid, maxExplored = 
 }
 
 /**
+ * Macrotask yield. `await Promise.resolve()` only drains the microtask queue, so the browser never
+ * got to paint the progress overlay or dispatch its Cancel click — the batch looked frozen.
+ * MessageChannel beats setTimeout(0) (no 4 ms clamping after nesting).
+ */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof MessageChannel === 'undefined') {
+      setTimeout(resolve, 0);
+      return;
+    }
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => {
+      ch.port1.close();
+      resolve();
+    };
+    ch.port2.postMessage(null);
+  });
+}
+
+/**
  * Batch-route every edge (caller supplies them in deterministic order, e.g. sorted by ref.id).
  * Marks each routed path on a shared world-keyed `WorldUsage` so later edges avoid earlier ones
  * (greedy crossing-min). Yields every `yieldEvery` edges and reports monotonic 0→100 progress;
@@ -351,7 +371,7 @@ export async function orderEdges(
 
     if ((i + 1) % yieldEvery === 0) {
       opts.onProgress?.(Math.floor(((i + 1) / total) * 100));
-      await Promise.resolve();
+      await yieldToEventLoop();
     }
   }
   opts.onProgress?.(100);

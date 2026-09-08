@@ -225,6 +225,17 @@ describe('orderEdges — batch determinism, crossing, progress, abort', () => {
     expect(seen[seen.length - 1]).toBe(100);
   });
 
+  it('yields to the event loop (macrotask) between progress emits, so paint/cancel can run', async () => {
+    const edges = Array.from({ length: 12 }, (_, i) => mkEdge({ refId: `e${i}` }));
+    let timerFired = false;
+    const firedBeforeProgress: boolean[] = [];
+    setTimeout(() => { timerFired = true; }, 0);
+    await orderEdges(edges, { obstaclesFor: () => [], yieldEvery: 4, onProgress: () => firedBeforeProgress.push(timerFired) });
+    // With a microtask yield the timer could only run after the whole batch; a real yield lets it
+    // fire before the second progress emit.
+    expect(firedBeforeProgress.some(Boolean)).toBe(true);
+  });
+
   it('aborts early and yields nothing (throws AbortError, no partial result)', async () => {
     const edges = Array.from({ length: 40 }, (_, i) => mkEdge({ refId: `e${i}` }));
     const ctrl = new AbortController();
