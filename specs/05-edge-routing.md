@@ -325,6 +325,13 @@ lado, mejor selección de lado (hoy `chooseSides` fuerza izq/der), y menos cruce
 (obstacle avoidance). El ordenamiento **no es en tiempo real**: es una operación on-demand,
 deshacible y persistida (escribe `EdgeLayout`), con indicador de progreso porque puede tardar.
 
+> **Estado real de las 4 metas (auditoría 2026-09-08):** la meta 3, *mejor selección de lado*,
+> sigue **abierta**: `routeOneEdge` hace **una** búsqueda con los lados que le da `chooseSides4`
+> y descarta el coste; no existe comparación de coste entre pares de lados (su docstring lo
+> afirmaba y se corrigió). **`MAX_GRID_CELLS` bajó de 4M a 250k**: `searchGrid` reserva ~105 B por
+> celda antes del primer pop, así que el tope es en realidad un tope de memoria (250k ≈ 26 MB por
+> arista; 4M permitía ~420 MB con una sola tabla lejana). Ventanas mayores caen al H-V-H por defecto.
+
 **Disparo (acordado con el usuario):** vive en el **mismo botón/superficies de `runSmartLayout`**
 (command palette + ActionsPanel + menú contextual, patrón spec 13). Al auto-ordenar tablas, el
 **ordenamiento de aristas viene activado por defecto** (toggle para desactivarlo). Además, el mismo

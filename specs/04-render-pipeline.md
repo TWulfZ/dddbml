@@ -224,6 +224,22 @@ progreso). Cada uno confina el fallo, lo envía al host por `error:log` con el s
 "Retry" (re-monta el subárbol). No sustituye a arreglar la causa: convierte un síntoma visual
 en un stack trace en el Output del host.
 
+## Preguntas abiertas (Open Questions)
+
+- [ ] **Commit del drag por frame vs. en `pointerup`.** Este spec dice "mutación DOM directa
+  durante drag, commit al store al `pointerup`", pero `dragController` hace `setPositionsBatch`
+  en cada `pointermove` (así las aristas siguen a la tabla en vivo). Cada commit rehace
+  `derived`, el spatial index, `worldBbox` y **rutea todas las refs** (`routeRefs`). Opciones:
+  (a) volver al spec — aristas congeladas durante el drag, commit único; (b) commit por rAF +
+  ruteo incremental sólo de las refs cuyos extremos se movieron. **Decidir con el usuario**;
+  no es el síntoma de pan/zoom que se corrigió en 2026-09.
+- [ ] **Persistir la cámara en pan/zoom con rueda.** Sólo los botones de zoom llaman a
+  `schedulePersist`; `panBy`/`zoomAt` no. Una sesión de sólo navegación pierde la cámara al
+  reabrir (spec 03 la guarda en view-state local, no en el sidecar, así que persistirla es
+  barato). ¿Intencional? Si no: `schedulePersist` con debounce en `setViewport`.
+- [ ] **Acotar las superficies world-size** (SVG de aristas, `.ddd-grid`) al rect visible si la
+  medición en DevTools → Layers sigue mostrando presión de memoria tras el cambio a 2D.
+
 ## Rendering framework decisions
 
 - **Preact** no React: bundle más chico, compat aliases en vite para zustand.
