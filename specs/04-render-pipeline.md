@@ -212,6 +212,18 @@ que su tamaño no crea texturas gigantes; el coste es sólo de *paint records*. 
 en DevTools → Layers sigue mostrando presión de memoria tras este cambio, el siguiente paso
 es acotar esas superficies al rect visible cuantizado (Preguntas abiertas).
 
+## Error boundaries
+
+Preact no tiene boundary por defecto: una excepción durante el diff **aborta el commit** y
+los hermanos que se diffean después del subárbol que lanzó quedan a medio actualizar. Como
+el chrome flotante (`AppMenu`, `GroupPanel`, `ZoomButtons`, …) es hermano posterior de
+`.ddd-world`, cualquier throw en `EdgeLayer`/`TableNode` dejaba los menús "a pedazos" y sin
+diagnóstico. `App` monta tres `ErrorBoundary` (`ui/ErrorBoundary.tsx`): `canvas`
+(`.ddd-world`), `toolbars` (chrome dentro del viewport) y `overlays` (modales, tooltip,
+progreso). Cada uno confina el fallo, lo envía al host por `error:log` con el scope, y ofrece
+"Retry" (re-monta el subárbol). No sustituye a arreglar la causa: convierte un síntoma visual
+en un stack trace en el Output del host.
+
 ## Rendering framework decisions
 
 - **Preact** no React: bundle más chico, compat aliases en vite para zustand.

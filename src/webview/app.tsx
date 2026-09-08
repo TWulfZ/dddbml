@@ -24,6 +24,7 @@ import { GitPanel } from './render/gitPanel';
 import { EdgeOrderProgress } from './render/edgeOrderProgress';
 import { GitBanner, type DiffTarget } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import type { QualifiedName, Ref, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
 
 interface AppProps {
@@ -549,6 +550,7 @@ export function App(_props: AppProps) {
     <>
       <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} ref={viewportRef} tabIndex={0}>
         {worldMounted ? (
+          <ErrorBoundary scope="canvas">
           <div ref={worldRef} class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'}>
             {snapToGrid ? (
               <div
@@ -624,6 +626,7 @@ export function App(_props: AppProps) {
               />
             ) : null}
           </div>
+          </ErrorBoundary>
         ) : null}
         {marquee ? (
           <div
@@ -640,12 +643,14 @@ export function App(_props: AppProps) {
         {ready && schema.tables.length === 0 && !parseError ? (
           <div class="ddd-empty">empty DBML — define a Table to see it here.</div>
         ) : null}
-        {ready ? <AppMenu /> : null}
-        {ready ? <GroupPanel /> : null}
-        {ready ? <ZoomButtons /> : null}
-        {ready && !readOnly ? <ActionsPanel /> : null}
-        {ready && mergeConflicts ? <MergePanel /> : null}
-        {ready && gitView ? <GitBanner diffTargets={diffTargets} /> : null}
+        <ErrorBoundary scope="toolbars">
+          {ready ? <AppMenu /> : null}
+          {ready ? <GroupPanel /> : null}
+          {ready ? <ZoomButtons /> : null}
+          {ready && !readOnly ? <ActionsPanel /> : null}
+          {ready && mergeConflicts ? <MergePanel /> : null}
+          {ready && gitView ? <GitBanner diffTargets={diffTargets} /> : null}
+        </ErrorBoundary>
       </div>
       {parseError ? (
         <div class="ddd-banner" title={parseError.message}>
@@ -659,12 +664,14 @@ export function App(_props: AppProps) {
           {selection.size > 0 ? ` · ${selection.size} selected` : ''}
         </div>
       ) : null}
-      <Tooltip />
-      <ExportModal />
-      <ExportImageModal derived={derived} />
-      <SettingsPanel />
-      <GitPanel />
-      <EdgeOrderProgress />
+      <ErrorBoundary scope="overlays">
+        <Tooltip />
+        <ExportModal />
+        <ExportImageModal derived={derived} />
+        <SettingsPanel />
+        <GitPanel />
+        <EdgeOrderProgress />
+      </ErrorBoundary>
     </>
   );
 }
