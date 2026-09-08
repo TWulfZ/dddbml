@@ -13,7 +13,6 @@ node_modules/**
 tsconfig*.json
 vite.config.ts
 pnpm-lock.yaml
-docs/screenshots/README.md
 **/.eslintrc.json
 **/*.map
 **/*.ts
