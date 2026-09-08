@@ -78,6 +78,7 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
       return;
     case 'git:commitResult':
       state.setGitBusy(false);
+      if (msg.payload.ok) state.noteGitCommitOk();
       return;
     case 'git:stashes':
       state.setGitStashes(msg.payload.stashes);

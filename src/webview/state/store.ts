@@ -86,6 +86,8 @@ export interface AppState {
   gitPanelOpen: boolean;
   /** True while a git write op (commit/stash/restore) is in flight — disables the action buttons. */
   gitBusy: boolean;
+  /** Bumped on every successful commit — the commit pane clears its message on this, not optimistically. */
+  gitCommitOkCount: number;
   /** Repo-global stash entries, newest first (spec 16). */
   gitStashes: GitStashEntry[];
   /** Commits touching the diagram files (History pane), newest first. */
@@ -173,6 +175,7 @@ export interface AppActions {
   setGitStatus(status: GitStatusSummary): void;
   setGitPanelOpen(open: boolean): void;
   setGitBusy(busy: boolean): void;
+  noteGitCommitOk(): void;
   setGitStashes(stashes: GitStashEntry[]): void;
   setGitCommits(commits: GitCommitMeta[]): void;
   enterTimeTravel(rev: string, label: string): void;
@@ -229,6 +232,7 @@ const initial: AppState = {
   gitStatus: null,
   gitPanelOpen: false,
   gitBusy: false,
+  gitCommitOkCount: 0,
   gitStashes: [],
   gitCommits: [],
   gitView: null,
@@ -361,9 +365,11 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setEdgeWaypoints(refId, waypoints) {
     set((s) => {
+      const wps = waypoints.map((w) => ({ x: Math.round(w.x), y: Math.round(w.y) }));
+      // Per-pointermove caller: an unchanged list must not mint a new Map (that re-routes every ref).
+      if (sameWaypoints(s.edgeLayouts.get(refId)?.waypoints, wps)) return s;
       const next = new Map(s.edgeLayouts);
       const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
-      const wps = waypoints.map((w) => ({ x: Math.round(w.x), y: Math.round(w.y) }));
       if (wps.length > 0) merged.waypoints = wps; else delete merged.waypoints;
       writeLayout(next, refId, merged);
       return { edgeLayouts: next };
@@ -390,6 +396,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setEdgeSide(refId, end, side) {
     set((s) => {
+      const current = s.edgeLayouts.get(refId);
+      const currentSide = end === 'source' ? current?.sourceSide : current?.targetSide;
+      if ((currentSide ?? null) === side) return s;
       const next = new Map(s.edgeLayouts);
       const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
       if (end === 'source') {
@@ -544,6 +553,9 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   setGitBusy(busy) {
     set({ gitBusy: busy });
   },
+  noteGitCommitOk() {
+    set((s) => ({ gitCommitOkCount: s.gitCommitOkCount + 1 }));
+  },
   setGitStashes(stashes) {
     set({ gitStashes: stashes });
   },
@@ -694,6 +706,15 @@ function writeLayout(map: Map<string, EdgeLayout>, refId: string, layout: EdgeLa
     clean.dy !== undefined;
   if (hasData) map.set(refId, clean);
   else map.delete(refId);
+}
+
+function sameWaypoints(a: Waypoint[] | undefined, b: Waypoint[]): boolean {
+  const aa = a ?? [];
+  if (aa.length !== b.length) return false;
+  for (let i = 0; i < aa.length; i++) {
+    if (aa[i]!.x !== b[i]!.x || aa[i]!.y !== b[i]!.y) return false;
+  }
+  return true;
 }
 
 export function useAppStore<T>(selector: (state: AppState & AppActions) => T): T {

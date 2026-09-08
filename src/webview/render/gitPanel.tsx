@@ -131,15 +131,21 @@ function FileList({ status }: { status: GitStatusSummary }) {
 
 function CommitPane({ status }: { status: GitStatusSummary }) {
   const busy = useAppStore((s) => s.gitBusy);
+  const commitOkCount = useAppStore((s) => s.gitCommitOkCount);
   const [message, setMessage] = useState('');
   const [confirmRevert, setConfirmRevert] = useState(false);
   const canCommit = status.dirty && message.trim().length > 0 && !busy;
+
+  // Clear only once the host reports success; a failed commit (no user.email, rejected hook)
+  // used to wipe the message before the error toast arrived.
+  useEffect(() => {
+    if (commitOkCount > 0) setMessage('');
+  }, [commitOkCount]);
 
   const commit = () => {
     if (!canCommit) return;
     store.getState().setGitBusy(true);
     postToHost({ type: 'git:commit', payload: { message: message.trim() } });
-    setMessage('');
   };
 
   const revert = () => {
