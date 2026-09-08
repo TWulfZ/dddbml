@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
-import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, Ref, ViewportCommand, WebviewToHost, Schema, QualifiedName } from '../shared/types';
+import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
 import { emptyLayout, LayoutConflictError, mergeLayout, parseLayout, readLayout, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
 import { applyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
@@ -13,6 +13,10 @@ import { getExporter, listExporters } from './exporters';
 import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
 
 const PERSIST_DEBOUNCE_MS = 200;
+/** Editor autosave fires the .dbml watcher on a timer while typing; coalesce bursts. */
+const SCHEMA_DEBOUNCE_MS = 150;
+/** Each git status spawns 2-3 processes; a drag+save burst used to spawn ~6 of them. */
+const GIT_STATUS_DEBOUNCE_MS = 200;
 
 export class DiagramPanel {
   private static panels = new Map<string, DiagramPanel>();
@@ -54,6 +58,10 @@ export class DiagramPanel {
   private afterHydrate: Array<() => void> = [];
   private pendingPersist: Layout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
+  private schemaTimer: NodeJS.Timeout | null = null;
+  private gitStatusTimer: NodeJS.Timeout | null = null;
+  /** Serialized form of the last `schema:update` posted — lets the watcher skip no-op reparses. */
+  private lastPostedSchema: string | null = null;
   /** Set while a conflicted sidecar awaits in-webview resolution; null otherwise. Holds the
    *  retained host-side conflicts so the webview only has to return per-conflict decisions. */
   private pendingMerge: { conflicts: MergeConflict[]; merged: Layout; repoRoot: string; relpath: string } | null = null;
@@ -162,6 +170,8 @@ export class DiagramPanel {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
     }
+    if (this.schemaTimer) clearTimeout(this.schemaTimer);
+    if (this.gitStatusTimer) clearTimeout(this.gitStatusTimer);
     while (this.disposables.length) {
       const d = this.disposables.pop();
       try { d?.dispose(); } catch { /* noop */ }
@@ -367,30 +377,48 @@ export class DiagramPanel {
     for (const fn of queued) fn();
   }
 
-  private async sendSchema(): Promise<void> {
+  /**
+   * Re-parse the .dbml and post `schema:update`. With `skipIfUnchanged` (watcher path) an
+   * identical payload is not re-posted: a save that changes nothing (or only comments) used to
+   * hand the webview a fresh schema object and force every derived memo to recompute. Direct
+   * callers (hydrate, time-travel exit) must always post, since the webview state differs.
+   */
+  private async sendSchema(opts: { skipIfUnchanged?: boolean } = {}): Promise<void> {
+    let payload: { schema: Schema; parseError: ParseError | null };
     try {
       const bytes = await vscode.workspace.fs.readFile(this.dbmlUri);
       const source = new TextDecoder('utf-8').decode(bytes);
       const result = parseDbml(source);
       if (result.error) {
-        this.post({
-          type: 'schema:update',
-          payload: { schema: this.lastValidSchema, parseError: result.error },
-        });
+        payload = { schema: this.lastValidSchema, parseError: result.error };
       } else {
         this.lastValidSchema = result.schema;
-        this.post({
-          type: 'schema:update',
-          payload: { schema: result.schema, parseError: null },
-        });
+        payload = { schema: result.schema, parseError: null };
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.post({
-        type: 'schema:update',
-        payload: { schema: this.lastValidSchema, parseError: { message } },
-      });
+      payload = { schema: this.lastValidSchema, parseError: { message } };
     }
+    const serialized = JSON.stringify(payload);
+    if (opts.skipIfUnchanged && serialized === this.lastPostedSchema) return;
+    this.lastPostedSchema = serialized;
+    this.post({ type: 'schema:update', payload });
+  }
+
+  private scheduleSchemaRefresh(): void {
+    if (this.schemaTimer) clearTimeout(this.schemaTimer);
+    this.schemaTimer = setTimeout(() => {
+      this.schemaTimer = null;
+      void this.sendSchema({ skipIfUnchanged: true });
+    }, SCHEMA_DEBOUNCE_MS);
+  }
+
+  private scheduleGitStatus(): void {
+    if (this.gitStatusTimer) clearTimeout(this.gitStatusTimer);
+    this.gitStatusTimer = setTimeout(() => {
+      this.gitStatusTimer = null;
+      void this.sendGitStatus();
+    }, GIT_STATUS_DEBOUNCE_MS);
   }
 
   private async sendLayout(isExternal = false): Promise<void> {
@@ -760,7 +788,7 @@ export class DiagramPanel {
     }
     // Only a real shared-layout write flips the sidecar dirty/clean — refresh the Git panel's status
     // then (NOT on pure pan/zoom, which would spawn `git status` on every frame's debounced flush).
-    if (sharedChanged) void this.sendGitStatus();
+    if (sharedChanged) this.scheduleGitStatus();
   }
 
   private setupWatchers(): void {
@@ -774,8 +802,8 @@ export class DiagramPanel {
     );
     dbmlWatcher.onDidChange((uri) => {
       if (uri.toString() !== this.dbmlUri.toString()) return;
-      void this.sendSchema();
-      void this.sendGitStatus();
+      this.scheduleSchemaRefresh();
+      this.scheduleGitStatus();
     });
 
     const layoutWatcher = vscode.workspace.createFileSystemWatcher(
@@ -783,7 +811,7 @@ export class DiagramPanel {
     );
     const onLayoutFs = async (uri: vscode.Uri) => {
       if (uri.toString() !== layoutSidecar.toString()) return;
-      void this.sendGitStatus(); // sidecar touched on disk → dirty/clean may have flipped
+      this.scheduleGitStatus(); // sidecar touched on disk → dirty/clean may have flipped
       try {
         const bytes = await vscode.workspace.fs.readFile(uri);
         const text = new TextDecoder('utf-8').decode(bytes);
