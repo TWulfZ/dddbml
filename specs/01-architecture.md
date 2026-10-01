@@ -97,7 +97,10 @@ type WebviewToHost =
 10. Drag en webview → `layout:persist` **inmediato** → host escribe sidecar (debounce de host
     200 ms). Al **ocultar** el panel (el webview se destruye: `retainContextWhenHidden: false`)
     o al **cerrarlo**, el host vuela el persist pendiente en el acto en vez de descartarlo;
-    `deactivate()` espera esas escrituras. Ocultar también marca el panel como no hidratado,
+    `deactivate()` espera esas escrituras. Antes de escribir, el host re-lee el sidecar: si no es el
+    texto que vio por última vez (un `git merge`/`pull` cuyo evento del watcher llega después del
+    debounce), no escribe y lanza la recarga externa — si no, renombraba encima de los marcadores
+    de conflicto y la recarga tomaba el archivo por su propio eco (F27). Ocultar también marca el panel como no hidratado,
     así los prompts (`export:prompt`, `exportImage:prompt`) esperan al próximo `ready`.
     El webview **no** debouncea ediciones discretas (drag, waypoints, undo/redo, color, ocultar,
     colapsar, auto-layout; F22): un timer muere con el iframe al ocultar/cerrar y un post en

@@ -193,7 +193,18 @@ webview nunca queda editable con la revisión pasada. Ese layout (y el que prece
 desde time-travel) va como `layout:external-change` sólo si el texto del sidecar cambió desde la
 última vez que el host lo vio; si no, `layout:loaded` — el webview conserva el historial de undo
 guardado al entrar (spec 11, F76). Un webview recargado durante un diff recibe
-el diff **recalculado** (el working tree pudo cambiar).
+el diff **recalculado** (el working tree pudo cambiar); el host lo calcula **antes** de postear el
+layout/schema de trabajo, que salen seguidos del `git:diff:enter`: si no, el webview fresco quedaba
+editable mientras el host descartaba sus persists.
+
+Las transiciones de overlay (entrar/salir de time-travel o diff, y el `ready` de hidratación) se
+**serializan** en el host: un doble click en *Exit* hacía que el segundo exit se posteara antes de
+que el primero enviara el estado de trabajo, desbloqueando la revisión pasada; el siguiente drag
+escribía esa revisión sobre el sidecar. Un exit sin overlay activo (repetido, o un merge que ya
+tomó el control) no postea nada. Además `sendLayout` descarta el persist pendiente: lo que el webview
+va a mostrar es la verdad, y un persist aceptado contra lo que mostraba antes no puede sobrevivirle.
+Si el host descarta un `layout:persist` por el gate, al salir del overlay re-envía el layout aunque
+no haya otro cambio, así la edición descartada se revierte a la vista en vez de quedar como guardada.
 
 ## Modelo de datos / tipos afectados
 
@@ -222,7 +233,7 @@ lleva la tabla Previous también para las tablas **modificadas** (no solo elimin
 - Diff puro → `src/extension/schemaDiff.ts` (`diffSchemas`).
 - Orquestación host → `panel.ts` (`diagramScope`, `sendGitStatus`, `sendStashes`,
   `sendCommits`, `handleGitCommit/Restore/StashPush/StashOp`, `enterTimeTravel`,
-  `exitTimeTravel`, `enterDiff`, `reloadFromDisk`).
+  `leaveOverlay`, `enterDiff`, `reloadFromDisk`).
 - Read-only + overlay on-canvas → patrón de merge (gate `mergeConflicts`,
   `mergeGhosts`). Nuevo: `gitBanner.tsx`, `diffGhosts.tsx`. Diff inline → `tableNode.tsx`
   (`buildDiffRows` + filas `is-diff-add/del`). Cámara → `fitToBbox` (`render/viewport.ts`).

@@ -168,7 +168,9 @@ Flujo host (`panel.ts`):
 - **Cámara (decisión 2026-10-01, F26).** El webview persiste el `viewport` al terminar un
   pan/zoom (debounced) y solo va al view-state local, nunca al sidecar. Un push de layout del
   host (watcher, merge aplicado, salida de overlay) no reemplaza la cámara actual; el viewport
-  guardado solo se aplica en la carga inicial del panel.
+  guardado solo se aplica en la carga inicial del panel. Las escrituras de view-state del host van
+  encadenadas y leen el layout vigente **al ejecutarse**: un flush que tomó su snapshot antes de un
+  pan/zoom (mientras escribía el sidecar) ya no pisa la cámara más nueva.
 - Keyed por `sha256(dbmlUri.toString())`. Archivos huérfanos (al renombrar/borrar el
   `.dbml`) se acumulan; GC diferido (ver Preguntas abiertas).
 
