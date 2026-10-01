@@ -103,8 +103,14 @@ suelto por edge fuera de esta capa). Edge culling:
 - `routeRefs` se memoiza (`[refs, positions, tablesByName, groupSizes, edgeLayouts]`);
   las posiciones world no cambian en pan/zoom → el ruteo no recomputa por frame.
 - Se rutean todas las `effectiveRefs`; las *rutas* se filtran por `visibleRefIds`
-  (al menos un endpoint en `visibleNames`). El margen de 256px ya incluye aristas
-  que cruzan el borde.
+  (`useVisibleEdgeIds`): una arista es visible si su **caja** (rects de sus dos nodos
+  extremo ∪ waypoints, `edgeBoxes` en `app.tsx`) cruza el viewport + margen 256px.
+  Probar sólo los extremos no basta: una arista entre dos tablas fuera de pantalla
+  que cruza el viewport desaparecía y parpadeaba al panear. La caja es un superset
+  (una diagonal en `rect` puede no tocar el viewport aunque su caja sí) — renderizar
+  de más es aceptable. Escaneo lineal por frame de cámara (no grid: una arista larga
+  ocuparía cientos de celdas); re-render sólo si cambia la membresía, como
+  `useVisibleNames`.
 - `lod === 'rect'`: arista = recta `M source L target`, sin markers/dots/overlay.
 
 ## Interacción de canvas (pan + selección)
@@ -205,8 +211,8 @@ flotante "desaparecía o se partía".
 - **Culling estable: `useVisibleNames`** (`render/useVisibleNames.ts`). Se suscribe al store
   fuera de Preact, consulta el spatial index y **devuelve la misma instancia de `Set`** mientras
   la membresía no cambie. Sólo fuerza render de `App` cuando una tabla entra o sale del
-  viewport (+ margen 256 px). Así `visibleRefIds` → `visibleRoutes` → vnodes SVG se cachean
-  entre frames. Recalcula sincrónicamente si cambian `spatialIndex`, `viewportRect` o `ready`.
+  viewport (+ margen 256 px). Las aristas usan el mismo mecanismo (`useVisibleEdgeIds`). Así
+  `visibleRefIds` → `visibleRoutes` → vnodes SVG se cachean entre frames. Recalcula sincrónicamente si cambian `spatialIndex`, `viewportRect` o `ready`.
 - **`setViewport` con identity guard:** una cámara sin cambios no notifica (mismo patrón que
   `setHoveredTable`).
 - **Lo único que sigue la cámara en `App` es el `%` del statusbar**, aislado en el leaf

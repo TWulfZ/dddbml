@@ -12,10 +12,10 @@ import { ActionsPanel } from './render/actionsPanel';
 import { AppMenu } from './render/appMenu';
 import { schedulePersist } from './persistence';
 import { panBy, zoomAt } from './render/viewport';
-import { SpatialIndex } from './render/spatialIndex';
+import { SpatialIndex, type Bbox } from './render/spatialIndex';
 import { deriveSceneGeometry, sceneBounds } from './render/sceneGeometry';
 import { lodForZoom } from './render/lod';
-import { useVisibleNames } from './render/useVisibleNames';
+import { useVisibleEdgeIds, useVisibleNames, type EdgeBox } from './render/useVisibleNames';
 import { edgeKeyedRefs } from './render/edgeKey';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
@@ -414,16 +414,39 @@ export function App(_props: AppProps) {
   // Culled set; same Set instance while membership is unchanged (see useVisibleNames).
   const visibleNames = useVisibleNames(spatialIndex, viewportRect, ready);
 
-  // Visible edge ids (≥ 1 endpoint visible). Memoized so EdgeLayer can route ALL refs once
-  // (route-all-then-cull, spec 05 §8) and just filter the resulting routes by this set.
-  const visibleRefIds = useMemo(() => {
-    if (!visibleNames) return null;
-    const ids = new Set<string>();
+  // Edge culling boxes: endpoint node rects ∪ waypoints. Endpoint visibility alone dropped edges
+  // crossing the screen between two off-screen tables (spec 04 "Edge culling").
+  const edgeBoxes = useMemo(() => {
+    const groupRects = new Map<string, Bbox>();
+    for (const g of derived.collapsedNodes) groupRects.set(groupId(g.name), g);
+    const rectOf = (name: QualifiedName): Bbox | null => {
+      const g = groupRects.get(name);
+      if (g) return g;
+      const p = positions.get(name);
+      if (!p) return null;
+      const size = estimateSize(tablesByName.get(name)?.columns.length ?? 0);
+      return { x: p.x, y: p.y, w: size.width, h: size.height };
+    };
+    const out: EdgeBox[] = [];
     for (const r of derived.effectiveRefs) {
-      if (visibleNames.has(r.source.table) || visibleNames.has(r.target.table)) ids.add(r.id);
+      const a = rectOf(r.source.table);
+      const b = rectOf(r.target.table);
+      if (!a || !b) continue;
+      let minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
+      let maxX = Math.max(a.x + a.w, b.x + b.w), maxY = Math.max(a.y + a.h, b.y + b.h);
+      for (const wp of edgeLayouts.get(r.id)?.waypoints ?? []) {
+        if (wp.x < minX) minX = wp.x;
+        if (wp.y < minY) minY = wp.y;
+        if (wp.x > maxX) maxX = wp.x;
+        if (wp.y > maxY) maxY = wp.y;
+      }
+      out.push({ id: r.id, bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY } });
     }
-    return ids;
-  }, [visibleNames, derived.effectiveRefs]);
+    return out;
+  }, [derived, positions, tablesByName, edgeLayouts, density]);
+
+  // EdgeLayer routes ALL refs once (route-all-then-cull, spec 05 §8) and filters routes by this set.
+  const visibleRefIds = useVisibleEdgeIds(edgeBoxes, viewportRect, ready);
 
   const positionsEffective = useMemo(() => {
     const m = new Map<QualifiedName, { x: number; y: number }>();

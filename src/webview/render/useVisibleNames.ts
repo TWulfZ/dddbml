@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef } from 'preact/hooks';
 import { store } from '../state/store';
-import type { SpatialIndex } from './spatialIndex';
+import type { Bbox, SpatialIndex } from './spatialIndex';
 import type { QualifiedName } from '../../shared/types';
 import type { ViewportLayout } from '../../shared/types';
 
@@ -12,6 +12,12 @@ export interface ViewportRect {
   h: number;
 }
 
+/** World-space box an edge can occupy (endpoint nodes ∪ waypoints), used for edge culling. */
+export interface EdgeBox {
+  id: string;
+  bbox: Bbox;
+}
+
 /** True when both sets hold exactly the same names (order-insensitive). */
 export function sameNameSet(a: Set<QualifiedName> | null, b: Set<QualifiedName> | null): boolean {
   if (a === b) return true;
@@ -20,14 +26,31 @@ export function sameNameSet(a: Set<QualifiedName> | null, b: Set<QualifiedName> 
   return true;
 }
 
-function queryVisible(index: SpatialIndex, rect: ViewportRect, ready: boolean, vp: ViewportLayout): Set<QualifiedName> | null {
+/** The culling query: the visible world rect grown by VISIBILITY_MARGIN; null while unmeasured. */
+export function cullingBox(rect: ViewportRect, ready: boolean, vp: ViewportLayout): Bbox | null {
   if (!ready || rect.w === 0 || rect.h === 0) return null;
-  return index.query({
+  return {
     x: -vp.x / vp.zoom - VISIBILITY_MARGIN,
     y: -vp.y / vp.zoom - VISIBILITY_MARGIN,
     w: rect.w / vp.zoom + VISIBILITY_MARGIN * 2,
     h: rect.h / vp.zoom + VISIBILITY_MARGIN * 2,
-  });
+  };
+}
+
+/**
+ * Ids of the edges whose box intersects `query`. A linear scan on purpose: an edge's box spans the
+ * whole distance between its tables, so a grid index would register long edges in hundreds of
+ * cells on every rebuild, while ~1000 rect tests per camera frame cost microseconds.
+ */
+export function visibleEdgeIds(boxes: ReadonlyArray<EdgeBox>, query: Bbox): Set<string> {
+  const out = new Set<string>();
+  const qx1 = query.x + query.w;
+  const qy1 = query.y + query.h;
+  for (const { id, bbox: b } of boxes) {
+    if (b.x + b.w < query.x || b.x > qx1 || b.y + b.h < query.y || b.y > qy1) continue;
+    out.add(id);
+  }
+  return out;
 }
 
 /**
@@ -36,34 +59,55 @@ function queryVisible(index: SpatialIndex, rect: ViewportRect, ready: boolean, v
  * Pan/zoom mutate `viewport` on every pointer frame; if the culled set were a `useMemo` on it, the
  * whole `App` (and every child that takes the set as a prop) would re-render per frame — the
  * "re-render full tree on each pan frame" anti-pattern of spec 04. Instead this hook listens to the
- * store directly and only re-renders its host when a table actually enters or leaves the visible
+ * store directly and only re-renders its host when an item actually enters or leaves the visible
  * area. When the membership is unchanged it returns the *previous* Set instance, so downstream
- * memos (`visibleRefIds`, `visibleRoutes`) stay cached across frames.
+ * memos (`visibleRoutes`) stay cached across frames.
  */
-export function useVisibleNames(index: SpatialIndex, rect: ViewportRect, ready: boolean): Set<QualifiedName> | null {
+function useCulledSet<S>(
+  source: S,
+  query: (source: S, box: Bbox) => Set<string>,
+  rect: ViewportRect,
+  ready: boolean,
+): Set<string> | null {
   const [, force] = useReducer((c: number, _a: void) => c + 1, 0);
-  const lastRef = useRef<Set<QualifiedName> | null>(null);
-  const depsRef = useRef<[SpatialIndex, number, number, boolean] | null>(null);
+  const lastRef = useRef<Set<string> | null>(null);
+  const depsRef = useRef<[S, number, number, boolean] | null>(null);
+  const run = (vp: ViewportLayout): Set<string> | null => {
+    const box = cullingBox(rect, ready, vp);
+    return box ? query(source, box) : null;
+  };
 
-  // Synchronous recompute when the non-viewport inputs change (new index after a move, resize,
+  // Synchronous recompute when the non-viewport inputs change (new source after a move, resize,
   // ready flip). Refs are mutated during render on purpose: Preact renders synchronously, so this
   // is the cheapest way to keep the value coherent with the current inputs without an extra pass.
   const d = depsRef.current;
-  if (!d || d[0] !== index || d[1] !== rect.w || d[2] !== rect.h || d[3] !== ready) {
-    depsRef.current = [index, rect.w, rect.h, ready];
-    const next = queryVisible(index, rect, ready, store.getState().viewport);
+  if (!d || d[0] !== source || d[1] !== rect.w || d[2] !== rect.h || d[3] !== ready) {
+    depsRef.current = [source, rect.w, rect.h, ready];
+    const next = run(store.getState().viewport);
     if (!sameNameSet(lastRef.current, next)) lastRef.current = next;
   }
 
   useEffect(() => {
     return store.subscribe((s, prev) => {
       if (s.viewport === prev.viewport) return;
-      const next = queryVisible(index, rect, ready, s.viewport);
+      const next = run(s.viewport);
       if (sameNameSet(lastRef.current, next)) return;
       lastRef.current = next;
       force();
     });
-  }, [index, rect.w, rect.h, ready]);
+  }, [source, rect.w, rect.h, ready]);
 
   return lastRef.current;
+}
+
+const queryIndex = (index: SpatialIndex, box: Bbox) => index.query(box);
+
+/** Culled node names (tables, collapsed groups, containers) from the spatial index. */
+export function useVisibleNames(index: SpatialIndex, rect: ViewportRect, ready: boolean): Set<QualifiedName> | null {
+  return useCulledSet(index, queryIndex, rect, ready);
+}
+
+/** Culled edge ids: an edge stays mounted while its box crosses the viewport, even with both tables off-screen. */
+export function useVisibleEdgeIds(boxes: ReadonlyArray<EdgeBox>, rect: ViewportRect, ready: boolean): Set<string> | null {
+  return useCulledSet(boxes, visibleEdgeIds, rect, ready);
 }
