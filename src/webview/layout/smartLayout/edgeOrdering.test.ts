@@ -3,6 +3,9 @@ import { store } from '../../state/store';
 import { runEdgeOrdering } from './runner';
 import { computeEdgeOrdering } from './edgeOrdering';
 import type { EdgeLayout, Layout, Ref, Schema, Table } from '../../../shared/types';
+import { routeRefs, type EdgeRoute } from '../../render/edgeRouter';
+import type { Bbox } from '../../render/spatialIndex';
+import { columnCenterY, estimateSize } from '../autoLayout';
 
 const mkTable = (name: string, cols = 3): Table => ({
   name,
@@ -125,5 +128,71 @@ describe('computeEdgeOrdering — determinism', () => {
     const a = await computeEdgeOrdering({ schema, positions: new Map(positions), existingLayouts: new Map(), preserveManual: false });
     const b = await computeEdgeOrdering({ schema, positions: new Map(positions), existingLayouts: new Map(), preserveManual: false });
     expect(JSON.stringify(a.resets)).toBe(JSON.stringify(b.resets));
+  });
+});
+
+describe('computeEdgeOrdering → routeRefs (rendered A* routes)', () => {
+  /** Two consecutive segments on one axis pointing opposite ways: a spur or a stub doubling back. */
+  const hasBacktrack = (r: EdgeRoute): boolean =>
+    r.segments.some((s, i) => {
+      const prev = r.segments[i - 1];
+      if (!prev || prev.axis !== s.axis) return false;
+      return s.axis === 'h'
+        ? Math.sign(s.x2 - s.x1) * Math.sign(prev.x2 - prev.x1) < 0
+        : Math.sign(s.y2 - s.y1) * Math.sign(prev.y2 - prev.y1) < 0;
+    });
+
+  const render = async (
+    schema: Schema,
+    positions: Array<[string, { x: number; y: number }]>,
+  ): Promise<{ route: EdgeRoute; bboxOf: (n: string) => Bbox | undefined }> => {
+    const posMap = new Map(positions);
+    const { resets } = await computeEdgeOrdering({ schema, positions: posMap, existingLayouts: new Map(), preserveManual: false });
+    const layouts = new Map(resets);
+    const byName = new Map(schema.tables.map((t) => [t.name, t]));
+    const bboxOf = (n: string): Bbox | undefined => {
+      const p = posMap.get(n);
+      const t = byName.get(n);
+      if (!p || !t) return undefined;
+      const s = estimateSize(t.columns.length);
+      return { x: p.x, y: p.y, w: s.width, h: s.height };
+    };
+    const colY = (table: string, col: string): number | undefined => {
+      const idx = byName.get(table)?.columns.findIndex((c) => c.name === col) ?? -1;
+      return idx < 0 ? undefined : columnCenterY(idx);
+    };
+    const route = routeRefs(schema.refs, bboxOf, colY, (id) => layouts.get(id))[0]!;
+    return { route, bboxOf };
+  };
+
+  it('a detour around a table never doubles back on its rigid stubs', async () => {
+    const { schema, positions } = obstacleSchema();
+    const { route } = await render(schema, positions);
+    expect(route.waypoints.length).toBeGreaterThan(0);
+    expect(hasBacktrack(route)).toBe(false);
+  });
+
+  it('vertically stacked tables route top/bottom with vertical stubs clear of both borders', async () => {
+    const schema: Schema = {
+      tables: [mkTable('public.a'), mkTable('public.b'), mkTable('public.m')],
+      refs: [mkRef('public.a(c0)->public.b(c0)', 'public.a', 'public.b')],
+      groups: [],
+    };
+    const positions: Array<[string, { x: number; y: number }]> = [
+      ['public.a', { x: 0, y: 0 }],
+      ['public.m', { x: 0, y: 300 }],
+      ['public.b', { x: 0, y: 600 }],
+    ];
+    const { route, bboxOf } = await render(schema, positions);
+    expect(route.segments[0]!.axis).toBe('v');
+    expect(route.segments[route.segments.length - 1]!.axis).toBe('v');
+    expect(hasBacktrack(route)).toBe(false);
+    for (const name of ['public.a', 'public.b']) {
+      const b = bboxOf(name)!;
+      const alongBorder = route.segments.some(
+        (s) => s.axis === 'h' && (s.y1 === b.y || s.y1 === b.y + b.h) && Math.max(s.x1, s.x2) > b.x && Math.min(s.x1, s.x2) < b.x + b.w,
+      );
+      expect(alongBorder).toBe(false);
+    }
   });
 });

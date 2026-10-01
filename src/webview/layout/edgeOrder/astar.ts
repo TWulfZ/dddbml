@@ -125,14 +125,33 @@ function collinearMerge(pts: PortPoint[]): PortPoint[] {
 /**
  * Pull a cell-path ENDPOINT onto the stub's fixed axis so the leg connecting to the rigid stub is
  * orthogonal: a horizontal exit (left/right) puts the endpoint at the stub's Y (preserving the L/R
- * column-row anchor), a vertical exit (top/bottom) puts it at the stub's X. The endpoint keeps its
- * free-axis cell coordinate (where the detour actually turns), so the bend itself is NOT flattened.
+ * column-row anchor), a vertical exit (top/bottom) puts it at the stub's X. Along the stub axis the
+ * endpoint keeps its cell coordinate (where the detour turns) unless that lies on the table side of
+ * the stub end, which would draw a spur doubling back over the stub; then it snaps to the stub end.
+ * The neighbour shares one coordinate with the endpoint (orthogonal leg) and moves with it, or the
+ * renderer would insert a jog. Both shifts are at most half a cell, below CLEARANCE.
  */
-function anchorEndpoint(corners: PortPoint[], idx: number, side: Side, stub: PortPoint): void {
+function anchorEndpoint(corners: PortPoint[], idx: number, neighbourIdx: number, side: Side, stub: PortPoint): void {
   const c = corners[idx];
   if (!c) return;
-  if (side === 'left' || side === 'right') corners[idx] = { x: c.x, y: Math.round(stub.y) };
-  else corners[idx] = { x: Math.round(stub.x), y: c.y };
+  const sx = Math.round(stub.x);
+  const sy = Math.round(stub.y);
+  let { x, y } = c;
+  if (side === 'right') { y = sy; x = Math.max(x, sx); }
+  else if (side === 'left') { y = sy; x = Math.min(x, sx); }
+  else if (side === 'bottom') { x = sx; y = Math.max(y, sy); }
+  else { x = sx; y = Math.min(y, sy); }
+  const n = corners[neighbourIdx];
+  if (n && neighbourIdx !== idx) {
+    if (n.x === c.x && n.y !== c.y) corners[neighbourIdx] = { x, y: n.y };
+    else if (n.y === c.y && n.x !== c.x) corners[neighbourIdx] = { x: n.x, y };
+  }
+  corners[idx] = { x, y };
+}
+
+/** Drop consecutive duplicates (an anchored leg can shrink to zero length). */
+function dedupe(pts: PortPoint[]): PortPoint[] {
+  return pts.filter((p, i) => i === 0 || p.x !== pts[i - 1]!.x || p.y !== pts[i - 1]!.y);
 }
 
 interface SearchResult {
@@ -295,12 +314,12 @@ export function routeOneEdge(ep: OrderEdgeInput, grid: RouteGrid, maxExplored = 
   // Pull the cell-path endpoints onto the stubs' fixed axes (orthogonal connection to each rigid
   // stub + L/R column-row anchor survives) WITHOUT moving the interior detour corners.
   const last = cellCorners.length - 1;
-  anchorEndpoint(cellCorners, 0, ep.sourceSide, ep.sourceStub);
-  anchorEndpoint(cellCorners, last, ep.targetSide, ep.targetStub);
+  anchorEndpoint(cellCorners, 0, 1, ep.sourceSide, ep.sourceStub);
+  anchorEndpoint(cellCorners, last, last - 1, ep.targetSide, ep.targetStub);
 
   // These anchored corners ARE the literal waypoints between the stubs. Drop any that coincide with
   // a stub (the stub is re-added by buildPath), then collinear-merge once more.
-  const merged = collinearMerge(cellCorners);
+  const merged = collinearMerge(dedupe(cellCorners));
   const waypoints = merged
     .filter((p) => !(p.x === Math.round(ep.sourceStub.x) && p.y === Math.round(ep.sourceStub.y)))
     .filter((p) => !(p.x === Math.round(ep.targetStub.x) && p.y === Math.round(ep.targetStub.y)))

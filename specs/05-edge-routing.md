@@ -531,8 +531,11 @@ delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`mov
   independiente entre celdas).
 - **Motor A* (`edgeOrder/astar.test.ts`):** una arista cuya recta cruzaría una tabla intermedia se
   rutea rodeándola (**ningún segmento intersecta el bbox-obstáculo**); ruta ortogonal con ejes
-  **alternados**; bends enteros; **entre `sourceStub`/`targetStub`** (los puertos no son waypoints; el
-  primer/último bend conserva la Y del stub L/R ⇒ ancla columnY intacta); corredor limpio ⇒ `[]`
+  **alternados**; bends enteros; **entre `sourceStub`/`targetStub`** (los puertos no son waypoints; los
+  stubs conectan con los waypoints por tramos ortogonales ⇒ ancla columnY intacta; `anchorEndpoint`
+  nunca deja el extremo del lado-tabla del stub — lo lleva al extremo del stub junto con su vecino,
+  así no hay espolón de retroceso sobre el stub; e2e `computeEdgeOrdering → routeRefs` sin
+  retrocesos en `smartLayout/edgeOrdering.test.ts`); corredor limpio ⇒ `[]`
   waypoints; `chooseSides4` elige top/bottom apilado vertical, L/R lado-a-lado, y rutea un edge
   top/bottom rodeando un obstáculo lateral; **fallback** a `[]` (sin throw) al exceder `MAX_EXPLORED`;
   batch **determinista** (dos corridas byte-iguales; independiente del orden del array de entrada para
