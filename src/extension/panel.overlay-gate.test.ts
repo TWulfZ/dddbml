@@ -41,7 +41,8 @@ async function enterTimeTravel(h: Harness, sha: string): Promise<void> {
 }
 
 const tableNames = (m: { payload?: unknown } | undefined) => ((m?.payload as { schema: Schema } | undefined)?.schema.tables ?? []).map((t) => t.name);
-const flow = (h: Harness, types: string[]) => h.web.posted.filter((m) => types.includes(m.type)).map((m) => m.type);
+const flow = (h: Harness, types: string[]) => flowFrom(h, 0, types);
+const flowFrom = (h: Harness, start: number, types: string[]) => h.web.posted.slice(start).filter((m) => types.includes(m.type)).map((m) => m.type);
 
 describe('time travel', () => {
   it('drops layout:persist and refuses Reset Layout while a past revision is on screen', async () => {
@@ -159,3 +160,42 @@ describe('diff against HEAD', () => {
     await vi.waitFor(() => expect(JSON.parse(h.readSidecar()).tables['public.a'].x).toBe(999));
   });
 });
+
+describe('overlay transitions are serialized', () => {
+  it('a second Exit click does not unlock the webview on the past revision', async () => {
+    const { h, oldSha } = await withHistory();
+    await enterTimeTravel(h, oldSha);
+    const start = h.web.posted.length;
+    const exit = { type: 'git:timeTravel:exit' };
+    void h.web.receive(exit);
+    void h.web.receive(exit);
+    void h.web.receive(persistPayload(h, { 'public.old_only': { x: 50, y: 50 } }));
+    await vi.waitFor(() => expect(h.since('git:timeTravel:exit').length).toBeGreaterThan(0));
+    await settle();
+    await DiagramPanel.settle();
+    expect(flowFrom(h, start, ['schema:update', 'layout:loaded', 'git:timeTravel:exit'])).toEqual(['schema:update', 'layout:loaded', 'git:timeTravel:exit']);
+    expect(h.readSidecar()).toBe(WORKING_SIDECAR);
+  });
+
+  it('a second diff Exit does not unlock the stale working state over a deferred reload', async () => {
+    const { h } = await withHistory();
+    writeFileSync(join(h.dir, 'd.dbml'), `${DBML}\nTable c {\n  id int\n}\n`);
+    await h.web.receive({ type: 'git:diff:enter' });
+    await vi.waitFor(() => expect(h.web.posted.some((m) => m.type === 'git:diff:enter')).toBe(true));
+    const external = sidecarText({ 'public.a': { x: 777, y: 0 }, 'public.b': { x: 400, y: 0 } });
+    h.writeSidecar(external);
+    await fake.fireFsEvent('change', h.sidecar);
+    await settle();
+    const start = h.web.posted.length;
+    const exit = { type: 'git:diff:exit' };
+    void h.web.receive(exit);
+    void h.web.receive(exit);
+    void h.web.receive(persistPayload(h, { 'public.a': { x: 0, y: 0 }, 'public.b': { x: 400, y: 0 } }));
+    await vi.waitFor(() => expect(h.since('git:diff:exit').length).toBeGreaterThan(0));
+    await settle();
+    await DiagramPanel.settle();
+    expect(flowFrom(h, start, ['layout:external-change', 'git:diff:exit'])).toEqual(['layout:external-change', 'git:diff:exit']);
+    expect(h.readSidecar()).toBe(external);
+  });
+});
+

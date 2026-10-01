@@ -78,6 +78,9 @@ export class DiagramPanel {
   private gitOverlay: GitOverlay | null = null;
   /** A watcher or git-op reload that arrived during a git overlay; replayed when it ends (F21). */
   private reloadDeferred = false;
+  /** Overlay enter/exit and hydrate run one at a time. Interleaved, a second Exit click posted its
+   *  exit before the first had sent the working state, unlocking the past revision for editing. */
+  private overlayQueue: Promise<void> = Promise.resolve();
   private currentLayout: Layout = emptyLayout();
   /** Exact sidecar text last seen on disk — adopted by a read or produced by our own write (null =
    *  no file). A watcher event whose file still matches it is an echo or a no-op; anything else is
@@ -295,7 +298,7 @@ export class DiagramPanel {
   private handleWebviewMessage(msg: WebviewToHost): void {
     switch (msg.type) {
       case 'ready':
-        void this.hydrate();
+        void this.serializeOverlay(() => this.hydrate());
         return;
       case 'layout:persist':
         this.onLayoutPersist(msg.payload);
@@ -345,17 +348,19 @@ export class DiagramPanel {
       case 'git:requestCommits':
         void this.sendCommits();
         return;
-      case 'git:timeTravel:enter':
-        void this.enterTimeTravel(msg.payload.sha, msg.payload.label);
+      case 'git:timeTravel:enter': {
+        const { sha, label } = msg.payload;
+        void this.serializeOverlay(() => this.enterTimeTravel(sha, label));
         return;
+      }
       case 'git:timeTravel:exit':
-        void this.exitTimeTravel();
+        void this.serializeOverlay(() => this.leaveOverlay('git:timeTravel:exit'));
         return;
       case 'git:diff:enter':
-        void this.enterDiff();
+        void this.serializeOverlay(() => this.enterDiff());
         return;
       case 'git:diff:exit':
-        void this.leaveOverlay('git:diff:exit');
+        void this.serializeOverlay(() => this.leaveOverlay('git:diff:exit'));
         return;
       case 'error:log':
         console.error('[dddbml webview]', msg.payload.message, msg.payload.stack);
@@ -469,9 +474,16 @@ export class DiagramPanel {
     }
   }
 
+  private serializeOverlay(work: () => Promise<void>): Promise<void> {
+    const run = this.overlayQueue.then(work);
+    this.overlayQueue = run.catch((err: unknown) => console.error('[dddbml] git overlay transition failed', err));
+    return run;
+  }
+
   private async hydrate(): Promise<void> {
     this.lastPostedMergeSig = null; // a fresh webview has no merge on screen: re-post it (F02)
     this.reloadDeferred = false; // it gets the current working state below
+    await this.flushPendingPersistNow(); // sendLayout drops a pending persist; a working edit must land first
     // Send layout first so that when the schema arrives, positions are already in the
     // store and the auto-layout effect skips tables that already have a saved position.
     await this.sendLayout();
@@ -534,6 +546,9 @@ export class DiagramPanel {
   private async sendLayout(isExternal: boolean | 'ifChanged' = false): Promise<void> {
     const seen = this.diskSidecarText;
     this.currentLayout = await this.loadFullLayout();
+    // The webview is about to show this layout; a persist accepted against what it showed before
+    // (another revision, or a reload that raced it) must not be written over it.
+    this.cancelPendingPersist();
     this.layoutLoaded = true;
     const external = isExternal === 'ifChanged' ? this.diskSidecarText !== seen : isExternal;
     this.post({
@@ -896,7 +911,7 @@ export class DiagramPanel {
    * Virtual time-travel (spec 16): read a past commit's `.dbml` + sidecar via `git show` and parse
    * them IN MEMORY — the working tree and the open editor are never touched. The shared layout is
    * re-clothed with the user's current view-state so pan/zoom/hidden stay put. The webview enters a
-   * read-only overlay; `exitTimeTravel` restores the working view.
+   * read-only overlay; `leaveOverlay` restores the working view.
    */
   private async enterTimeTravel(sha: string, label: string): Promise<void> {
     if (this.refuseWhileMerging('Exploring versions')) return;
@@ -925,10 +940,6 @@ export class DiagramPanel {
     this.post({ type: 'git:timeTravel:enter', payload: enter });
   }
 
-  private async exitTimeTravel(): Promise<void> {
-    await this.leaveOverlay('git:timeTravel:exit');
-  }
-
   /**
    * End a git overlay and bring the webview back to the working state: time travel always (the past
    * revision is on screen), a diff only when a reload was deferred meanwhile. The exit is posted
@@ -936,9 +947,11 @@ export class DiagramPanel {
    * found by the reload opens before it (merge wins over the overlay).
    */
   private async leaveOverlay(exit: 'git:timeTravel:exit' | 'git:diff:exit'): Promise<void> {
-    const wasTimeTravel = this.gitOverlay?.kind === 'timeTravel';
+    const overlay = this.gitOverlay;
+    // A repeated Exit, or a merge that already took over: nothing was restored, so nothing to unlock.
+    if (!overlay) return;
     this.gitOverlay = null;
-    if (wasTimeTravel || this.reloadDeferred) {
+    if (overlay.kind === 'timeTravel' || this.reloadDeferred) {
       this.reloadDeferred = false;
       await this.sendSchema();
       await this.sendLayout('ifChanged');
