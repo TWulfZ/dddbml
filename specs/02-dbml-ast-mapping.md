@@ -50,7 +50,8 @@ interface Schema {
 | `not_null` | `notNull` | idem |
 | `unique` | `unique` | idem |
 | `increment` | `increment` | idem |
-| `dbdefault` | `default` | stringificado si es objeto `{value}` |
+| `dbdefault` | `default` | stringificado si es objeto `{value}` (`[default: null]` queda como `'null'`) |
+| `dbdefault.type` | `defaultKind` | `'string' \| 'number' \| 'boolean' \| 'expression' \| 'null'`; omitido si no hay default. Lo consume el exporter; el webview sólo muestra `default` |
 | `note` | `note` | `string \| null` |
 
 ### Ref (`endpoints[2]` → `Ref`)

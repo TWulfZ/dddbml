@@ -16,8 +16,12 @@ export interface Column {
   unique?: boolean;
   increment?: boolean;
   default?: string | null;
+  /** How `default` was written in DBML; `default` alone cannot tell `'5'` from `5` or `now()` from `` `now()` ``. */
+  defaultKind?: ColumnDefaultKind;
   note?: string | null;
 }
+
+export type ColumnDefaultKind = 'string' | 'number' | 'boolean' | 'expression' | 'null';
 
 export interface Table {
   name: QualifiedName;

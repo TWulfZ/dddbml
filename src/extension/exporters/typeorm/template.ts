@@ -109,7 +109,7 @@ function emitColumn(
   if (col.unique) colOpts.unique = true;
   const nullable = !col.notNull;
   if (opts.emitNullableExplicit) colOpts.nullable = nullable;
-  const defaultExpr = emitDefault(col.default);
+  const defaultExpr = emitDefault(col);
   if (defaultExpr !== undefined) colOpts.default = defaultExpr;
 
   decoratorsUsed.add('Column');
@@ -127,17 +127,36 @@ interface DefaultMarker {
   raw: string;
 }
 
-function emitDefault(value: string | null | undefined): unknown {
+function emitDefault(col: Column): unknown {
+  const value = col.default;
   if (value == null) return undefined;
+  switch (col.defaultKind) {
+    case 'null':
+      return undefined;
+    case 'expression':
+      return sqlDefault(value);
+    case 'number': {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : sqlDefault(value);
+    }
+    case 'boolean':
+      return value === 'true';
+    case 'string':
+      // TypeORM wraps string defaults in quotes without escaping embedded ones.
+      return value.includes("'") ? sqlDefault(`'${value.replace(/'/g, "''")}'`) : value;
+    case undefined:
+      break;
+  }
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
   if (trimmed === 'true' || trimmed === 'false') return trimmed === 'true';
-  if (/^[a-z_][\w]*\s*\(/i.test(trimmed) || trimmed.startsWith('(')) {
-    const marker: DefaultMarker = { __sql: true, raw: trimmed };
-    return marker;
-  }
+  if (/^[a-z_][\w]*\s*\(/i.test(trimmed) || trimmed.startsWith('(')) return sqlDefault(trimmed);
   return trimmed;
+}
+
+function sqlDefault(raw: string): DefaultMarker {
+  return { __sql: true, raw };
 }
 
 function emitRelation(

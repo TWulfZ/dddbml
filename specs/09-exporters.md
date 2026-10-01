@@ -186,11 +186,12 @@ Match case-insensitive, ignorando paréntesis para length/precision:
 - `pk` solo → `@PrimaryColumn(<opts>)` con tipo explícito.
 - `unique` (no pk) → opción `{ unique: true }`.
 - `notNull` → `{ nullable: false }`. Default TypeORM es `nullable: false` para columnas regulares; emitimos explícito siempre que el DBML diga `notNull`, **y** explícito `nullable: true` cuando no diga `notNull` ni `pk`. (Reduce sorpresas.)
-- `default` no-null:
-  - String literal con función SQL (`now()`, `gen_random_uuid()`) → `{ default: () => 'now()' }`.
-  - Otro string → `{ default: '<value>' }` literal.
-  - Numeric/bool → valor literal sin quotes.
-  - Heurística: si empieza con `(` o termina con `)` o coincide regex `^[a-z_]+\(`, tratar como expresión SQL.
+- `default`: se decide por `Column.defaultKind` (el tipo que @dbml/core reporta en `dbdefault.type`), no por el texto:
+  - `expression` (backticks, p.ej. `` `now()` ``, `` `CURRENT_TIMESTAMP` ``) → `{ default: () => 'now()' }`.
+  - `string` → `{ default: '<value>' }` literal, aunque parezca número, booleano o llamada (`'00501'`, `'true'`, `'now()'`). Si contiene `'`, se emite como expresión con las comillas duplicadas (`() => "'it''s'"`), porque TypeORM no escapa los string defaults.
+  - `number` / `boolean` → valor literal sin quotes.
+  - `null` (`[default: null]`) → se omite.
+  - Sin `defaultKind` (productores antiguos): heurística por texto — `^[a-z_]+\(` o empieza con `(` → expresión SQL.
 - `note` → bloque de comentario `/** ... */` sobre la propiedad.
 
 ### Relations (`relations.ts`)

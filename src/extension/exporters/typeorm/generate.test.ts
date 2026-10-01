@@ -1,0 +1,51 @@
+import { describe, expect, it } from 'vitest';
+import { parseDbml } from '../../parser';
+import { typeormExporter } from './index';
+
+function exportDbml(src: string, options: Record<string, unknown> = {}) {
+  const r = parseDbml(src);
+  if (!r.schema) throw new Error(r.error.message);
+  return typeormExporter.export({ schema: r.schema, scope: 'all', selection: [], options });
+}
+
+function propertyLine(content: string, prop: string): string {
+  const lines = content.split('\n');
+  const i = lines.findIndex((l) => new RegExp(`^\\s*"?${prop}"?[?!]:`).test(l));
+  if (i < 1) throw new Error(`property ${prop} not found`);
+  return lines[i - 1]!.trim();
+}
+
+describe('generateTypeOrm — column defaults follow the DBML default kind', () => {
+  const { content } = exportDbml(`
+    Table t {
+      id int [pk]
+      created timestamp [default: \`CURRENT_TIMESTAMP\`]
+      nothing varchar [default: null]
+      zip varchar [default: '00501']
+      flag varchar [default: 'true']
+      qty int [default: 5]
+      active boolean [default: true]
+      quote varchar [default: 'it\\'s']
+      call varchar [default: 'now()']
+    }
+  `);
+
+  it('emits backtick expressions as raw SQL', () => {
+    expect(propertyLine(content, 'created')).toContain('default: () => "CURRENT_TIMESTAMP"');
+  });
+  it('omits a null default instead of emitting the string "null"', () => {
+    expect(propertyLine(content, 'nothing')).not.toContain('default');
+  });
+  it('keeps numeric- and boolean-looking strings as string literals', () => {
+    expect(propertyLine(content, 'zip')).toContain('default: "00501"');
+    expect(propertyLine(content, 'flag')).toContain('default: "true"');
+    expect(propertyLine(content, 'call')).toContain('default: "now()"');
+  });
+  it('emits numbers and booleans unquoted', () => {
+    expect(propertyLine(content, 'qty')).toContain('default: 5');
+    expect(propertyLine(content, 'active')).toContain('default: true');
+  });
+  it('escapes embedded quotes, which TypeORM does not do for string defaults', () => {
+    expect(propertyLine(content, 'quote')).toContain(`default: () => "'it''s'"`);
+  });
+});

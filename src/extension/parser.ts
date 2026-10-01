@@ -1,6 +1,7 @@
 import { Parser } from '@dbml/core';
 import type {
   Column,
+  ColumnDefaultKind,
   ParseError,
   QualifiedName,
   Ref,
@@ -162,7 +163,7 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
 }
 
 function mapField(f: ExportedField): Column {
-  return {
+  const col: Column = {
     name: unquote(f.name),
     type: typeName(f.type),
     pk: f.pk || undefined,
@@ -172,6 +173,18 @@ function mapField(f: ExportedField): Column {
     default: f.dbdefault != null ? String((f.dbdefault as { value?: unknown })?.value ?? f.dbdefault) : null,
     note: f.note || null,
   };
+  const kind = defaultKindOf(f.dbdefault);
+  if (kind) col.defaultKind = kind;
+  return col;
+}
+
+function defaultKindOf(dbdefault: unknown): ColumnDefaultKind | undefined {
+  if (!dbdefault || typeof dbdefault !== 'object') return undefined;
+  const { type, value } = dbdefault as { type?: unknown; value?: unknown };
+  // @dbml/core reports a bare `null` default as a boolean whose value is the text 'null'.
+  if (type === 'boolean' && value === 'null') return 'null';
+  if (type === 'string' || type === 'number' || type === 'boolean' || type === 'expression') return type;
+  return undefined;
 }
 
 function typeName(t: unknown): string {
