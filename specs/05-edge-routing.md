@@ -98,7 +98,8 @@ segmentos completos.
 7. **Stub RÍGIDO de longitud fija en ambos extremos (`MIN_STUB = 24` world units).**
    El tramo `source → sourceStub` y `targetStub → target` es **inmutable**: nunca
    arrastrable, nunca subdividible, **nunca colapsado** (son los segmentos
-   `rigid` primero/último, siempre horizontales, de largo exacto 24). Mantienen
+   `rigid` primero/último, de largo exacto 24, saliendo **perpendiculares a su lado**:
+   horizontales en `left`/`right`, verticales en `top`/`bottom` — `STUB_DIR`). Mantienen
    coherente el punto de conexión (el marcador `1`/pata de gallo nunca queda
    pegado a la tabla). **Toda la edición vive estrictamente entre `sourceStub` y
    `targetStub`**, que actúan como los extremos fijos del polígono editable
@@ -106,11 +107,15 @@ segmentos completos.
    sin waypoints usa `defaultEditableCorners`; luego envuelve con los dos stubs).
    `slideSegment`/`notchAtQuarter`/`isDipRun`/`deleteNotch` materializan las esquinas
    (`editableCornersOf`) entre `sourceStub`/`targetStub`, así editar una sección no toca el resto.
-   **Clamp anti-spike:** la longitud del stub se limita a la mitad de la
-   distancia horizontal entre puertos, así los dos stubs **se encuentran en vez de
-   cruzarse** cuando las tablas están a < `2*MIN_STUB`. Consecuencia: una arista
-   misma-fila muy cercana queda como conector recto rígido sin sección editable;
-   una arista offset cercana conserva su trunk vertical editable.
+   **Clamp anti-spike:** sólo para stubs **opuestos sobre el mismo eje** (der↔izq,
+   abajo↔arriba), la longitud se limita a la mitad de la distancia entre puertos en
+   ese eje, así los dos stubs **se encuentran en vez de cruzarse** cuando las tablas
+   están a < `2*MIN_STUB`. Stubs en la **misma dirección** (p. ej. tras un flip, ambos
+   `left`) o perpendiculares nunca se cruzan y conservan el largo completo — antes
+   el clamp los colapsaba a 0 y la arista corría pegada al borde, sin sección
+   editable (auditoría F52). Consecuencia: una arista misma-fila muy cercana queda
+   como conector recto rígido sin sección editable; una arista offset cercana
+   conserva su trunk vertical editable.
 8. **Animación de flujo en hover/selected.** Una `<path>` overlay (clon de `r.d`,
    `pointer-events: none`) con puntos redondos (`stroke-dasharray`) y
    `@keyframes ddd-edge-flow` animando `stroke-dashoffset` negativo → los puntos
@@ -155,9 +160,14 @@ esquinas; clamp `[0.05, 0.95]`). Alinear `y` del puerto a la fila de la columna 
 **Computar path** (`buildPath`): polilínea ortogonal de ejes alternados. El
 **polígono editable** se rutea entre los extremos fijos `aStub`/`bStub` (decisión
 7) conectando las **esquinas literales** del usuario directamente (`cornersThrough`,
-sin colapsar — un codo de seguridad sólo para un par no-alineado v1); sin waypoints
-⇒ `defaultEditableCorners` (recta misma-fila, o H-V-H con `midX` centrado entre los
-stubs). Luego se **envuelve** con los stubs rígidos: `corners = [a, ...editable, b]`,
+sin colapsar — un codo de seguridad sólo para un par no-alineado v1, que junto a un
+stub avanza primero sobre el eje de ese stub, así tras un stub `top`/`bottom` nunca
+corre plano sobre el borde); sin waypoints ⇒ `defaultEditableCorners`: stubs
+horizontales ⇒ recta misma-fila o H-V-H con `midX` centrado (+ `dx` legacy); stubs
+verticales ⇒ el espejo V-H-V con `midY` centrado (el `dx` legacy no aplica); uno de
+cada ⇒ una sola L; stubs en la **misma dirección** ⇒ ruta en C cuyo trunk queda más
+allá del stub que más sobresale (`max`/`min`), nunca de vuelta sobre un stub ni a
+través de una tabla. Luego se **envuelve** con los stubs rígidos: `corners = [a, ...editable, b]`,
 así `a→aStub` y `bStub→b` sobreviven como segmentos propios. `buildSegments` marca
 `rigid` el primero y el último. (Las ops de edición usan `cleanCorners` —quita sólo
 puntos coincidentes/colineales redundantes— tras un *slide*; el ruteo base no
@@ -165,7 +175,8 @@ canonicaliza.) Migración legacy `dx`/`dy` conservada. `routeRefs` expone
 `sourceStub`/`targetStub` en el `EdgeRoute`.
 
 > **Invariante:** todo segmento es estrictamente H o V; ejes alternan. Los stubs
-> primero/último son `rigid` (inmutables) y de largo fijo `MIN_STUB`.
+> primero/último son `rigid` (inmutables), de largo fijo `MIN_STUB` y perpendiculares
+> a su lado.
 
 ### 2. Puertos flotantes + waypoints fijados (semántica de ports flotantes)
 
@@ -493,7 +504,13 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
   (smart-delete, queda sólo el trunk); `deleteNotch` quita las 4 esquinas.
 - **Stub rígido:** primer y último segmento `rigid===true`, horizontales y de
   largo exacto `MIN_STUB`; los interiores `rigid===false`; existe ≥ 1 sección
-  editable. `slideSegment`/`notchAtQuarter` sobre un `rigid` es no-op.
+  editable. `slideSegment`/`notchAtQuarter` sobre un `rigid` es no-op. Ambos extremos en el
+  mismo lado (`left`/`left`, `right`/`right`) ⇒ stubs completos de 24 + ruta en C editable, sin
+  retroceso ni tramos dentro de una tabla. Lados `top`/`bottom` persistidos ⇒ stubs verticales
+  fuera del borde, ningún tramo sobre el borde de la tabla; puertos alineados conservan un tramo
+  medio editable; par mixto (`right`→`top`) ⇒ L sin retroceso (`edgeRouter.stub.test.ts`).
+- **Deslizar sin movimiento neto** perpendicular devuelve los waypoints guardados (una ruta
+  automática sigue automática, sin entrada de undo).
 - **Esquinas redondeadas** (`edgeRouter.rounding.test.ts`): `roundedPathString` deja recta
   una polilínea colineal (sin `Q`); redondea una esquina interior con un `Q` cuyo punto de
   control es el vértice; clampa `r` a media-sección adyacente; descarta puntos coincidentes;

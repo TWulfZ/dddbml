@@ -8,11 +8,21 @@ export type Side = 'left' | 'right' | 'top' | 'bottom';
  * `source → sourceStub` and `targetStub → target` are immutable: never draggable, never
  * subdivided, never collapsed. They keep the connection point coherent (the `1` / crow's-foot
  * marker never sits flush against the table). All user editing happens strictly between the
- * two stub ends. When tables are closer than `2*MIN_STUB` horizontally the stub length is clamped
- * to half the port distance so the two stubs meet instead of crossing (no backtracking spike);
- * a very-close same-row edge then has no editable middle (just a straight rigid connector).
+ * two stub ends. When opposed ports are closer than `2*MIN_STUB` along their axis the stub length
+ * is clamped to half the port distance so the two stubs meet instead of crossing (no backtracking
+ * spike); a very-close same-row edge then has no editable middle (just a straight rigid connector).
  */
 const MIN_STUB = 24;
+
+type Point = { x: number; y: number };
+
+/** Outward unit vector of a stub leaving each table side. */
+const STUB_DIR: Record<Side, Point> = {
+  left: { x: -1, y: 0 },
+  right: { x: 1, y: 0 },
+  top: { x: 0, y: -1 },
+  bottom: { x: 0, y: 1 },
+};
 
 export interface EdgeSegment {
   x1: number;
@@ -188,77 +198,109 @@ export function routeRefs(
 
 /**
  * Build the corner points of the orthogonal polyline from `a` to `b`, through the user's LITERAL
- * corner waypoints. Wrapped in two RIGID stubs (`a → aStub`, `bStub → b`, fixed `MIN_STUB`,
- * direction from `sourceSide`/`targetSide`) — immutable, always present, never collapsed.
+ * corner waypoints. Wrapped in two RIGID stubs (`a → aStub`, `bStub → b`, fixed `MIN_STUB`, pointing
+ * straight out of `sourceSide`/`targetSide` — vertical for top/bottom) — immutable, always present.
  *
- * No waypoints ⇒ the editable middle is the default centered H-V-H. Otherwise the waypoints ARE the
- * route's corners, connected directly (a single elbow inserted only for a stray non-axis-aligned
- * pair, as back-compat for v1 free waypoints). Nothing is collapsed/canonicalized, so local notches
- * (a dip whose pins are colinear with the run) survive — the whole point of the editing model.
+ * No waypoints ⇒ the editable middle is the default route between the stub ends. Otherwise the
+ * waypoints ARE the route's corners, connected directly (a single elbow inserted only for a stray
+ * non-axis-aligned pair, as back-compat for v1 free waypoints). Nothing is collapsed/canonicalized,
+ * so local notches (a dip whose pins are colinear with the run) survive.
  *
  * Returns the full corner list (`[a, ...editable..., b]`) plus the fixed stub ends.
  */
 function buildPath(
-  a: { x: number; y: number },
-  b: { x: number; y: number },
+  a: Point,
+  b: Point,
   waypoints: Waypoint[],
   legacyDx: number,
   sourceSide: Side,
   targetSide: Side,
-): { corners: Array<{ x: number; y: number }>; aStub: { x: number; y: number }; bStub: { x: number; y: number } } {
-  const dirA = sourceSide === 'left' ? -1 : 1;
-  const dirB = targetSide === 'left' ? -1 : 1;
-  // Clamp stub length to half the horizontal port distance so the two stubs can never cross when
-  // tables are closer than 2*MIN_STUB (crossing would invert the editable span).
-  const stubLen = Math.min(MIN_STUB, Math.floor(Math.abs(b.x - a.x) / 2));
-  const aStub = { x: a.x + dirA * stubLen, y: a.y };
-  const bStub = { x: b.x + dirB * stubLen, y: b.y };
+): { corners: Point[]; aStub: Point; bStub: Point } {
+  const dirA = STUB_DIR[sourceSide];
+  const dirB = STUB_DIR[targetSide];
+  // Opposed stubs on one axis are clamped to half the port distance along it so they meet instead
+  // of crossing (crossing would invert the editable span). Same-direction or perpendicular stubs
+  // can never cross, and clamping them would collapse them onto the table border (F52).
+  const opposed = dirA.x === -dirB.x && dirA.y === -dirB.y;
+  const gap = dirA.x !== 0 ? Math.abs(b.x - a.x) : Math.abs(b.y - a.y);
+  const stubLen = opposed ? Math.min(MIN_STUB, Math.floor(gap / 2)) : MIN_STUB;
+  const aStub = { x: a.x + dirA.x * stubLen, y: a.y + dirA.y * stubLen };
+  const bStub = { x: b.x + dirB.x * stubLen, y: b.y + dirB.y * stubLen };
 
   const editable = waypoints.length === 0
-    ? defaultEditableCorners(aStub, bStub, legacyDx)
-    : cornersThrough(aStub, bStub, waypoints);
+    ? defaultEditableCorners(aStub, bStub, dirA, dirB, legacyDx)
+    : cornersThrough(aStub, bStub, waypoints, dirA.y !== 0, dirB.y !== 0);
   const corners = [{ x: a.x, y: a.y }, ...editable, { x: b.x, y: b.y }];
   return { corners, aStub, bStub };
 }
 
-/** Default editable corners between the stub ends: straight when same-row, else centered H-V-H. */
+/**
+ * Default editable corners between the stub ends. Both stubs horizontal ⇒ H-V-H around a vertical
+ * trunk; both vertical ⇒ the V-H-V mirror; one of each ⇒ a single L elbow. Same-direction stubs get a
+ * C-route whose trunk sits beyond the farther-reaching stub, so it never doubles back over a stub.
+ * The legacy `dx` offset only ever applied to the horizontal-stub trunk.
+ */
 function defaultEditableCorners(
-  aStub: { x: number; y: number },
-  bStub: { x: number; y: number },
+  aStub: Point,
+  bStub: Point,
+  dirA: Point,
+  dirB: Point,
   legacyDx: number,
-): Array<{ x: number; y: number }> {
-  // Same row ⇒ a straight connector (no redundant midpoint corner).
-  if (bStub.y === aStub.y) return [{ x: aStub.x, y: aStub.y }, { x: bStub.x, y: bStub.y }];
-  // Offset ⇒ H-V-H with a centered trunk (+ optional legacy dx).
-  const midX = Math.round((aStub.x + bStub.x) / 2 + legacyDx);
+): Point[] {
+  const aVertical = dirA.y !== 0;
+  const bVertical = dirB.y !== 0;
+  if (aVertical !== bVertical) {
+    const elbow = aVertical ? { x: aStub.x, y: bStub.y } : { x: bStub.x, y: aStub.y };
+    return [{ x: aStub.x, y: aStub.y }, elbow, { x: bStub.x, y: bStub.y }];
+  }
+  if (!aVertical) {
+    if (bStub.y === aStub.y) return [{ x: aStub.x, y: aStub.y }, { x: bStub.x, y: bStub.y }];
+    const trunk = dirA.x === dirB.x
+      ? (dirA.x > 0 ? Math.max(aStub.x, bStub.x) : Math.min(aStub.x, bStub.x))
+      : (aStub.x + bStub.x) / 2;
+    const midX = Math.round(trunk + legacyDx);
+    return [
+      { x: aStub.x, y: aStub.y },
+      { x: midX, y: aStub.y },
+      { x: midX, y: bStub.y },
+      { x: bStub.x, y: bStub.y },
+    ];
+  }
+  if (bStub.x === aStub.x) return [{ x: aStub.x, y: aStub.y }, { x: bStub.x, y: bStub.y }];
+  const midY = Math.round(dirA.y === dirB.y
+    ? (dirA.y > 0 ? Math.max(aStub.y, bStub.y) : Math.min(aStub.y, bStub.y))
+    : (aStub.y + bStub.y) / 2);
   return [
     { x: aStub.x, y: aStub.y },
-    { x: midX, y: aStub.y },
-    { x: midX, y: bStub.y },
+    { x: aStub.x, y: midY },
+    { x: bStub.x, y: midY },
     { x: bStub.x, y: bStub.y },
   ];
 }
 
 /**
  * Connect the stub ends through the user's literal corners with straight orthogonal segments.
- * Consecutive corners are expected axis-aligned (the editing ops guarantee it); a single
- * horizontal-first elbow is inserted only for a stray non-aligned pair (back-compat with v1 free
- * waypoints). No collapsing — every user corner (incl. a notch's pins) survives.
+ * Consecutive corners are expected axis-aligned (the editing ops guarantee it); a single elbow is
+ * inserted only for a stray non-aligned pair (back-compat with v1 free waypoints). The elbow runs
+ * along the adjacent stub's axis first, so a vertical (top/bottom) stub never gets a run lying flat
+ * along the table border; interior pairs stay horizontal-first. Every user corner survives.
  */
 function cornersThrough(
-  aStub: { x: number; y: number },
-  bStub: { x: number; y: number },
+  aStub: Point,
+  bStub: Point,
   waypoints: Waypoint[],
-): Array<{ x: number; y: number }> {
-  const out: Array<{ x: number; y: number }> = [{ x: aStub.x, y: aStub.y }];
+  aVertical: boolean,
+  bVertical: boolean,
+): Point[] {
+  const out: Point[] = [{ x: aStub.x, y: aStub.y }];
   let cur = { x: aStub.x, y: aStub.y };
-  const connect = (p: { x: number; y: number }) => {
-    if (p.x !== cur.x && p.y !== cur.y) out.push({ x: p.x, y: cur.y }); // safety elbow
+  const connect = (p: Point, verticalFirst: boolean) => {
+    if (p.x !== cur.x && p.y !== cur.y) out.push(verticalFirst ? { x: cur.x, y: p.y } : { x: p.x, y: cur.y });
     out.push({ x: p.x, y: p.y });
     cur = { x: p.x, y: p.y };
   };
-  for (const w of waypoints) connect({ x: w.x, y: w.y });
-  connect({ x: bStub.x, y: bStub.y });
+  waypoints.forEach((w, i) => connect({ x: w.x, y: w.y }, i === 0 && aVertical));
+  connect({ x: bStub.x, y: bStub.y }, bVertical);
   return out;
 }
 
