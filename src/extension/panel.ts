@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
+import { findTableLine } from './tableLocation';
 import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
 import { applyViewState, emptyViewState, extractViewState, mergeViewStateChange, readViewState, sameViewState, writeViewState, type ViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
@@ -402,24 +403,12 @@ export class DiagramPanel {
   }
 
   private async revealTable(qualifiedName: string): Promise<void> {
-    // qualifiedName is "schema.tableName". DBML allows either `Table name` (public) or `Table schema.name`.
     try {
-      const bytes = await vscode.workspace.fs.readFile(this.dbmlUri);
-      const source = new TextDecoder('utf-8').decode(bytes);
-      const [schema, tableName] = splitQualified(qualifiedName);
-      const lines = source.split(/\r?\n/);
-      const re = /^\s*Table\s+([\w.]+)(?:\s+as\s+[\w]+)?\s*(?:\[[^\]]*\])?\s*\{/i;
-      let lineIdx = -1;
-      for (let i = 0; i < lines.length; i++) {
-        const m = re.exec(lines[i] ?? '');
-        if (!m) continue;
-        const ident = m[1] ?? '';
-        const parts = ident.split('.');
-        const s = parts.length > 1 ? parts[0]! : 'public';
-        const t = parts.length > 1 ? parts.slice(1).join('.') : ident;
-        if (s === schema && t === tableName) { lineIdx = i; break; }
-      }
-      if (lineIdx < 0) {
+      // The editor buffer, not the disk: line numbers must match what showTextDocument displays
+      // even with unsaved edits.
+      const source = (await vscode.workspace.openTextDocument(this.dbmlUri)).getText();
+      const lineIdx = findTableLine(source, qualifiedName);
+      if (lineIdx === null) {
         void vscode.window.showWarningMessage(`dddbml: could not find "${qualifiedName}" in source.`);
         return;
       }
@@ -1068,12 +1057,6 @@ function generateNonce(): string {
 /** VS Code globs have no escape character; a one-character class matches a metacharacter literally. */
 function globLiteral(name: string): string {
   return name.replace(/[[\]{}*?]/g, (c) => `[${c}]`);
-}
-
-function splitQualified(qn: string): [string, string] {
-  const idx = qn.indexOf('.');
-  if (idx < 0) return ['public', qn];
-  return [qn.slice(0, idx), qn.slice(idx + 1)];
 }
 
 function filterSchemaBySelection(schema: Schema, selection: Set<QualifiedName>): Schema {

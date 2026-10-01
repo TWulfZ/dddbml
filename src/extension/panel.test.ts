@@ -325,6 +325,19 @@ describe('view-state writes are per-key changes, not whole-file replacement', ()
   });
 });
 
+describe('go to definition (F25)', () => {
+  const SRC = `Table "auth"."users"\n{\n  id int\n}\n\nTable usuários as U {\n  id int\n}\n\nTable "plain" {\n  id int\n}\n`;
+
+  for (const [name, line] of [['auth.users', 0], ['public.usuários', 5], ['public.plain', 9]] as const) {
+    it(`reveals ${name} at its declaration line`, async () => {
+      const h = await open({ dbml: SRC, sidecar: null });
+      await h.web.receive({ type: 'command:reveal', payload: { tableName: name } });
+      await vi.waitFor(() => expect(fake.shownDocuments).toHaveLength(1));
+      expect(fake.shownDocuments[0]!.line).toBe(line);
+    });
+  }
+});
+
 describe('schema export', () => {
   const exportedText = () => (fake.shownDocuments.at(-1)!.doc as { getText(): string }).getText();
 
