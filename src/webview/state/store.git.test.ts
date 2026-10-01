@@ -82,6 +82,41 @@ describe('git view slice (spec 16)', () => {
     expect(isCanvasReadOnly(s)).toBe(true);
   });
 
+  describe('removed table with no position in the base sidecar', () => {
+    const gone = (name: string) => ({
+      table: name,
+      status: 'removed' as const,
+      columns: [],
+      base: { name, schemaName: 'public', tableName: name.split('.')[1]!, columns: [{ name: 'id', type: 'int' }] },
+      pos: null,
+    });
+
+    it('falls back to the webview position the table had before it was deleted', () => {
+      store.getState().setTablePos('public.audit', 300, 400);
+      store.getState().enterDiff('HEAD', 'working', { tables: [gone('public.audit')], refs: [] });
+      expect(store.getState().diffGhosts?.map((g) => g.pos)).toEqual([{ x: 300, y: 400 }]);
+    });
+
+    it('still gets a ghost next to its referenced live table when no position is known', () => {
+      store.getState().setPositionsBatch([['public.users', { x: 100, y: 50 }]]);
+      store.getState().enterDiff('HEAD', 'working', {
+        tables: [gone('public.never_placed')],
+        refs: [{ id: 'r', status: 'removed', source: 'public.never_placed', target: 'public.users' }],
+      });
+      const g = store.getState().diffGhosts?.[0];
+      expect(g?.table.name).toBe('public.never_placed');
+      expect(g!.pos.x).toBeGreaterThan(100);
+      expect(g!.pos.y).toBe(50);
+    });
+
+    it('still gets a ghost when it has neither a position nor refs', () => {
+      store.getState().enterDiff('HEAD', 'working', { tables: [gone('public.orphan_a'), gone('public.orphan_b')], refs: [] });
+      const ghosts = store.getState().diffGhosts ?? [];
+      expect(ghosts.map((g) => g.table.name)).toEqual(['public.orphan_a', 'public.orphan_b']);
+      expect(ghosts[0]!.pos).not.toEqual(ghosts[1]!.pos);
+    });
+  });
+
   it('exitGitView clears every diff map', () => {
     store.getState().enterDiff('HEAD', 'working', { tables: [], refs: [] });
     store.getState().exitGitView();
