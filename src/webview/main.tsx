@@ -101,7 +101,8 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
       state.enterTimeTravel(msg.payload.rev, msg.payload.label);
       return;
     case 'git:timeTravel:exit':
-      // Leave read-only mode; the host re-sends the working schema:update + layout:loaded after this.
+    case 'git:diff:exit':
+      // The host posts this after the working schema/layout, so read-only ends with them on screen.
       state.exitGitView();
       return;
     case 'git:diff:enter':

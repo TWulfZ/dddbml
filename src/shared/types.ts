@@ -336,6 +336,8 @@ export type HostToWebview =
   | { type: 'git:timeTravel:enter'; payload: { rev: string; label: string; schema: Schema; layout: Layout } }
   | { type: 'git:timeTravel:exit' }
   | { type: 'git:diff:enter'; payload: { baseLabel: string; headLabel: string; diff: SchemaDiff } }
+  /** Sent after any deferred working state, so the webview unlocks only once it is on screen. */
+  | { type: 'git:diff:exit' }
   | { type: 'export:prompt' }
   | { type: 'exportImage:prompt' }
   | { type: 'image:result'; payload: { ok: boolean; path?: string; message?: string } };
@@ -362,6 +364,7 @@ export type WebviewToHost =
   | { type: 'git:timeTravel:enter'; payload: { sha: string; label: string } }
   | { type: 'git:timeTravel:exit' }
   | { type: 'git:diff:enter' }
+  | { type: 'git:diff:exit' }
   | { type: 'error:log'; payload: { message: string; stack?: string } };
 
 /**

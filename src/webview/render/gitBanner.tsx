@@ -111,7 +111,7 @@ export function GitBanner({ diffTargets = [] }: { diffTargets?: DiffTarget[] }) 
         />
         Blur background tables
       </label>
-      <Button variant="secondary" size="sm" onClick={() => store.getState().exitGitView()}>
+      <Button variant="secondary" size="sm" onClick={() => postToHost({ type: 'git:diff:exit' })}>
         <IconClose size={12} /> Exit
       </Button>
     </div>

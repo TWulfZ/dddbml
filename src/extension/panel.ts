@@ -24,6 +24,12 @@ const MERGE_UNREADABLE = 'The layout file has git conflict markers, but the conf
 /** Why the panel refuses shared writes (spec 16, "Gate en dos capas"). */
 type ReadOnlyReason = 'merge' | 'timeTravel' | 'diff';
 
+type TimeTravelPayload = Extract<HostToWebview, { type: 'git:timeTravel:enter' }>['payload'];
+type DiffPayload = Extract<HostToWebview, { type: 'git:diff:enter' }>['payload'];
+
+/** The git overlay on screen; time travel keeps its payload so a reloaded webview gets it back. */
+type GitOverlay = { kind: 'timeTravel'; enter: TimeTravelPayload } | { kind: 'diff' };
+
 export class DiagramPanel {
   private static panels = new Map<string, DiagramPanel>();
 
@@ -69,8 +75,9 @@ export class DiagramPanel {
    *  sentinel) when it did not. */
   private lastParseOk = false;
   private layoutLoaded = false;
-  /** The past revision on screen while time-travelling; null on the working state. */
-  private timeTravelSchema: Schema | null = null;
+  private gitOverlay: GitOverlay | null = null;
+  /** A watcher or git-op reload that arrived during a git overlay; replayed when it ends (F21). */
+  private reloadDeferred = false;
   private currentLayout: Layout = emptyLayout();
   /** Exact sidecar text last seen on disk — adopted by a read or produced by our own write (null =
    *  no file). A watcher event whose file still matches it is an echo or a no-op; anything else is
@@ -223,7 +230,7 @@ export class DiagramPanel {
    *  before entering, or a host command, so the host is the authority (spec 16). */
   private get readOnly(): ReadOnlyReason | null {
     if (this.pendingMerge || this.mergeUnreadable) return 'merge';
-    return null;
+    return this.gitOverlay?.kind ?? null;
   }
 
   private refuseWhileReadOnly(action: string): boolean {
@@ -340,6 +347,9 @@ export class DiagramPanel {
       case 'git:diff:enter':
         void this.enterDiff();
         return;
+      case 'git:diff:exit':
+        void this.leaveOverlay('git:diff:exit');
+        return;
       case 'error:log':
         console.error('[dddbml webview]', msg.payload.message, msg.payload.stack);
         return;
@@ -357,7 +367,7 @@ export class DiagramPanel {
     }
 
     // Export what is on screen: during time travel that is the past revision, not the working tree.
-    const source = this.timeTravelSchema ?? this.lastValidSchema;
+    const source = this.gitOverlay?.kind === 'timeTravel' ? this.gitOverlay.enter.schema : this.lastValidSchema;
     const filtered = payload.scope === 'selected'
       ? filterSchemaBySelection(source, new Set(payload.selection))
       : source;
@@ -453,13 +463,14 @@ export class DiagramPanel {
   }
 
   private async hydrate(): Promise<void> {
-    this.timeTravelSchema = null; // a fresh webview always starts on the working state
     this.lastPostedMergeSig = null; // a fresh webview has no merge on screen: re-post it (F02)
+    this.reloadDeferred = false; // it gets the current working state below
     // Send layout first so that when the schema arrives, positions are already in the
     // store and the auto-layout effect skips tables that already have a saved position.
     await this.sendLayout();
     await this.sendSchema();
     this.maybePostMerge(); // after schema, so the ghost tables can render
+    await this.repostGitOverlay();
     this.post({ type: 'theme:change', payload: { kind: this.currentThemeKind() } });
     this.post({ type: 'settings:loaded', payload: loadSettings() });
     this.post({ type: 'exporters:list', payload: { exporters: listExporters() } });
@@ -628,7 +639,7 @@ export class DiagramPanel {
       void vscode.window.showWarningMessage('dddbml: the layout changed on disk — the conflict list was refreshed.');
     }
     this.lastPostedMergeSig = sig;
-    this.timeTravelSchema = null; // beginMerge drops the webview out of any git view
+    this.gitOverlay = null; // beginMerge drops the webview out of any git view
     this.post({ type: 'merge:begin', payload: { conflicts, error } });
   }
 
@@ -749,6 +760,11 @@ export class DiagramPanel {
    * into the merge resolver.
    */
   private async reloadFromDisk(): Promise<void> {
+    if (this.gitOverlay) {
+      this.reloadDeferred = true;
+      await this.sendGitStatus();
+      return;
+    }
     await this.sendSchema();
     await this.sendLayout(true);
     this.maybePostMerge();
@@ -871,6 +887,7 @@ export class DiagramPanel {
    * read-only overlay; `exitTimeTravel` restores the working view.
    */
   private async enterTimeTravel(sha: string, label: string): Promise<void> {
+    if (this.refuseWhileMerging('Exploring versions')) return;
     const scope = await this.diagramScope();
     if (!scope) return; // not a repo — the UI gates this, so just ignore
     const dbmlSrc = await showBlob(scope.repoRoot, sha, scope.dbmlRel);
@@ -890,16 +907,46 @@ export class DiagramPanel {
     // Never seed from the past sidecar's legacy flags: a peek always wears the current view-state.
     const vs = (await readViewState(this.context, this.dbmlUri)) ?? emptyViewState();
     const layout = applyViewState(shared, vs);
-    this.timeTravelSchema = schema;
-    this.post({ type: 'git:timeTravel:enter', payload: { rev: sha, label, schema, layout } });
+    await this.flushPendingPersistNow(); // the last working edit lands before the gate closes
+    const enter: TimeTravelPayload = { rev: sha, label, schema, layout };
+    this.gitOverlay = { kind: 'timeTravel', enter };
+    this.post({ type: 'git:timeTravel:enter', payload: enter });
   }
 
-  /** Leave time-travel: flip the webview out of read-only mode, then re-send the working state. */
   private async exitTimeTravel(): Promise<void> {
-    this.timeTravelSchema = null;
-    this.post({ type: 'git:timeTravel:exit' });
-    await this.sendSchema();
-    await this.sendLayout();
+    await this.leaveOverlay('git:timeTravel:exit');
+  }
+
+  /**
+   * End a git overlay and bring the webview back to the working state: time travel always (the past
+   * revision is on screen), a diff only when a reload was deferred meanwhile. The exit is posted
+   * LAST — the webview stays read-only until the working state is in its store (F27), and a merge
+   * found by the reload opens before it (merge wins over the overlay).
+   */
+  private async leaveOverlay(exit: 'git:timeTravel:exit' | 'git:diff:exit'): Promise<void> {
+    const wasTimeTravel = this.gitOverlay?.kind === 'timeTravel';
+    this.gitOverlay = null;
+    if (wasTimeTravel || this.reloadDeferred) {
+      this.reloadDeferred = false;
+      await this.sendSchema();
+      await this.sendLayout(!wasTimeTravel);
+      this.maybePostMerge();
+    }
+    this.post({ type: exit });
+  }
+
+  /** A reloaded webview starts on the working state; put the overlay it was showing back on top. */
+  private async repostGitOverlay(): Promise<void> {
+    const overlay = this.gitOverlay;
+    if (!overlay) return;
+    if (overlay.kind === 'timeTravel') {
+      this.post({ type: 'git:timeTravel:enter', payload: overlay.enter });
+      return;
+    }
+    // The working tree may have changed while the diff was up; a stale diff would mis-tint it.
+    const diff = await this.computeDiff();
+    if (diff && this.gitOverlay === overlay) this.post({ type: 'git:diff:enter', payload: diff });
+    else if (this.gitOverlay === overlay) this.gitOverlay = null;
   }
 
   /**
@@ -909,15 +956,37 @@ export class DiagramPanel {
    * diff is computed in the host (parse HEAD via `git show`) off the render path.
    */
   private async enterDiff(): Promise<void> {
+    if (this.refuseWhileMerging('Diff against HEAD')) return;
+    const diff = await this.computeDiff();
+    if (!diff) return;
+    await this.flushPendingPersistNow();
+    const fromTimeTravel = this.gitOverlay?.kind === 'timeTravel';
+    this.gitOverlay = { kind: 'diff' };
+    if (fromTimeTravel || this.reloadDeferred) {
+      // The diff overlays the WORKING tree; a past revision left on screen would be what its Exit
+      // unlocks for editing (F05).
+      this.reloadDeferred = false;
+      await this.sendSchema();
+      await this.sendLayout(true);
+      if (this.readOnly === 'merge') { this.maybePostMerge(); return; }
+    }
+    this.post({ type: 'git:diff:enter', payload: diff });
+  }
+
+  private refuseWhileMerging(action: string): boolean {
+    return this.readOnly === 'merge' && this.refuseWhileReadOnly(action);
+  }
+
+  private async computeDiff(): Promise<DiffPayload | null> {
     const scope = await this.diagramScope();
-    if (!scope) { void vscode.window.showWarningMessage('dddbml: not a git repository.'); return; }
+    if (!scope) { void vscode.window.showWarningMessage('dddbml: not a git repository.'); return null; }
     const baseDbml = await showBlob(scope.repoRoot, 'HEAD', scope.dbmlRel);
-    if (baseDbml == null) { void vscode.window.showWarningMessage('dddbml: the diagram has no committed version at HEAD yet.'); return; }
+    if (baseDbml == null) { void vscode.window.showWarningMessage('dddbml: the diagram has no committed version at HEAD yet.'); return null; }
     const parsedBase = parseDbml(baseDbml);
     if (parsedBase.error) {
       // An empty base would report every table as "added" — a false diff, not a degraded one.
       void vscode.window.showWarningMessage(`dddbml: the diagram at HEAD does not parse — ${parsedBase.error.message}`);
-      return;
+      return null;
     }
     // Re-read rather than trust lastValidSchema: it is stale (or the empty sentinel) while the file
     // is broken, and diffing against it shows every table as removed.
@@ -927,17 +996,17 @@ export class DiagramPanel {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       void vscode.window.showWarningMessage(`dddbml: could not read the working diagram — ${message}`);
-      return;
+      return null;
     }
     const parsedHead = parseDbml(headSource);
     if (parsedHead.error) {
       void vscode.window.showWarningMessage(`dddbml: the working diagram does not parse — ${parsedHead.error.message}`);
-      return;
+      return null;
     }
     const diff = diffSchemas(parsedBase.schema, parsedHead.schema);
     if (diff.tables.length === 0 && diff.refs.length === 0) {
       void vscode.window.showInformationMessage('dddbml: no schema changes vs HEAD.');
-      return;
+      return null;
     }
     // Enrich removed tables with their base position (from HEAD's sidecar) so the ghost can be placed.
     const baseSidecar = await showBlob(scope.repoRoot, 'HEAD', scope.sidecarRel);
@@ -948,7 +1017,7 @@ export class DiagramPanel {
         t.pos = p ? { x: p.x, y: p.y } : null;
       }
     }
-    this.post({ type: 'git:diff:enter', payload: { baseLabel: 'HEAD', headLabel: 'working', diff } });
+    return { baseLabel: 'HEAD', headLabel: 'working', diff };
   }
 
   private onLayoutPersist(payload: Partial<Layout>): void {
@@ -1059,6 +1128,11 @@ export class DiagramPanel {
   private async runExternalReload(): Promise<void> {
     const sidecarTouched = this.sidecarEventPending;
     this.sidecarEventPending = false;
+    if (this.gitOverlay) {
+      // Pushing it now would replace the revision being viewed while the banner still names it (F21).
+      this.reloadDeferred = true;
+      return;
+    }
     await this.sendSchema({ skipIfUnchanged: true });
     if (!sidecarTouched) return;
     const text = await readSidecarText(this.dbmlUri);
