@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { movedNames, computeEdgeResets, computeSelectionEdgeResets } from './edgeReset';
+import { movedNames, computeAutoShapeDrops, computeEdgeResets, computeSelectionEdgeResets, hasManualShape } from './edgeReset';
 import type { EdgeLayout, Ref } from '../../../shared/types';
 
 const ref = (id: string, s: string, t: string): Ref => ({
@@ -61,5 +61,35 @@ describe('reset relations of selected tables', () => {
     expect(map.get('e2')).toBeNull(); // side dropped, no color → delete
     expect(map.has('e3')).toBe(false); // not touching selection
     expect(map.has('e4')).toBe(false); // no shape
+  });
+});
+
+describe('A* auto shapes (F20)', () => {
+  const autoShape: EdgeLayout = { waypoints: [{ x: 1, y: 1 }], sourceSide: 'top', targetSide: 'bottom', auto: true };
+
+  it('an auto shape is not manual, so preserve-manual runs re-order it', () => {
+    expect(hasManualShape(autoShape)).toBe(false);
+    const { auto: _auto, ...userShape } = autoShape;
+    expect(hasManualShape(userShape)).toBe(true);
+  });
+
+  it('drops an auto shape (waypoints + sides) when either endpoint moved, keeping color', () => {
+    const edges = new Map<string, EdgeLayout>([
+      ['e1', { ...autoShape, color: '#abc' }],
+      ['e2', { waypoints: [{ x: 3, y: 4 }], sourceSide: 'top' }], // manual: one moved endpoint keeps it
+      ['e3', autoShape], // neither endpoint moved
+      ['e4', autoShape],
+    ]);
+    const refs = [ref('e1', 'a', 'b'), ref('e2', 'a', 'z'), ref('e3', 'p', 'q'), ref('e4', 'z', 'a')];
+    const map = new Map(computeAutoShapeDrops(refs, new Set(['a']), edges));
+    expect(map.get('e1')).toEqual({ color: '#abc' });
+    expect(map.get('e4')).toBeNull();
+    expect(map.has('e2')).toBe(false);
+    expect(map.has('e3')).toBe(false);
+  });
+
+  it('the stranded-manual reset leaves auto shapes to the auto drop', () => {
+    const edges = new Map<string, EdgeLayout>([['e', autoShape]]);
+    expect(computeEdgeResets([ref('e', 'a', 'b')], new Set(['a', 'b']), edges)).toEqual([]);
   });
 });

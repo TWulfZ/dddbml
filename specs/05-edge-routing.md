@@ -138,12 +138,13 @@ segmentos completos.
   se persiste en el sidecar (aditivo, spec 03) en toda salida de A\* / auto-arrange; cualquier
   edición del usuario sobre esa arista (waypoints, flip de lado, reset, color no cuenta) lo borra.
   `hasManualShape` ignora las aristas `auto`, y mover cualquiera de sus extremos descarta su forma
-  `auto` (waypoints y lados) en vez de dejarla apuntando a la geometría vieja.
+  `auto` (waypoints y lados) en vez de dejarla apuntando a la geometría vieja. **Implementado** —
+  ver "Marcador `auto`" en §9.
 
 - **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
   forma en `WaypointCommand`. "Reset line" emite **un solo** `ArrangeCommand` de sólo
   aristas (`buildEdgesResetCommand`, snapshot completo del `EdgeLayout`): un Ctrl+Z
-  restaura waypoints, sides y `dx/dy` legacy. Sin forma manual → no-op (no limpia redo).
+  restaura waypoints, sides y `dx/dy` legacy. Sin forma (manual o `auto`) → no-op (no limpia redo).
 - **Ruteo del flip "contra-natura"** (puerto forzado al lado opuesto del target)
   no dibuja un lazo de salida hacia afuera; usa el `midX` simple y puede cruzar
   la tabla. Pulido a futuro (relacionado con obstacle avoidance, v2).
@@ -406,9 +407,8 @@ top/bottom). Resolución acordada:
   luego dibuja fielmente ese lado persistido vía `portPoint` (que ya soporta los 4 lados).
   **Sólo se persisten lados que aportan información** (auditoría F20): si el par coincide con lo que
   `chooseSides` del render elegiría (todo L/R) no se escribe, y un fallback (`ok:false`) no escribe
-  lados provisionales — un lado persistido cuenta como forma manual (`hasManualShape`) y excluiría
-  la arista de toda corrida posterior con "preservar manuales". Los lados `top`/`bottom` sí se
-  persisten y hoy siguen contando como manuales (ver Preguntas abiertas).
+  lados provisionales. Los lados `top`/`bottom` sí se persisten, marcados `auto` (abajo), así que
+  no cuentan como forma manual.
 - **`columnY` ancla sólo en `left`/`right`**; un puerto `top`/`bottom` usa un x-ratio sin ancla de
   fila. Ambas reglas ya estaban gateadas a L/R en `routeRefs` (líneas ~153-162).
 - Sin contradicción: A* **rutea entre los stubs** (decisión 7 se mantiene) — pero el **adaptador**
@@ -438,7 +438,7 @@ top/bottom). Resolución acordada:
    dibuja a través de los waypoints guardados (`cornersThrough`). Funciona con tablas fijas (lo que el
    motor de tablas no daba).
 
-**Mapeo al modelo existente (sin cambio de schema del sidecar):**
+**Mapeo al modelo existente (único cambio de schema: el marcador aditivo `auto`, abajo):**
 - Bend-points de A* (coords world) → `EdgeLayout.waypoints` (§3). Los stubs rígidos + fillets se
   aplican sin cambios; el anclaje de puerto a la fila PK/FK (`columnYResolver`, §1) se conserva en los
   extremos (A* rutea entre los stubs, no toca los puertos).
@@ -455,7 +455,30 @@ aristas cuyos dos extremos se movieron (para que `columnYResolver` re-rutee limp
 ON, en vez de limpiar se **setean** los waypoints con la salida de A*. Reusa el snapshot de aristas que
 el `ArrangeCommand` **ya** transporta (`edgesFrom`/`edgesTo`) → un único Ctrl+Z revierte tablas +
 aristas, como ya ocurre. `preservar manuales` ⇒ se excluyen del re-ruteo las aristas con forma manual
-previa (waypoints/sides/dx-dy).
+previa (waypoints/sides/dx-dy **sin** `auto`).
+
+**Marcador `auto` (auditoría F20, decisión 2026-10-01).** Toda forma que escribe el pase A\*
+(`edgeOrdering.ts`: waypoints y/o lados que aportan información) lleva `EdgeLayout.auto: true`, que
+viaja por todo el camino de persistencia (sidecar `edges.*.auto`, spec 03; `persistence.ts`;
+`store.setLayout`). Reglas:
+
+- `hasManualShape` = tiene forma (`hasShape`) **y no** es `auto`: una corrida con "preservar
+  manuales" re-ordena las aristas de A\* (antes la segunda corrida era un no-op silencioso).
+- Mover un extremo descarta la forma `auto` entera (waypoints + lados, conserva color) —
+  `computeAutoShapeDrops` (`edgeReset.ts`), con **cualquiera** de los dos extremos movido (el lado
+  depende de la geometría relativa). Aplica en el commit de un drag de tabla (un único paso de undo:
+  el drag se registra como `ArrangeCommand` con label `Move …`, spec 11), en el auto-arrange
+  (`runner.ts`, junto a `computeEdgeResets`, que ahora ignora las `auto`) y en el reacomodo de
+  selección. Se evalúa sobre **todas** las refs del schema con su clave cruda (`rawLayoutRefs`): una
+  arista cuyo otro extremo está oculto/colapsado sigue siendo de A\* y queda igual de vieja.
+- Toda edición del usuario de esa arista borra el marcador: waypoints (agregar/mover/quitar,
+  arrastre de segmento, borrar muesca) vía `setEdgeWaypoints`, flip de lado vía `setEdgeSide`,
+  "Reset line" (deja sólo el color). El **color no cuenta**. Un gesto que termina donde empezó (sin
+  comando) devuelve el layout previo con su marcador.
+- Undo/redo: `WaypointCommand.fromAuto` y `EdgeStyle.auto` guardan el marcador, así deshacer la
+  primera edición devuelve la forma de A\* como `auto` y rehacerla la vuelve del usuario;
+  `ArrangeCommand` ya guarda el `EdgeLayout` completo.
+- El marcador sin forma no significa nada: se poda al escribir (`hasAutoShape`).
 
 **Tipos/opciones nuevas:** `runSmartLayout(mode, opts: ArrangeOptions)` con
 `orderEdges: boolean` (default `true`) y `preserveManualEdges: boolean` (default `true`, E5);

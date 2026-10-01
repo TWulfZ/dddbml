@@ -198,3 +198,23 @@ describe('layoutStore — 4-side port persistence (spec 05 §9 / E3)', () => {
     expect(parsed.edges?.['bad']?.targetSide).toBe('top');
   });
 });
+
+describe('layoutStore — A* auto marker (F20)', () => {
+  it('round-trips `auto: true` on a shaped edge, written first like the other sorted scalars', () => {
+    const layout = baseLayout({
+      edges: { e: { auto: true, sourceSide: 'top', targetSide: 'bottom', waypoints: [{ x: 40, y: 50 }] } },
+    });
+    const text = serializeLayout(layout);
+    expect(text).toContain('    "e": {\n      "auto": true,\n      "sourceSide": "top",');
+    expect(parseLayout(text).edges).toEqual(layout.edges);
+    expect(serializeLayout(parseLayout(text))).toBe(text);
+  });
+
+  it('drops a marker that carries no shape, and any non-true value', () => {
+    const text = serializeLayout(baseLayout({ edges: { bare: { auto: true }, colored: { auto: true, color: '#abc' } } }));
+    expect(text).not.toContain('"bare"');
+    expect(text).toContain('"colored": { "color": "#abc" }');
+    const parsed = parseLayout(text.replace('"colored": { "color": "#abc" }', '"colored": { "auto": "yes", "sourceSide": "top" }'));
+    expect(parsed.edges?.['colored']).toEqual({ sourceSide: 'top' });
+  });
+});

@@ -5,8 +5,9 @@ vi.mock('../persistence', () => ({ schedulePersist: vi.fn() }));
 
 import { store } from '../state/store';
 import { zoomAt } from '../render/viewport';
-import { commitEdgeStyle, resetEdgeWaypoints, startDrag } from './dragController';
-import type { EdgeLayout } from '../../shared/types';
+import { commitEdgeStyle, resetEdgeWaypoints, startDrag, startEndpointDrag } from './dragController';
+import type { EdgeLayout, Ref } from '../../shared/types';
+import { edgeKey } from '../render/edgeKey';
 
 // Minimal DOM stand-ins: the controller only needs window listeners, a body classList and a node
 // that can capture the pointer and find its viewport.
@@ -123,5 +124,66 @@ describe('edge edits', () => {
     store.setState({ edgeLayouts: new Map([['k', { color: '#ff0000' }]]) });
     resetEdgeWaypoints('k');
     expect(store.getState().past).toHaveLength(0);
+  });
+});
+
+describe('table drag over A* auto edges (F20)', () => {
+  const mkRef = (s: string, t: string): Ref => ({
+    id: `${s}->${t}`,
+    source: { table: s, columns: ['id'], relation: '*' },
+    target: { table: t, columns: ['id'], relation: '1' },
+  });
+  const ab = edgeKey('a', ['id'], 'b', ['id']);
+  const ac = edgeKey('a', ['id'], 'c', ['id']);
+  const bc = edgeKey('b', ['id'], 'c', ['id']);
+  const autoShape: EdgeLayout = { waypoints: [{ x: 250, y: 40 }], sourceSide: 'bottom', targetSide: 'top', auto: true };
+  const manual: EdgeLayout = { waypoints: [{ x: 250, y: 300 }] };
+
+  beforeEach(() => {
+    store.setState({
+      schema: { tables: [], refs: [mkRef('a', 'b'), mkRef('a', 'c'), mkRef('b', 'c')], groups: [] },
+      positions: new Map([['a', { x: 0, y: 0 }], ['b', { x: 500, y: 0 }], ['c', { x: 500, y: 500 }]]),
+      edgeLayouts: new Map([[ab, { ...autoShape, color: '#ff0000' }], [ac, manual], [bc, autoShape]]),
+    });
+  });
+
+  it('dropping a dragged table discards the auto shapes it touches, keeping color and user shapes', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(160, 100);
+    up(160, 100);
+    const edges = store.getState().edgeLayouts;
+    expect(edges.get(ab)).toEqual({ color: '#ff0000' });
+    expect(edges.get(ac)).toEqual(manual);
+    expect(edges.get(bc)).toEqual(autoShape);
+  });
+
+  it('one undo restores the table and the auto shape it discarded', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(160, 100);
+    up(160, 100);
+    expect(store.getState().past).toHaveLength(1);
+    store.getState().undo();
+    expect(store.getState().positions.get('a')).toEqual({ x: 0, y: 0 });
+    expect(store.getState().edgeLayouts.get(ab)).toEqual({ ...autoShape, color: '#ff0000' });
+    store.getState().redo();
+    expect(store.getState().edgeLayouts.get(ab)).toEqual({ color: '#ff0000' });
+  });
+
+  it('a port flip dragged back to where it started leaves the shape automatic and history empty', () => {
+    const rightAuto: EdgeLayout = { ...autoShape, sourceSide: 'right' };
+    store.setState({ edgeLayouts: new Map([[bc, rightAuto]]) });
+    startEndpointDrag(bc, 'source', 600, ptr(650, 0), fakeNode(), (x) => x);
+    move(550, 0);
+    expect(store.getState().edgeLayouts.get(bc)?.auto).toBeUndefined();
+    move(650, 0);
+    up(650, 0);
+    expect(store.getState().edgeLayouts.get(bc)).toEqual(rightAuto);
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('"Reset line" still resets an auto shape', () => {
+    resetEdgeWaypoints(bc);
+    expect(store.getState().edgeLayouts.has(bc)).toBe(false);
+    expect(store.getState().past).toHaveLength(1);
   });
 });

@@ -25,15 +25,18 @@ export interface WaypointCommand {
   refId: string;
   from: Waypoint[];
   to: Waypoint[];
+  /** `from` was an A* shape: undo must hand it back as auto, or it would count as manual (F20). */
+  fromAuto?: true;
   label: string;
   timestamp: number;
 }
 
-/** Snapshot of an edge's non-shape style fields (color + port side overrides). */
+/** Snapshot of an edge's non-shape style fields (color + port side overrides + the A* marker). */
 export interface EdgeStyle {
   color?: string;
   sourceSide?: EdgeSide;
   targetSide?: EdgeSide;
+  auto?: true;
 }
 
 /**
@@ -118,6 +121,7 @@ export function buildWaypointCommand(
   from: Waypoint[],
   to: Waypoint[],
   op: WaypointOp,
+  fromAuto = false,
 ): WaypointCommand | null {
   if (waypointsEqual(from, to)) return null;
   const label =
@@ -130,6 +134,7 @@ export function buildWaypointCommand(
     refId,
     from: from.map((w) => ({ x: w.x, y: w.y })),
     to: to.map((w) => ({ x: w.x, y: w.y })),
+    ...(fromAuto ? { fromAuto: true as const } : {}),
     label,
     timestamp: Date.now(),
   };
@@ -150,7 +155,12 @@ export function buildEdgeStyleCommand(
   to: EdgeStyle,
   label: string,
 ): EdgeStyleCommand | null {
-  if (from.color === to.color && from.sourceSide === to.sourceSide && from.targetSide === to.targetSide) {
+  if (
+    from.color === to.color &&
+    from.sourceSide === to.sourceSide &&
+    from.targetSide === to.targetSide &&
+    from.auto === to.auto
+  ) {
     return null;
   }
   return { kind: 'edgeStyle', refId, from: { ...from }, to: { ...to }, label, timestamp: Date.now() };
@@ -169,6 +179,7 @@ export function buildArrangeCommand(
   after: Map<QualifiedName, { x: number; y: number }>,
   edgesBefore: Map<string, EdgeLayout>,
   edgeResets: Array<[string, EdgeLayout | null]>,
+  label?: string,
 ): ArrangeCommand | null {
   const from: ArrangeCommand['from'] = [];
   const to: ArrangeCommand['to'] = [];
@@ -195,7 +206,7 @@ export function buildArrangeCommand(
     to,
     edgesFrom,
     edgesTo,
-    label: `Auto-arrange ${from.length} table${from.length === 1 ? '' : 's'}`,
+    label: label ?? `Auto-arrange ${from.length} table${from.length === 1 ? '' : 's'}`,
     timestamp: Date.now(),
   };
 }

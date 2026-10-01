@@ -194,7 +194,8 @@ Constantes afinables: `INTRA_NODESEP=32`, `INTRA_RANKSEP=64`, `INTER_NODESEP=96`
 
 `runSmartLayout(mode)` es **async**. Toma snapshot de `positions` y `edgeLayouts` antes del `await`;
 ejecuta `smartLayout`; calcula el conjunto movido; resetea waypoints (+ `dx/dy`) de aristas con ambos
-extremos en el conjunto movido (conservando `color`/sides); aplica posiciones + reseteos; arma un
+extremos en el conjunto movido (conservando `color`/sides) y descarta la forma entera de las aristas
+de A\* (`auto`, spec 05 §9) con **cualquier** extremo movido (conservando `color`, F20); aplica posiciones + reseteos; arma un
 `ArrangeCommand` compuesto y lo empuja al historial; agenda persistencia. `selection` con selección
 vacía cae a `all` por el atajo. `new` sin ninguna tabla que colocar es un **no-op** (sin comando y
 sin re-rutear aristas con A\*).
@@ -214,8 +215,8 @@ corrida reemplazada no oculta el overlay ni desengancha el Cancel de la nueva.
 ### Reset manual de relaciones (selección)
 
 Acción independiente del auto-arrange: "resetear las relaciones de las tablas seleccionadas". Para
-cada arista que **toca** la selección (source **o** target seleccionado) y que tiene forma manual
-(waypoints / `dx,dy` / `sourceSide,targetSide`), se resetea a ruteo por defecto — se limpian
+cada arista que **toca** la selección (source **o** target seleccionado) y que tiene forma, manual o
+de A\* (waypoints / `dx,dy` / `sourceSide,targetSide`), se resetea a ruteo por defecto — se limpian
 waypoints + legacy + sides, se **conserva el color** (misma semántica que "Reset line" por arista). Es
 un único paso deshacible (reusa `ArrangeCommand` con posiciones vacías, vía `buildEdgesResetCommand`).
 Deja al usuario limpiar el ruteo de un conjunto de tablas sin reposicionarlas. Disparador: ítem

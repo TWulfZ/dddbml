@@ -1,10 +1,10 @@
 import { store, isCanvasReadOnly } from '../state/store';
-import { buildEdgeStyleCommand, buildEdgesResetCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle } from '../state/history';
+import { buildArrangeCommand, buildEdgeStyleCommand, buildEdgesResetCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle, type MoveCommand } from '../state/history';
 import { schedulePersist } from '../persistence';
 import { slideSegment, notchAtQuarter, deleteNotch, type EdgeRoute } from '../render/edgeRouter';
 import { screenToWorld, type Point } from '../render/viewport';
 import { gridSnapper } from '../layout/grid';
-import { hasManualShape } from '../layout/smartLayout/edgeReset';
+import { computeAutoShapeDrops, hasShape, movedNames, rawLayoutRefs } from '../layout/smartLayout/edgeReset';
 import type { Waypoint } from '../../shared/types';
 
 /**
@@ -152,13 +152,32 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
     }
 
     const cmd = buildMoveCommand(origins, store.getState().positions);
-    if (cmd) store.getState().pushMoveCommand(cmd);
+    if (cmd) commitMove(cmd);
     schedulePersist();
   };
 
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
+}
+
+/**
+ * Push a table move. A* shapes touching a moved table were routed for the old geometry, so they
+ * are dropped in the same undo step (an arrange-kind command, which snapshots edge layouts) (F20).
+ */
+function commitMove(cmd: MoveCommand): void {
+  const s = store.getState();
+  const drops = isCanvasReadOnly(s)
+    ? []
+    : computeAutoShapeDrops(rawLayoutRefs(s.schema.refs), movedNames(new Map(cmd.from), new Map(cmd.to)), s.edgeLayouts);
+  if (drops.length === 0) {
+    s.pushMoveCommand(cmd);
+    return;
+  }
+  const edgesBefore = new Map(s.edgeLayouts);
+  s.applyEdgeLayouts(drops);
+  const arrange = buildArrangeCommand(new Map(cmd.from), new Map(cmd.to), edgesBefore, drops, cmd.label);
+  if (arrange) s.pushArrangeCommand(arrange);
 }
 
 function snapshotWaypoints(refId: string): Waypoint[] {
@@ -182,6 +201,7 @@ function runEdgeDrag(
   e.stopPropagation();
   e.preventDefault();
   const from = snapshotWaypoints(refId);
+  const before = store.getState().edgeLayouts.get(refId);
   const startX = e.clientX;
   const startY = e.clientY;
   const origin = viewportOrigin(target);
@@ -215,8 +235,10 @@ function runEdgeDrag(
 
     const to = snapshotWaypoints(refId);
     const op = to.length > from.length ? 'add' : to.length < from.length ? 'remove' : 'move';
-    const cmd = buildWaypointCommand(refId, from, to, op);
+    const cmd = buildWaypointCommand(refId, from, to, op, before?.auto === true);
     if (cmd) store.getState().pushWaypointCommand(cmd);
+    // A gesture that ended where it began edited nothing: hand back the pre-drag layout, `auto` included.
+    else if (before?.auto) store.getState().applyEdgeLayouts([[refId, before]]);
     schedulePersist();
   };
 
@@ -264,9 +286,10 @@ export function deleteEdgeNotch(route: EdgeRoute, segIndex: number): void {
   if (isCanvasReadOnly(store.getState())) return;
   const refId = route.id;
   const from = snapshotWaypoints(refId);
+  const fromAuto = store.getState().edgeLayouts.get(refId)?.auto === true;
   const to = deleteNotch(route, segIndex);
   store.getState().setEdgeWaypoints(refId, to);
-  const cmd = buildWaypointCommand(refId, from, to, to.length < from.length ? 'remove' : 'move');
+  const cmd = buildWaypointCommand(refId, from, to, to.length < from.length ? 'remove' : 'move', fromAuto);
   if (cmd) store.getState().pushWaypointCommand(cmd);
   schedulePersist();
 }
@@ -280,7 +303,7 @@ export function resetEdgeWaypoints(refId: string): void {
   const state = store.getState();
   if (isCanvasReadOnly(state)) return;
   const before = state.edgeLayouts.get(refId);
-  if (!before || !hasManualShape(before)) return; // nothing to reset: don't clear the redo stack
+  if (!before || !hasShape(before)) return; // nothing to reset: don't clear the redo stack
   state.resetEdgeShape(refId);
   const after = store.getState().edgeLayouts.get(refId) ?? null;
   const cmd = buildEdgesResetCommand(new Map([[refId, before]]), [[refId, after]], 'Reset line');
@@ -288,13 +311,14 @@ export function resetEdgeWaypoints(refId: string): void {
   schedulePersist();
 }
 
-/** Snapshot an edge's style (color + side overrides) for history diffing. */
+/** Snapshot an edge's style (color + side overrides + A* marker) for history diffing. */
 export function readEdgeStyle(refId: string): EdgeStyle {
   const l = store.getState().edgeLayouts.get(refId);
   const s: EdgeStyle = {};
   if (l?.color) s.color = l.color;
   if (l?.sourceSide) s.sourceSide = l.sourceSide;
   if (l?.targetSide) s.targetSide = l.targetSide;
+  if (l?.auto) s.auto = true;
   return s;
 }
 
@@ -340,6 +364,12 @@ export function startEndpointDrag(
     window.removeEventListener('pointercancel', onUp);
     try { target.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
     document.body.classList.remove('ddd-is-edge-dragging');
+    const after = readEdgeStyle(refId);
+    const current = store.getState().edgeLayouts.get(refId);
+    // Flipped and dragged back: no edit, so the shape stays A*'s and no history entry is pushed.
+    if (before.auto && current && after.sourceSide === before.sourceSide && after.targetSide === before.targetSide) {
+      store.getState().applyEdgeLayouts([[refId, { ...current, auto: true }]]);
+    }
     commitEdgeStyle(refId, before, 'Flip edge port');
   };
 

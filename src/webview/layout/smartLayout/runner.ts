@@ -5,7 +5,7 @@ import { schedulePersist } from '../../persistence';
 import { postToHost } from '../../vscode';
 import { estimateSize } from '../autoLayout';
 import { smartLayout, type SmartLayoutMode } from './layout';
-import { computeEdgeResets, computeSelectionEdgeResets, movedNames } from './edgeReset';
+import { computeAutoShapeDrops, computeEdgeResets, computeSelectionEdgeResets, movedNames, rawLayoutRefs } from './edgeReset';
 import { computeEdgeOrdering } from './edgeOrdering';
 import { edgeKeyedRefs } from '../../render/edgeKey';
 
@@ -141,7 +141,12 @@ export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions
   const moved = movedNames(before, result);
   // Nothing new to place: the user asked for placement only, so do not re-route every edge.
   if (mode === 'new' && moved.size === 0) return;
-  const strandedResets = computeEdgeResets(layoutRefs(s), moved, edgesBefore);
+  // Auto shapes are checked on every schema ref: one whose other endpoint is hidden or collapsed
+  // is still A*'s and still stale once the visible endpoint moves.
+  const strandedResets = [
+    ...computeEdgeResets(layoutRefs(s), moved, edgesBefore),
+    ...computeAutoShapeDrops(rawLayoutRefs(s.schema.refs), moved, edgesBefore),
+  ];
 
   if (!orderEdges) {
     // Original behavior: clear stranded waypoints, no A*.
