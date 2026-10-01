@@ -3,14 +3,21 @@ import { cmpCodeUnit } from '../shared/compare';
 import type {
   Column,
   ColumnDefaultKind,
+  Dep,
+  DepEndpoint,
   ParseError,
   QualifiedName,
   Ref,
+  RecordValue,
   RefEndpointRelation,
   Schema,
   Table,
   TableGroup,
+  TableRecords,
 } from '../shared/types';
+
+/** Records preview only needs a sample; whole seed files would bloat every schema:update. */
+export const RECORDS_ROW_CAP = 200;
 
 /**
  * Wrapper over @dbml/core Parser.
@@ -86,15 +93,37 @@ interface ExportedTableGroup {
   tables: Array<{ schemaName: string | null; tableName: string }>;
 }
 
+interface ExportedDepEndpoint {
+  schemaName: string | null;
+  tableName: string;
+  fieldNames: string[];
+}
+
+interface ExportedDep {
+  name: string | null;
+  color?: string | null;
+  note: string | null;
+  edges: Array<{ upstream: ExportedDepEndpoint; downstream: ExportedDepEndpoint }>;
+}
+
 interface ExportedSchema {
   name: string;
   tables: ExportedTable[];
   refs: ExportedRef[];
   tableGroups: ExportedTableGroup[];
+  deps?: ExportedDep[];
+}
+
+interface ExportedRecords {
+  schemaName: string | null;
+  tableName: string;
+  columns: string[];
+  values: Array<Array<{ value: unknown; type: string }>>;
 }
 
 interface ExportedDatabase {
   schemas: ExportedSchema[];
+  records?: ExportedRecords[];
 }
 
 function unquote(s: string): string {
@@ -116,6 +145,7 @@ function qualify(schemaName: string | null | undefined, tableName: string): Qual
 function mapExportedToSchema(db: ExportedDatabase): Schema {
   const tables: Table[] = [];
   const refs: Ref[] = [];
+  const deps: Dep[] = [];
   const groups: TableGroup[] = [];
   const tableToGroup = new Map<QualifiedName, string>();
 
@@ -159,26 +189,82 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
     for (const t of s.tables ?? []) {
       const cleanName = unquote(t.name);
       const qn = qualify(schemaName, cleanName);
-      tables.push({
+      const table: Table = {
         name: qn,
         schemaName,
         tableName: cleanName,
         columns: markIndexPk((t.fields ?? []).map(mapField), t.indexes),
         note: t.note || null,
         groupName: tableToGroup.get(qn) ?? null,
-      });
+      };
+      if (t.headerColor) table.headerColor = t.headerColor;
+      tables.push(table);
     }
 
     for (const r of s.refs ?? []) {
       const mapped = mapRef(r, schemaName, resolveEndpoint);
       if (mapped) refs.push(mapped);
     }
+
+    for (const d of s.deps ?? []) {
+      const mapped = mapDep(d, schemaName, resolveEndpoint);
+      if (mapped) deps.push(mapped);
+    }
   }
 
   tables.sort((a, b) => cmpCodeUnit(a.name, b.name));
   groups.sort((a, b) => cmpCodeUnit(a.name, b.name));
 
-  return { tables, refs, groups };
+  const schema: Schema = { tables, refs, groups };
+  const records = mapRecords(db.records ?? [], resolveEndpoint);
+  if (records.length > 0) schema.records = records;
+  if (deps.length > 0) schema.deps = deps;
+  return schema;
+}
+
+function mapRecords(blocks: ExportedRecords[], resolveTable: EndpointResolver): TableRecords[] {
+  // A table may get several `records` blocks (inline + top-level); the preview shows them as one grid
+  // only when their column lists match, otherwise each block stays separate.
+  const out: TableRecords[] = [];
+  for (const b of blocks) {
+    const table = resolveTable(b.schemaName, b.tableName, 'public');
+    const columns = b.columns.map(unquote);
+    const rows = b.values.map((row) => row.map(toRecordValue));
+    const prev = out.find((r) => r.table === table && r.columns.join('\0') === columns.join('\0'));
+    if (prev) {
+      prev.totalRows += rows.length;
+      prev.rows.push(...rows.slice(0, Math.max(0, RECORDS_ROW_CAP - prev.rows.length)));
+    } else {
+      out.push({ table, columns, rows: rows.slice(0, RECORDS_ROW_CAP), totalRows: rows.length });
+    }
+  }
+  return out.sort((a, b) => cmpCodeUnit(a.table, b.table));
+}
+
+function toRecordValue(cell: { value: unknown; type: string }): RecordValue {
+  const v = cell.value;
+  if (v === null || v === undefined) return { v: null, t: 'null' };
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return { v, t: cell.type };
+  return { v: String(v), t: cell.type };
+}
+
+function mapDep(d: ExportedDep, defaultSchemaName: string, resolveTable: EndpointResolver): Dep | null {
+  const edges = (d.edges ?? []).map((e) => {
+    const upstream: DepEndpoint = {
+      table: resolveTable(e.upstream.schemaName, e.upstream.tableName, defaultSchemaName),
+      columns: (e.upstream.fieldNames ?? []).map(unquote),
+    };
+    const downstream: DepEndpoint = {
+      table: resolveTable(e.downstream.schemaName, e.downstream.tableName, defaultSchemaName),
+      columns: (e.downstream.fieldNames ?? []).map(unquote),
+    };
+    const id = `${upstream.table}(${upstream.columns.join(',')})->${downstream.table}(${downstream.columns.join(',')})`;
+    return { id, upstream, downstream };
+  });
+  if (edges.length === 0) return null;
+  const dep: Dep = { name: d.name ? unquote(d.name) : null, note: d.note || null, edges };
+  if (d.color) dep.color = d.color;
+  return dep;
 }
 
 function mapField(f: ExportedField): Column {

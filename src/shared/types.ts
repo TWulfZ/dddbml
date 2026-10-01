@@ -30,6 +30,8 @@ export interface Table {
   columns: Column[];
   note?: string | null;
   groupName?: string | null;
+  /** DBML `headercolor`; display-only fallback when the sidecar has no color (spec 18). */
+  headerColor?: string;
 }
 
 export type RefEndpointRelation = '1' | '*'; // one or many
@@ -50,10 +52,47 @@ export interface TableGroup {
   note?: string | null;
 }
 
+export interface RecordValue {
+  v: string | number | boolean | null;
+  /** Parser-reported value type: `integer`, `string`, `bool`, `datetime`, `expression`, ... */
+  t: string;
+}
+
+export interface TableRecords {
+  table: QualifiedName;
+  columns: string[];
+  /** Capped at RECORDS_ROW_CAP to bound the postMessage payload; `totalRows` keeps the real count. */
+  rows: RecordValue[][];
+  totalRows: number;
+}
+
+export interface DepEndpoint {
+  table: QualifiedName;
+  /** Empty for a table-level dependency. */
+  columns: string[];
+}
+
+export interface DepEdge {
+  /** Directional (upstream first), unlike `Ref.id`: a dep's direction is its meaning. */
+  id: string;
+  upstream: DepEndpoint;
+  downstream: DepEndpoint;
+}
+
+/** DBML `Dep` block: logical upstream→downstream dependencies (views, lineage). Never an FK. */
+export interface Dep {
+  name: string | null;
+  color?: string;
+  note?: string | null;
+  edges: DepEdge[];
+}
+
 export interface Schema {
   tables: Table[];
   refs: Ref[];
   groups: TableGroup[];
+  records?: TableRecords[];
+  deps?: Dep[];
 }
 
 export interface ParseError {

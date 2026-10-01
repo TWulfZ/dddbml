@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDbml } from './parser';
+import { parseDbml, RECORDS_ROW_CAP } from './parser';
 
 function parse(src: string) {
   const r = parseDbml(src);
@@ -91,5 +91,100 @@ describe('parseDbml — locale-independent order (audit F88)', () => {
     // localeCompare puts lowercase "alpha" before "Zeta" under every ICU locale; code-unit order does not.
     expect(s.tables.map((t) => t.name)).toEqual(['public.Zeta', 'public.alpha']);
     expect(s.groups.map((g) => g.name)).toEqual(['Omega', 'beta']);
+  });
+});
+
+describe('parseDbml — records (issue #3)', () => {
+  it('parses both records syntaxes from the issue and keeps typed cell values', () => {
+    const s = parse(`
+      Table users {
+        id int [pk]
+        name varchar
+        records {
+          1, 'a'
+          2, null
+        }
+      }
+      Table plans { id int
+        price decimal }
+      records plans (id, price) {
+        1, 9.5
+      }
+    `);
+    expect(s.records).toEqual([
+      { table: 'public.plans', columns: ['id', 'price'], rows: [[{ v: 1, t: 'integer' }, { v: 9.5, t: 'real' }]], totalRows: 1 },
+      {
+        table: 'public.users',
+        columns: ['id', 'name'],
+        rows: [[{ v: 1, t: 'integer' }, { v: 'a', t: 'string' }], [{ v: 2, t: 'integer' }, { v: null, t: 'null' }]],
+        totalRows: 2,
+      },
+    ]);
+  });
+
+  it('caps the rows sent to the webview but reports the real total', () => {
+    const body = Array.from({ length: RECORDS_ROW_CAP + 5 }, (_, i) => `  ${i}`).join('\n');
+    const s = parse(`Table t { id int }\nrecords t (id) {\n${body}\n}`);
+    expect(s.records![0]!.rows).toHaveLength(RECORDS_ROW_CAP);
+    expect(s.records![0]!.totalRows).toBe(RECORDS_ROW_CAP + 5);
+  });
+
+  it('omits records entirely when the schema has none', () => {
+    expect(parse('Table t { id int }').records).toBeUndefined();
+  });
+});
+
+describe('parseDbml — Dep (issue #3)', () => {
+  it('parses the issue syntax as a directional column-level dependency, outside refs', () => {
+    const s = parse(`
+      Table table1 { col int }
+      Table table2 { col int }
+      Dep: table1.col -> table2.col
+    `);
+    expect(s.refs).toEqual([]);
+    expect(s.deps).toEqual([
+      {
+        name: null,
+        note: null,
+        edges: [
+          {
+            id: 'public.table1(col)->public.table2(col)',
+            upstream: { table: 'public.table1', columns: ['col'] },
+            downstream: { table: 'public.table2', columns: ['col'] },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('keeps table-level edges, block color/note, and resolves schemas and aliases', () => {
+    const s = parse(`
+      Table raw.stripe as S { id int }
+      Table stg_orders { id int }
+      Dep lineage [color: #3b82f6, note: 'paid orders'] {
+        S -> stg_orders
+      }
+    `);
+    expect(s.deps).toEqual([
+      {
+        name: 'lineage',
+        color: '#3b82f6',
+        note: 'paid orders',
+        edges: [
+          {
+            id: 'raw.stripe()->public.stg_orders()',
+            upstream: { table: 'raw.stripe', columns: [] },
+            downstream: { table: 'public.stg_orders', columns: [] },
+          },
+        ],
+      },
+    ]);
+  });
+});
+
+describe('parseDbml — headercolor', () => {
+  it('exposes headercolor only on tables that declare it', () => {
+    const s = parse('Table a [headercolor: #3498DB] { id int }\nTable b { id int }');
+    expect(s.tables.map((t) => t.headerColor)).toEqual(['#3498DB', undefined]);
   });
 });

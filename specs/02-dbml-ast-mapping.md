@@ -2,7 +2,7 @@
 
 ## Fuente
 
-`@dbml/core` expone `Parser.parse(source, 'dbmlv2')` → retorna un objeto `Database` (clase). Llamando `.export()` obtenemos un shape plano JSON-safe con la estructura:
+`@dbml/core` **^10.2** (antes 3.14; el bump es requisito de `Dep`, ver spec 18) expone `Parser.parse(source, 'dbmlv2')` → retorna un objeto `Database` (clase). Llamando `.export()` obtenemos un shape plano JSON-safe con la estructura:
 
 ```
 Database.export() = {
@@ -12,15 +12,27 @@ Database.export() = {
       tables: [{ name, alias, note, headerColor, fields: [...], indexes: [...] }],
       refs: [{ name, onDelete, onUpdate, endpoints: [{ schemaName, tableName, fieldNames, relation }] }],
       tableGroups: [{ name, tables: [{ schemaName, tableName }] }],
+      deps: [{ name, color, note, edges: [{ upstream, downstream: { schemaName, tableName, fieldNames } }] }],
       enums: [...]
     }
-  ]
+  ],
+  records: [{ schemaName, tableName, columns, values: [[{ value, type }]] }]
 }
 ```
 
 Trabajamos sobre este `export()`, no sobre la clase `Database`, porque:
 1. Es plain data → serializable a postMessage sin surgery.
 2. API estable; los métodos de la clase cambian entre versiones menores.
+
+10.x omite `increment: false` (sólo aparece si es `true`); el mapeo lo lee como truthy.
+
+### Records, Dep y headercolor (spec 18)
+
+| Export | Modelo | Nota |
+|---|---|---|
+| `records[]` (top-level, incluye los inline de `Table`) | `Schema.records?: TableRecords[]` | Máx. `RECORDS_ROW_CAP` = 200 filas; `totalRows` real. Bloques con las mismas columnas se fusionan. `null` → `{v:null, t:'null'}` |
+| `schemas[].deps[]` | `Schema.deps?: Dep[]` | Fuera de `refs`. Endpoints vía el mismo `resolveEndpoint` (schema + alias). `DepEdge.id` es **direccional** |
+| `tables[].headerColor` | `Table.headerColor?` | Sólo display; nunca se escribe al sidecar |
 
 ## Mapeo al modelo interno
 
@@ -87,7 +99,7 @@ También cada `Table.groupName` apunta al group que la contiene (para lookup rá
 - **Enums**: parseados pero no renderizados. v1.1 candidate.
 - **Indexes**: parseados pero no renderizados (sólo labels en tabla podrían mostrarlos). v1.1. Excepción: los índices `[pk]` marcan `pk` en sus columnas (ver tabla de columnas).
 - **StickyNotes**: ignorados.
-- **Records (seed data)**: ignorados.
+- **Records (seed data)**: preview de sólo lectura desde spec 18.
 - **TablePartials** (DBML v3): ignorados en v1 (los partials se inyectan al parsear, así que sus campos aparecen igual en la tabla final; no hay AST dedicado).
 - **Many-to-many refs** (`<>`): tratados como relación bidireccional `'*' '*'`. Render visual no las distingue en v1.
 
