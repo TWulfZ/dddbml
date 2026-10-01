@@ -67,8 +67,21 @@ export function NumberField({ label, hint, value, min, max, step, onCommit }: Nu
         step={step}
         value={value}
         onChange={(e) => {
-          const n = Number((e.currentTarget as HTMLInputElement).value);
-          if (Number.isFinite(n)) onCommit(n);
+          const input = e.currentTarget as HTMLInputElement;
+          // A cleared or unparsable field reads as '' (Number('') === 0): keep the stored value.
+          // The `value` prop is unchanged, so Preact won't re-render; restore the DOM ourselves.
+          if (input.value === '' || input.validity.badInput) {
+            input.value = String(value);
+            return;
+          }
+          const n = Number(input.value);
+          if (!Number.isFinite(n)) {
+            input.value = String(value);
+            return;
+          }
+          const clamped = Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n));
+          if (clamped !== n) input.value = String(clamped);
+          onCommit(clamped);
         }}
       />
     </Field>

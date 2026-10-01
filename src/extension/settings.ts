@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { defaultSettings, type AppSettings, type FlatSettingsPatch, type UiDensity } from '../shared/types';
+import { clampSetting, defaultSettings, type AppSettings, type FlatSettingsPatch, type UiDensity } from '../shared/types';
 
 const UI_DENSITY_VALUES: readonly UiDensity[] = ['compact', 'cozy', 'comfortable'];
 
@@ -9,17 +9,18 @@ export function loadSettings(): AppSettings {
   const cfg = vscode.workspace.getConfiguration(CONFIG_ROOT);
   const defaults = defaultSettings();
   return {
-    zoomStep: numberOr(cfg.get<number>('zoomStep'), defaults.zoomStep),
-    zoomMin: numberOr(cfg.get<number>('zoomMin'), defaults.zoomMin),
-    zoomMax: numberOr(cfg.get<number>('zoomMax'), defaults.zoomMax),
+    // Ranges also keep zoomMin <= 1 <= zoomMax and zoomStep > 1 consistent with each other.
+    zoomStep: clampSetting('zoomStep', cfg.get<number>('zoomStep'), defaults.zoomStep),
+    zoomMin: clampSetting('zoomMin', cfg.get<number>('zoomMin'), defaults.zoomMin),
+    zoomMax: clampSetting('zoomMax', cfg.get<number>('zoomMax'), defaults.zoomMax),
     lod: {
-      lowThreshold: numberOr(cfg.get<number>('lod.lowThreshold'), defaults.lod.lowThreshold),
+      lowThreshold: clampSetting('lod.lowThreshold', cfg.get<number>('lod.lowThreshold'), defaults.lod.lowThreshold),
     },
     ui: {
       density: uiDensityOr(cfg.get<string>('ui.density'), defaults.ui.density),
       snapToGrid: boolOr(cfg.get<boolean>('ui.snapToGrid'), defaults.ui.snapToGrid),
-      gridSize: numberOr(cfg.get<number>('ui.gridSize'), defaults.ui.gridSize),
-      layoutSpacing: numberOr(cfg.get<number>('ui.layoutSpacing'), defaults.ui.layoutSpacing),
+      gridSize: clampSetting('ui.gridSize', cfg.get<number>('ui.gridSize'), defaults.ui.gridSize),
+      layoutSpacing: clampSetting('ui.layoutSpacing', cfg.get<number>('ui.layoutSpacing'), defaults.ui.layoutSpacing),
     },
     export: {
       defaultFormat: stringOr(cfg.get<string>('export.defaultFormat'), defaults.export.defaultFormat),
@@ -62,9 +63,6 @@ function workspaceTarget(): vscode.ConfigurationTarget {
     : vscode.ConfigurationTarget.Global;
 }
 
-function numberOr(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-}
 function stringOr(v: unknown, fallback: string): string {
   return typeof v === 'string' && v.length > 0 ? v : fallback;
 }

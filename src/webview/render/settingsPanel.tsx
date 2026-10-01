@@ -11,7 +11,7 @@ import { Button } from '../ui/Button';
 import { HoverCard } from '../ui/HoverCard';
 import { LodPreview } from './lodPreview';
 import { IconLayout, IconZoom, IconEye, IconExport, IconInfo, IconReset } from '../icons';
-import { defaultSettings, flattenSettings, type FlatSettingsPatch, type UiDensity } from '../../shared/types';
+import { defaultSettings, flattenSettings, SETTING_RANGES, type FlatSettingsPatch, type NumericSettingKey, type UiDensity } from '../../shared/types';
 
 type PatchKey = keyof FlatSettingsPatch;
 type Category = 'interface' | 'viewport' | 'lod' | 'export';
@@ -44,6 +44,8 @@ function patchFor(keys: PatchKey[]): Partial<FlatSettingsPatch> {
   for (const k of keys) (out as Record<string, unknown>)[k] = DEFAULT_FLAT[k];
   return out;
 }
+
+const range = (key: NumericSettingKey) => ({ min: SETTING_RANGES[key][0], max: SETTING_RANGES[key][1] });
 
 function update(patch: Partial<FlatSettingsPatch>) {
   postToHost({ type: 'settings:update', payload: patch });
@@ -111,8 +113,7 @@ function SettingsPanelImpl() {
                 label="Grid size (px)"
                 hint="World-unit spacing of the snap grid used when magnet mode is on."
                 value={settings.ui.gridSize}
-                min={2}
-                max={128}
+                {...range('ui.gridSize')}
                 step={2}
                 onCommit={(v) => apply('ui.gridSize', v)}
               />
@@ -120,8 +121,7 @@ function SettingsPanelImpl() {
                 label="Layout spacing"
                 hint="Auto-arrange density. Lower packs tables and groups tighter; higher spreads them out. Applies on the next auto-arrange."
                 value={settings.ui.layoutSpacing}
-                min={0.4}
-                max={2.5}
+                {...range('ui.layoutSpacing')}
                 step={0.1}
                 minLabel="Compact"
                 maxLabel="Spacious"
@@ -137,13 +137,12 @@ function SettingsPanelImpl() {
                 label="Zoom step"
                 hint="Factor applied per zoom in/out (must be > 1)."
                 value={settings.zoomStep}
-                min={1.01}
-                max={4}
+                {...range('zoomStep')}
                 step={0.05}
                 onCommit={(v) => apply('zoomStep', v)}
               />
-              <NumberField label="Zoom min" value={settings.zoomMin} min={0.01} max={1} step={0.01} onCommit={(v) => apply('zoomMin', v)} />
-              <NumberField label="Zoom max" value={settings.zoomMax} min={1} max={16} step={0.5} onCommit={(v) => apply('zoomMax', v)} />
+              <NumberField label="Zoom min" value={settings.zoomMin} {...range('zoomMin')} step={0.01} onCommit={(v) => apply('zoomMin', v)} />
+              <NumberField label="Zoom max" value={settings.zoomMax} {...range('zoomMax')} step={0.5} onCommit={(v) => apply('zoomMax', v)} />
             </Section>
           ) : null}
 
@@ -162,8 +161,7 @@ function SettingsPanelImpl() {
                 label="Low threshold"
                 hint="Below this zoom, tables render as colored rectangles (name on hover); at or above, full columns."
                 value={settings.lod.lowThreshold}
-                min={0.01}
-                max={1}
+                {...range('lod.lowThreshold')}
                 step={0.05}
                 onCommit={(v) => apply('lod.lowThreshold', v)}
               />

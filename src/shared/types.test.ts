@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { defaultSettings, flattenSettings, type AppSettings, type FlatSettingsPatch } from './types';
+import pkg from '../../package.json';
+import { clampSetting, defaultSettings, flattenSettings, SETTING_RANGES, type AppSettings, type FlatSettingsPatch } from './types';
 
 describe('flattenSettings', () => {
   it('maps every nested field to its dotted key (guards against mis-wiring)', () => {
@@ -36,5 +37,27 @@ describe('flattenSettings', () => {
 
   it('flattens the factory defaults for whole-settings reset', () => {
     expect(flattenSettings(defaultSettings())['ui.gridSize']).toBe(16);
+  });
+});
+
+describe('numeric setting ranges', () => {
+  it('match the package.json minimum/maximum of every numeric dddbml.* setting', () => {
+    const props: Record<string, { type: string; minimum?: number; maximum?: number }> =
+      pkg.contributes.configuration.properties;
+    const fromPkg: Record<string, [number | undefined, number | undefined]> = {};
+    for (const [key, p] of Object.entries(props)) {
+      if (p.type === 'number') fromPkg[key.replace(/^dddbml\./, '')] = [p.minimum, p.maximum];
+    }
+    expect(SETTING_RANGES).toEqual(fromPkg);
+  });
+
+  it('clamps out-of-range values and falls back on non-numbers (a cleared field saved 0)', () => {
+    expect(clampSetting('zoomMax', 0, 4)).toBe(1);
+    expect(clampSetting('zoomStep', 0, 1.2)).toBe(1.01);
+    expect(clampSetting('lod.lowThreshold', 0, 0.3)).toBe(0.01);
+    expect(clampSetting('ui.gridSize', 999, 16)).toBe(128);
+    expect(clampSetting('zoomMin', Number.NaN, 0.08)).toBe(0.08);
+    expect(clampSetting('zoomMin', '0.5', 0.08)).toBe(0.08);
+    expect(clampSetting('zoomMin', 0.5, 0.08)).toBe(0.5);
   });
 });
