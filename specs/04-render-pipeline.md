@@ -58,6 +58,12 @@ Decidido por `lodForZoom(viewport.zoom, settings.lod)` en `render/lod.ts`. Un so
 umbral configurable (`lowThreshold`, default `0.3`) — `full` a zoom normal/in,
 `rect` para vista "pájaro" de 5000 tablas (puntos de color agrupados por grupo).
 
+El rectángulo de `rect` se dimensiona con `estimateSize` (métrica de densidad en px), no
+por CSS como el nodo `full`. Por eso `TableNode` se suscribe a `settings.ui.density`: si
+no, el nodo memoizado conservaba el tamaño de la densidad anterior (al cambiarla o al
+abrir con una densidad no-default, ya que `settings:loaded` llega tras el schema) y
+desalineaba aristas, contenedores de grupo y spatial index.
+
 > **Un solo modo de detalle (por feedback de usuarios).** El antiguo nivel
 > intermedio `header` (sólo la franja del título, sin columnas) se eliminó: aportaba
 > poco y duplicaba el umbral. Hoy hay dos niveles y un único `lowThreshold`.
@@ -97,8 +103,14 @@ suelto por edge fuera de esta capa). Edge culling:
 - `routeRefs` se memoiza (`[refs, positions, tablesByName, groupSizes, edgeLayouts]`);
   las posiciones world no cambian en pan/zoom → el ruteo no recomputa por frame.
 - Se rutean todas las `effectiveRefs`; las *rutas* se filtran por `visibleRefIds`
-  (al menos un endpoint en `visibleNames`). El margen de 256px ya incluye aristas
-  que cruzan el borde.
+  (`useVisibleEdgeIds`): una arista es visible si su **caja** (rects de sus dos nodos
+  extremo ∪ waypoints, `edgeBoxes` en `app.tsx`) cruza el viewport + margen 256px.
+  Probar sólo los extremos no basta: una arista entre dos tablas fuera de pantalla
+  que cruza el viewport desaparecía y parpadeaba al panear. La caja es un superset
+  (una diagonal en `rect` puede no tocar el viewport aunque su caja sí) — renderizar
+  de más es aceptable. Escaneo lineal por frame de cámara (no grid: una arista larga
+  ocuparía cientos de celdas); re-render sólo si cambia la membresía, como
+  `useVisibleNames`.
 - `lod === 'rect'`: arista = recta `M source L target`, sin markers/dots/overlay.
 
 ## Interacción de canvas (pan + selección)
@@ -117,6 +129,13 @@ Tres formas de paneo, todas vía `panBy` (`render/viewport.ts`):
 - **Mantener `Space`** — override temporal independiente del toggle. Estado:
   `spacePan` (keydown `' '` → `setSpacePan(true)`; keyup / `blur` → `false`). Como es
   navegación (no edición) funciona incluso en overlays read-only (merge/diff).
+  - Sólo reclama la tecla si el foco está en el viewport (canvas + sus toolbars) o en
+    ningún sitio (`body`), y nunca en un campo de texto. Modales (`<dialog>`) y menús
+    portaleados viven fuera del viewport, así que sus botones/radios/selects conservan
+    la activación nativa con Space.
+  - Cuando la reclama, cancela **todos** los keydown (incluidos los auto-repeat) y el
+    keyup final: un repeat sin cancelar arma el botón de toolbar enfocado y el keyup lo
+    clickea (un undo / zoom extra al soltar).
 
 `panActive = panMode || spacePan`. Cuando está activo es una **herramienta mano
 pura** (decisión de UX): arrastrar en cualquier parte panea, los clicks **no**
@@ -126,6 +145,9 @@ seleccionan ni mueven tablas. Implementación:
   (barra de zoom, menús, paneles) vive **fuera** de `.ddd-world`, así que la
   herramienta mano nunca le roba el click (si no, no podrías ni apagar su propio
   toggle ni usar los menús). Con `panActive` se omite el marquee.
+- `app.tsx onWheel`: el zoom con rueda usa el **mismo** test de canvas
+  (`isCanvasTarget`). Sobre el chrome flotante la rueda no se cancela, así las listas
+  con scroll (Diagram Views, "Review all" del merge) hacen scroll en vez de hacer zoom.
 - `dragController.startDrag`: retorna temprano si `panActive` — **antes** de
   `stopPropagation`, para que el pointerdown burbujee al viewport y este panee.
 - Cursor: `.ddd-viewport.is-pan-mode { cursor: grab }` (clase reactiva desde
@@ -139,12 +161,26 @@ pasar el cursor por el canvas no lo enfoca. Por eso el viewport (con `tabIndex=0
 **enfoca en `pointerenter`** (salvo que un input/textarea/contenteditable tenga el
 foco), de modo que mantener Space sobre el canvas arma el paneo de inmediato.
 
+### Fit to content
+
+`fitToContent` (Ctrl+1, botón de zoom, comando) encuadra **lo que se dibuja**, no el
+schema completo: usa `deriveSceneGeometry` + `sceneBounds` (`render/sceneGeometry.ts`),
+los mismos helpers que `App` usa para `derived` y `worldBbox`. Omite tablas ocultas y
+miembros de grupos ocultos, usa el nodo de un grupo colapsado en vez de sus miembros e
+incluye padding + header del contenedor de grupo expandido. Si todo está oculto, no
+mueve la cámara.
+
 ### Selección
 
 - **Click simple** sobre una tabla → la selecciona sólo a ella (`setSelection([n])`).
 - **Shift-click** → alterna (toggle) la tabla en/fuera del set. Sólo `Shift`
   (consistente con el marquee, que usa `Shift` para sumar).
 - **Marquee** (arrastre sobre área vacía) → sin cambios; `Shift` suma al set.
+- **Escape** limpia selección y arista seleccionada, **salvo** que cierre un overlay
+  (modal `<dialog>`, menú contextual, color popup, menú de app) o venga de un campo de
+  texto (p. ej. el `%` de zoom). Se evalúa en fase de *captura* en `window`: los overlays
+  se cierran desde sus propios handlers y Preact los desmonta en un microtask antes de
+  que un listener en *bubbling* pudiera verlos.
 - Click vs drag usa un umbral **latcheado** (`CLICK_THRESHOLD_PX = 4`, screen-px
   desde el press): nada se mueve hasta cruzarlo; la primera vez que se cruza el
   gesto pasa a drag para siempre (mueve, empuja `MoveCommand` aunque vuelva cerca
@@ -172,13 +208,16 @@ flotante "desaparecía o se partía".
   (`useAppStore(s => lodForZoom(s.viewport.zoom, s.settings.lod))`, un string estable).
 - **Transform imperativo.** Un `useEffect` hace `store.subscribe` y escribe
   `worldRef.current.style.transform` cuando cambia `viewport` — la misma técnica que el drag.
+  El nodo `.ddd-world` se engancha con un *callback ref* (`attachWorld`) que aplica la cámara
+  actual en el commit, antes del paint: con un `useEffect` post-paint el primer frame tras
+  montar (o tras "Retry" del boundary) se pintaba a escala identidad.
   `.ddd-world` **no** recibe `style` desde JSX (si lo recibiera, Preact re-aplicaría el valor
   viejo en cada render).
 - **Culling estable: `useVisibleNames`** (`render/useVisibleNames.ts`). Se suscribe al store
   fuera de Preact, consulta el spatial index y **devuelve la misma instancia de `Set`** mientras
   la membresía no cambie. Sólo fuerza render de `App` cuando una tabla entra o sale del
-  viewport (+ margen 256 px). Así `visibleRefIds` → `visibleRoutes` → vnodes SVG se cachean
-  entre frames. Recalcula sincrónicamente si cambian `spatialIndex`, `viewportRect` o `ready`.
+  viewport (+ margen 256 px). Las aristas usan el mismo mecanismo (`useVisibleEdgeIds`). Así
+  `visibleRefIds` → `visibleRoutes` → vnodes SVG se cachean entre frames. Recalcula sincrónicamente si cambian `spatialIndex`, `viewportRect` o `ready`.
 - **`setViewport` con identity guard:** una cámara sin cambios no notifica (mismo patrón que
   `setHoveredTable`).
 - **Lo único que sigue la cámara en `App` es el `%` del statusbar**, aislado en el leaf
@@ -212,7 +251,9 @@ temporalmente es el que se arrastra (`dragController` lo pone en `startDrag` y l
 `pointerup`).
 
 **Superficies world-size (SVG de aristas, `.ddd-grid`).** Siguen dimensionadas al bbox
-completo del mundo. Al no estar promovidas viven dentro del layer tileado del mundo, por lo
+completo del mundo (`worldBbox`: escena dibujada ∪ waypoints de las aristas dibujadas, + 400
+de margen; sin los waypoints, un tramo deslizado más allá de la tabla más externa se
+recortaba junto con su handle). Al no estar promovidas viven dentro del layer tileado del mundo, por lo
 que su tamaño no crea texturas gigantes; el coste es sólo de *paint records*. Si la medición
 en DevTools → Layers sigue mostrando presión de memoria tras este cambio, el siguiente paso
 es acotar esas superficies al rect visible cuantizado (Preguntas abiertas).

@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, useAppStore, isCanvasReadOnly } from './state/store';
 import { autoLayout, estimateSize } from './layout/autoLayout';
-import { GROUP_CONTAINER_HEADER, GROUP_CONTAINER_PADDING } from './layout/density';
 import { smartLayout } from './layout/smartLayout/layout';
-import { buildRowGeometry } from './layout/tableRows';
+import { buildRowGeometry, fkColumnsByTable as fkColumnsOf } from './layout/tableRows';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
 import { MergeGhosts } from './render/mergeGhosts';
@@ -16,9 +15,10 @@ import { AppMenu } from './render/appMenu';
 import { schedulePersist } from './persistence';
 import { isGestureActive } from './drag/dragController';
 import { panBy, zoomAt } from './render/viewport';
-import { SpatialIndex } from './render/spatialIndex';
+import { SpatialIndex, type Bbox } from './render/spatialIndex';
+import { deriveSceneGeometry, sceneBounds } from './render/sceneGeometry';
 import { lodForZoom } from './render/lod';
-import { useVisibleNames } from './render/useVisibleNames';
+import { useVisibleEdgeIds, useVisibleNames, type EdgeBox } from './render/useVisibleNames';
 import { edgeKeyedRefs } from './render/edgeKey';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
@@ -36,9 +36,6 @@ interface AppProps {
   post: (msg: WebviewToHost) => void;
 }
 
-const GROUP_NODE_W = 220;
-const GROUP_NODE_H = 80;
-
 const GROUP_PREFIX = '__group__:';
 const groupId = (name: string) => GROUP_PREFIX + name;
 /** Expanded group boxes live in the spatial index too (culled like tables) under this prefix. */
@@ -46,6 +43,17 @@ const CONTAINER_PREFIX = '__container__:';
 const containerId = (name: string) => CONTAINER_PREFIX + name;
 /** Synthetic index entries (collapsed groups, containers) — never selectable, never counted. */
 const isSynthetic = (name: string) => name.startsWith('__');
+
+const applyCamera = (el: HTMLElement, vp: { x: number; y: number; zoom: number }) => {
+  el.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`;
+};
+
+/** Open overlays that consume Escape themselves; dismissing one must not also clear the selection. */
+const ESCAPE_OWNING_OVERLAYS = 'dialog[open], .ddd-context-menu, .ddd-color-popup, .ddd-app-menu__popover';
+
+/** Fields that consume Space/typing themselves (zoom %, group search, color popup hex input). */
+const isTextField = (t: HTMLElement | null): boolean =>
+  t != null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 
 export function App(_props: AppProps) {
   const schema = useAppStore((s) => s.schema);
@@ -55,6 +63,7 @@ export function App(_props: AppProps) {
   const groupState = useAppStore((s) => s.groups);
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
   const tableColors = useAppStore((s) => s.tableColors);
+  const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selection = useAppStore((s) => s.selection);
   const panMode = useAppStore((s) => s.panMode);
   const spacePan = useAppStore((s) => s.spacePan);
@@ -96,23 +105,28 @@ export function App(_props: AppProps) {
 
   // Auto-layout tables that have no position. Depends on `positions` too: "Reset layout" empties
   // them without touching the schema, and the effect must re-run or the canvas stays blank.
+  // The closure values are only re-run triggers: the effect flushes after paint, and a layout:loaded
+  // that lands between render and flush (time-travel exit, reload) must not be overwritten by
+  // positions laid out from the stale closure.
   useEffect(() => {
-    if (!ready) return;
-    const missing = schema.tables.filter((t) => !positions.has(t.name));
+    const { ready: isReady, schema: liveSchema, positions: livePositions } = store.getState();
+    if (!isReady) return;
+    const missing = liveSchema.tables.filter((t) => !livePositions.has(t.name));
     if (missing.length === 0) return;
-    const sizeOf = (name: QualifiedName) => estimateSize(tablesByName.get(name)?.columns.length ?? 0);
+    const columnCount = new Map(liveSchema.tables.map((t) => [t.name, t.columns.length]));
+    const sizeOf = (name: QualifiedName) => estimateSize(columnCount.get(name) ?? 0);
     // With tables already on the canvas, flat dagre would stack the new ones at its margin on top
     // of them (audit F19); smart 'new' mode places them by their group/FK neighbours, clear of others.
     const laidOut =
-      positions.size === 0
-        ? autoLayout(schema.tables, schema.refs, sizeOf)
+      livePositions.size === 0
+        ? autoLayout(liveSchema.tables, liveSchema.refs, sizeOf)
         : smartLayout({
-            tables: schema.tables,
-            refs: schema.refs,
-            groups: schema.groups,
+            tables: liveSchema.tables,
+            refs: liveSchema.refs,
+            groups: liveSchema.groups,
             sizeOf,
             mode: 'new',
-            existing: positions,
+            existing: livePositions,
             spacing: store.getState().settings.ui.layoutSpacing,
           });
     const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
@@ -121,22 +135,10 @@ export function App(_props: AppProps) {
       if (pos) entries.push([t.name, pos]);
     }
     if (entries.length > 0) store.getState().setPositionsBatch(entries);
-  }, [schema, tablesByName, positions, ready]);
+  }, [schema, positions, ready]);
 
   /** Set of "table::column" keys for every column that participates in any ref. */
-  const fkColumnsByTable = useMemo(() => {
-    const m = new Map<QualifiedName, Set<string>>();
-    const add = (table: QualifiedName, col: string) => {
-      let s = m.get(table);
-      if (!s) { s = new Set(); m.set(table, s); }
-      s.add(col);
-    };
-    for (const r of schema.refs) {
-      for (const c of r.source.columns) add(r.source.table, c);
-      for (const c of r.target.columns) add(r.target.table, c);
-    }
-    return m;
-  }, [schema]);
+  const fkColumnsByTable = useMemo(() => fkColumnsOf(schema.refs), [schema]);
 
   // Rows each table actually draws (PK/FK filter, inline diff): every on-canvas size and port must
   // count these, not the full column list, or edges and group boxes drift off the nodes.
@@ -146,75 +148,8 @@ export function App(_props: AppProps) {
   );
 
   const derived = useMemo(() => {
-    const hiddenTables = new Set<QualifiedName>(individuallyHidden);
-    const collapsedTables = new Set<QualifiedName>();
-    const collapsedNodes: Array<{ name: string; x: number; y: number; w: number; h: number; color: string; count: number }> = [];
-    const containers: Array<{ name: string; x: number; y: number; w: number; h: number; color: string }> = [];
-    // The image export always draws every column (spec 17), so its group boxes use full heights.
-    const exportContainers: typeof containers = [];
-
-    for (const g of schema.groups) {
-      const st = groupState[g.name];
-      if (st?.hidden) {
-        for (const t of g.tables) hiddenTables.add(t);
-        continue;
-      }
-      if (!st?.collapsed) {
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, maxYFull = -Infinity;
-        let n = 0;
-        for (const t of g.tables) {
-          if (hiddenTables.has(t)) continue;
-          const pos = positions.get(t);
-          if (!pos) continue;
-          const size = estimateSize(rowGeometry.count(t));
-          const fullHeight = estimateSize(tablesByName.get(t)?.columns.length ?? 0).height;
-          if (pos.x < minX) minX = pos.x;
-          if (pos.y < minY) minY = pos.y;
-          if (pos.x + size.width > maxX) maxX = pos.x + size.width;
-          if (pos.y + size.height > maxY) maxY = pos.y + size.height;
-          if (pos.y + fullHeight > maxYFull) maxYFull = pos.y + fullHeight;
-          n++;
-        }
-        if (n > 0) {
-          const box = (bottom: number) => ({
-            name: g.name,
-            x: Math.round(minX - GROUP_CONTAINER_PADDING),
-            y: Math.round(minY - GROUP_CONTAINER_PADDING - GROUP_CONTAINER_HEADER),
-            w: Math.round(maxX - minX + GROUP_CONTAINER_PADDING * 2),
-            h: Math.round(bottom - minY + GROUP_CONTAINER_PADDING * 2 + GROUP_CONTAINER_HEADER),
-            color: st?.color ?? colorForGroup(g.name),
-          });
-          containers.push(box(maxY));
-          exportContainers.push(box(maxYFull));
-        }
-        continue;
-      }
-      if (st?.collapsed) {
-        let sumX = 0, sumY = 0, n = 0;
-        for (const t of g.tables) {
-          const pos = positions.get(t);
-          if (!pos) continue;
-          const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
-          sumX += pos.x + size.width / 2;
-          sumY += pos.y + size.height / 2;
-          n++;
-          collapsedTables.add(t);
-        }
-        if (n > 0) {
-          const cx = Math.round(sumX / n - GROUP_NODE_W / 2);
-          const cy = Math.round(sumY / n - GROUP_NODE_H / 2);
-          collapsedNodes.push({
-            name: g.name,
-            x: cx,
-            y: cy,
-            w: GROUP_NODE_W,
-            h: GROUP_NODE_H,
-            color: st.color ?? colorForGroup(g.name),
-            count: g.tables.length,
-          });
-        }
-      }
-    }
+    const { hiddenTables, collapsedTables, collapsedNodes, containers, exportContainers } =
+      deriveSceneGeometry(schema, positions, groupState, individuallyHidden, tablesByName, rowGeometry.count);
 
     const mapEndpoint = (table: QualifiedName): QualifiedName | null => {
       if (hiddenTables.has(table)) return null;
@@ -253,22 +188,24 @@ export function App(_props: AppProps) {
   }, [schema, positions, derived, density, rowGeometry]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
-  const worldRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement | null>(null);
   const [viewportRect, setViewportRect] = useState({ w: 0, h: 0 });
   const worldMounted = ready && schema.tables.length > 0;
 
   // The camera is applied imperatively (same technique as the drag controller): Preact never owns
   // `.ddd-world`'s transform, so pan/zoom frames touch one style property and nothing re-renders.
+  // The callback ref applies it as soon as any world node attaches (first mount, boundary Retry),
+  // before paint — a post-paint effect showed one frame at identity scale.
+  const attachWorld = useCallback((el: HTMLDivElement | null) => {
+    worldRef.current = el;
+    if (el) applyCamera(el, store.getState().viewport);
+  }, []);
   useEffect(() => {
-    const apply = (vp: { x: number; y: number; zoom: number }) => {
-      const el = worldRef.current;
-      if (el) el.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`;
-    };
-    apply(store.getState().viewport);
+    if (worldRef.current) applyCamera(worldRef.current, store.getState().viewport);
     return store.subscribe((s, prev) => {
-      if (s.viewport !== prev.viewport) apply(s.viewport);
+      if (s.viewport !== prev.viewport && worldRef.current) applyCamera(worldRef.current, s.viewport);
     });
-  }, [worldMounted]);
+  }, []);
 
   // Read by the marquee pointerup without re-binding the listeners on every index rebuild.
   const spatialIndexRef = useRef(spatialIndex);
@@ -294,7 +231,20 @@ export function App(_props: AppProps) {
     const el = viewportRef.current;
     if (!el) return;
 
+    // "Canvas" = the viewport background or anything inside the world (tables / groups / edges).
+    // The floating chrome (zoom bar, app menu, panels) lives OUTSIDE `.ddd-world`, so canvas gestures
+    // must not start on it — panning would steal clicks from its toggles, and wheel-zoom would keep
+    // its scrollable lists from scrolling.
+    const isCanvasTarget = (target: EventTarget | null): boolean =>
+      target === el || (target instanceof Element && target.closest('.ddd-world') != null);
+    // Space-pan owns the key only for the viewport (canvas + its toolbars) or when nothing has focus.
+    // Modals and portaled menus live outside it, so their buttons, radios and selects keep native
+    // Space activation for keyboard users.
+    const isSpacePanTarget = (t: HTMLElement | null): boolean =>
+      t == null || t === document.body || t === document.documentElement || el.contains(t);
+
     const onWheel = (e: WheelEvent) => {
+      if (!isCanvasTarget(e.target)) return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -311,10 +261,7 @@ export function App(_props: AppProps) {
 
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
-      // "Canvas" = the viewport background or anything inside the world (tables / groups / edges).
-      // The floating chrome (zoom bar, app menu, panels) lives OUTSIDE `.ddd-world`, so panning must
-      // NOT start on it — otherwise the pan tool would steal clicks from its own toggle and the menus.
-      const onCanvas = target === el || target.closest('.ddd-world') != null;
+      const onCanvas = isCanvasTarget(target);
       // Pan on the middle button, or the left button while the hand tool is active (toggle / Space).
       const panActive = store.getState().panMode || store.getState().spacePan;
       if (onCanvas && (e.button === 1 || (e.button === 0 && panActive))) {
@@ -399,19 +346,27 @@ export function App(_props: AppProps) {
       }
     };
 
+    // Capture phase on purpose: the overlays close on Escape from their own document/dialog
+    // handlers, and Preact unmounts them in a microtask before a bubbling window listener would
+    // run — by then the DOM no longer shows that this Escape belonged to a menu or modal.
+    const onEscapeCapture = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (isTextField(e.target as HTMLElement | null)) return;
+      if (document.querySelector(ESCAPE_OWNING_OVERLAYS)) return;
+      store.getState().clearSelection();
+      store.getState().setSelectedEdge(null);
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        store.getState().clearSelection();
-        store.getState().setSelectedEdge(null);
-        return;
-      }
-      // Skip when typing inside an input/textarea/contenteditable (e.g. color popup).
+      if (e.key === 'Escape') return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (isTextField(t)) return;
       // Hold Space → temporary pan (a navigation gesture, so allowed even in read-only overlays).
-      if (e.key === ' ' && !e.repeat) {
+      // Every keydown is cancelled, auto-repeats included: an uncancelled repeat arms the focused
+      // toolbar button and its keyup then clicks it (an extra undo / zoom on release).
+      if (e.key === ' ' && isSpacePanTarget(t)) {
         e.preventDefault();
-        store.getState().setSpacePan(true);
+        if (!e.repeat) store.getState().setSpacePan(true);
         return;
       }
       if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no undo/redo (read-only)
@@ -438,7 +393,9 @@ export function App(_props: AppProps) {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === ' ') store.getState().setSpacePan(false);
+      if (e.key !== ' ') return;
+      if (store.getState().spacePan && !isTextField(e.target as HTMLElement | null)) e.preventDefault();
+      store.getState().setSpacePan(false);
     };
     // Releasing focus while Space is held (alt-tab) would otherwise leave pan stuck on.
     const onBlur = () => store.getState().setSpacePan(false);
@@ -447,7 +404,7 @@ export function App(_props: AppProps) {
     // nothing. Focus the viewport when the pointer enters it — unless a field/dialog owns focus.
     const onPointerEnter = () => {
       const a = document.activeElement as HTMLElement | null;
-      if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+      if (isTextField(a)) return;
       if (a !== el) el.focus({ preventScroll: true });
     };
 
@@ -457,6 +414,7 @@ export function App(_props: AppProps) {
     el.addEventListener('pointerup', onPointerUp);
     el.addEventListener('pointercancel', onPointerUp);
     el.addEventListener('pointerenter', onPointerEnter);
+    window.addEventListener('keydown', onEscapeCapture, true);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
@@ -468,6 +426,7 @@ export function App(_props: AppProps) {
       el.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('pointercancel', onPointerUp);
       el.removeEventListener('pointerenter', onPointerEnter);
+      window.removeEventListener('keydown', onEscapeCapture, true);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
@@ -477,16 +436,39 @@ export function App(_props: AppProps) {
   // Culled set; same Set instance while membership is unchanged (see useVisibleNames).
   const visibleNames = useVisibleNames(spatialIndex, viewportRect, ready);
 
-  // Visible edge ids (≥ 1 endpoint visible). Memoized so EdgeLayer can route ALL refs once
-  // (route-all-then-cull, spec 05 §8) and just filter the resulting routes by this set.
-  const visibleRefIds = useMemo(() => {
-    if (!visibleNames) return null;
-    const ids = new Set<string>();
+  // Edge culling boxes: endpoint node rects ∪ waypoints. Endpoint visibility alone dropped edges
+  // crossing the screen between two off-screen tables (spec 04 "Edge culling").
+  const edgeBoxes = useMemo(() => {
+    const groupRects = new Map<string, Bbox>();
+    for (const g of derived.collapsedNodes) groupRects.set(groupId(g.name), g);
+    const rectOf = (name: QualifiedName): Bbox | null => {
+      const g = groupRects.get(name);
+      if (g) return g;
+      const p = positions.get(name);
+      if (!p) return null;
+      const size = estimateSize(tablesByName.get(name)?.columns.length ?? 0);
+      return { x: p.x, y: p.y, w: size.width, h: size.height };
+    };
+    const out: EdgeBox[] = [];
     for (const r of derived.effectiveRefs) {
-      if (visibleNames.has(r.source.table) || visibleNames.has(r.target.table)) ids.add(r.id);
+      const a = rectOf(r.source.table);
+      const b = rectOf(r.target.table);
+      if (!a || !b) continue;
+      let minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
+      let maxX = Math.max(a.x + a.w, b.x + b.w), maxY = Math.max(a.y + a.h, b.y + b.h);
+      for (const wp of edgeLayouts.get(r.id)?.waypoints ?? []) {
+        if (wp.x < minX) minX = wp.x;
+        if (wp.y < minY) minY = wp.y;
+        if (wp.x > maxX) maxX = wp.x;
+        if (wp.y > maxY) maxY = wp.y;
+      }
+      out.push({ id: r.id, bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY } });
     }
-    return ids;
-  }, [visibleNames, derived.effectiveRefs]);
+    return out;
+  }, [derived, positions, tablesByName, edgeLayouts, density]);
+
+  // EdgeLayer routes ALL refs once (route-all-then-cull, spec 05 §8) and filters routes by this set.
+  const visibleRefIds = useVisibleEdgeIds(edgeBoxes, viewportRect, ready);
 
   const positionsEffective = useMemo(() => {
     const m = new Map<QualifiedName, { x: number; y: number }>();
@@ -497,34 +479,21 @@ export function App(_props: AppProps) {
 
   // World bounding box covering every rendered element — used to size the SVG edge layer
   // so paths are inside its coordinate viewport (more robust than overflow:visible on 0x0 parent).
+  // Edge boxes are included because waypoint runs can be slid arbitrarily far past the outermost
+  // table; without them the SVG would clip those runs and their drag handles.
   const worldBbox = useMemo(() => {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const t of schema.tables) {
-      if (derived.hiddenTables.has(t.name) || derived.collapsedTables.has(t.name)) continue;
-      const pos = positions.get(t.name);
-      if (!pos) continue;
-      const size = estimateSize(rowGeometry.count(t.name));
-      if (pos.x < minX) minX = pos.x;
-      if (pos.y < minY) minY = pos.y;
-      if (pos.x + size.width > maxX) maxX = pos.x + size.width;
-      if (pos.y + size.height > maxY) maxY = pos.y + size.height;
+    const b = sceneBounds(schema, positions, derived, rowGeometry.count);
+    if (!b) return { x: 0, y: 0, w: 800, h: 600 };
+    let minX = b.x, minY = b.y, maxX = b.x + b.w, maxY = b.y + b.h;
+    for (const { bbox: e } of edgeBoxes) {
+      if (e.x < minX) minX = e.x;
+      if (e.y < minY) minY = e.y;
+      if (e.x + e.w > maxX) maxX = e.x + e.w;
+      if (e.y + e.h > maxY) maxY = e.y + e.h;
     }
-    for (const g of derived.collapsedNodes) {
-      if (g.x < minX) minX = g.x;
-      if (g.y < minY) minY = g.y;
-      if (g.x + g.w > maxX) maxX = g.x + g.w;
-      if (g.y + g.h > maxY) maxY = g.y + g.h;
-    }
-    for (const c of derived.containers) {
-      if (c.x < minX) minX = c.x;
-      if (c.y < minY) minY = c.y;
-      if (c.x + c.w > maxX) maxX = c.x + c.w;
-      if (c.y + c.h > maxY) maxY = c.y + c.h;
-    }
-    if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 800, h: 600 };
     const P = 400;
     return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
-  }, [schema, positions, derived, density, rowGeometry]);
+  }, [schema, positions, derived, edgeBoxes, rowGeometry]);
 
   // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
   const mergeTableKeys = new Set<QualifiedName>();
@@ -561,14 +530,16 @@ export function App(_props: AppProps) {
     for (const name of visibleNames) if (!name.startsWith(CONTAINER_PREFIX)) n++;
     return n;
   }, [visibleNames, visibleTableCount]);
-  const totalTableCount = schema.tables.length - derived.hiddenTables.size;
+  // Counted over live tables: `hiddenTables` also holds orphan entries kept for tables that are
+  // temporarily absent from the DBML (parse error, rename + undo).
+  const totalTableCount = schema.tables.reduce((n, t) => n + (derived.hiddenTables.has(t.name) ? 0 : 1), 0);
 
   return (
     <>
       <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} ref={viewportRef} tabIndex={0}>
         {worldMounted ? (
           <ErrorBoundary scope="canvas">
-          <div ref={worldRef} class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'}>
+          <div ref={attachWorld} class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'}>
             {snapToGrid ? (
               <div
                 class="ddd-grid"

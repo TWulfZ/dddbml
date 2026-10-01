@@ -1,4 +1,4 @@
-import type { Column, ColumnDiffEntry, QualifiedName, Table, TableDiffStatus } from '../../shared/types';
+import type { Column, ColumnDiffEntry, QualifiedName, Ref, Table, TableDiffStatus } from '../../shared/types';
 
 /** A column row tagged for the inline git-style unified diff. `context` = unchanged. */
 export type DiffKind = 'context' | 'added' | 'removed' | 'changed-old' | 'changed-new';
@@ -89,6 +89,21 @@ export interface RowGeometryInput {
   diffByTable?: Map<QualifiedName, TableDiffStatus> | null;
   diffBaseByTable?: Map<QualifiedName, Table> | null;
   columnDiffByTable?: Map<QualifiedName, Map<string, ColumnDiffEntry>> | null;
+}
+
+/** Columns that take part in any ref, per table (the PK/FK-only view keeps these). */
+export function fkColumnsByTable(refs: readonly Ref[]): Map<QualifiedName, Set<string>> {
+  const m = new Map<QualifiedName, Set<string>>();
+  const add = (table: QualifiedName, col: string) => {
+    let s = m.get(table);
+    if (!s) { s = new Set(); m.set(table, s); }
+    s.add(col);
+  };
+  for (const r of refs) {
+    for (const c of r.source.columns) add(r.source.table, c);
+    for (const c of r.target.columns) add(r.target.table, c);
+  }
+  return m;
 }
 
 export function buildRowGeometry(input: RowGeometryInput): RowGeometry {

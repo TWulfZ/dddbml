@@ -1,5 +1,8 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
+
+/** Screen-px gap kept between a menu and the window edge. */
+const MENU_MARGIN = 8;
 
 export interface ContextMenuItem {
   label: string;
@@ -55,6 +58,16 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     };
   }, [onClose]);
 
+  // Callers clamp the anchor with a size estimate that can't know the item count or the VS Code
+  // font; re-clamp with the measured box before paint so the last rows are never off-screen.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - MENU_MARGIN) el.style.top = `${Math.max(MENU_MARGIN, window.innerHeight - r.height - MENU_MARGIN)}px`;
+    if (r.right > window.innerWidth - MENU_MARGIN) el.style.left = `${Math.max(MENU_MARGIN, window.innerWidth - r.width - MENU_MARGIN)}px`;
+  });
+
   return createPortal(
     <div
       class="ddd-context-menu"
@@ -95,11 +108,11 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 }
 
 /**
- * Clamp a context-menu anchor inside the viewport given its estimated size.
- * Default size is 200x40 (typical 2-3 items) which fits within the user's mouse pointer area.
+ * Clamp a context-menu anchor inside the viewport given its estimated size (default 200x80).
+ * Only a first guess: ContextMenu re-clamps with its measured size before paint.
  */
 export function clampMenuAnchor(x: number, y: number, menuWidth = 200, menuHeight = 80): { x: number; y: number } {
-  const px = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8));
-  const py = Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8));
+  const px = Math.max(MENU_MARGIN, Math.min(x, window.innerWidth - menuWidth - MENU_MARGIN));
+  const py = Math.max(MENU_MARGIN, Math.min(y, window.innerHeight - menuHeight - MENU_MARGIN));
   return { x: px, y: py };
 }

@@ -1,5 +1,6 @@
 import { store } from '../state/store';
-import { estimateSize } from '../layout/autoLayout';
+import { deriveSceneGeometry, sceneBounds } from './sceneGeometry';
+import { buildRowGeometry, fkColumnsByTable } from '../layout/tableRows';
 import type { Bbox } from './spatialIndex';
 
 export interface Point { x: number; y: number }
@@ -21,10 +22,15 @@ export function worldToScreen(world: Point): Point {
 }
 
 export function zoomAt(screen: Point, factor: number): void {
+  zoomToAt(screen, store.getState().viewport.zoom * factor);
+}
+
+/** Set an absolute zoom (clamped) keeping the world point under `screen` fixed. */
+export function zoomToAt(screen: Point, targetZoom: number): void {
   const state = store.getState();
   const { zoomMin, zoomMax } = state.settings;
   const vp = state.viewport;
-  const nextZoom = clamp(vp.zoom * factor, zoomMin, zoomMax);
+  const nextZoom = clamp(targetZoom, zoomMin, zoomMax);
   if (nextZoom === vp.zoom) return;
   const world = { x: (screen.x - vp.x) / vp.zoom, y: (screen.y - vp.y) / vp.zoom };
   const nextX = screen.x - world.x * nextZoom;
@@ -42,6 +48,11 @@ export function zoomAtCenter(factor: number, viewportEl: HTMLElement): void {
   zoomAt({ x: rect.width / 2, y: rect.height / 2 }, factor);
 }
 
+export function zoomToAtCenter(targetZoom: number, viewportEl: HTMLElement): void {
+  const rect = viewportEl.getBoundingClientRect();
+  zoomToAt({ x: rect.width / 2, y: rect.height / 2 }, targetZoom);
+}
+
 export function resetView(): void {
   store.getState().setViewport({ x: 0, y: 0, zoom: 1 });
 }
@@ -49,27 +60,27 @@ export function resetView(): void {
 export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
   const state = store.getState();
   const { zoomMin, zoomMax } = state.settings;
-  const tables = state.schema.tables;
-  if (tables.length === 0) return;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const t of tables) {
-    const pos = state.positions.get(t.name);
-    if (!pos) continue;
-    const size = estimateSize(t.columns.length);
-    if (pos.x < minX) minX = pos.x;
-    if (pos.y < minY) minY = pos.y;
-    if (pos.x + size.width > maxX) maxX = pos.x + size.width;
-    if (pos.y + size.height > maxY) maxY = pos.y + size.height;
-  }
-  if (!Number.isFinite(minX)) return;
+  const { schema, positions } = state;
+  const tablesByName = new Map(schema.tables.map((t) => [t.name, t]));
+  const rows = buildRowGeometry({
+    tables: schema.tables,
+    showOnlyPkFk: state.showOnlyPkFk,
+    fkColumnsByTable: fkColumnsByTable(schema.refs),
+    diffByTable: state.diffByTable,
+    diffBaseByTable: state.diffBaseByTable,
+    columnDiffByTable: state.columnDiffByTable,
+  });
+  const scene = deriveSceneGeometry(schema, positions, state.groups, state.hiddenTables, tablesByName, rows.count);
+  const bounds = sceneBounds(schema, positions, scene, rows.count);
+  if (!bounds) return;
   const rect = viewportEl.getBoundingClientRect();
   const availW = Math.max(1, rect.width - padding * 2);
   const availH = Math.max(1, rect.height - padding * 2);
-  const worldW = Math.max(1, maxX - minX);
-  const worldH = Math.max(1, maxY - minY);
+  const worldW = Math.max(1, bounds.w);
+  const worldH = Math.max(1, bounds.h);
   const zoom = clamp(Math.min(availW / worldW, availH / worldH), zoomMin, zoomMax);
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
+  const cx = bounds.x + bounds.w / 2;
+  const cy = bounds.y + bounds.h / 2;
   const x = rect.width / 2 - cx * zoom;
   const y = rect.height / 2 - cy * zoom;
   store.getState().setViewport({ x, y, zoom });
