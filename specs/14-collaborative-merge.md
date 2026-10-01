@@ -221,6 +221,11 @@ Tailwind en `@layer utilities` ganarían sobre `@layer components`; por eso no h
   caller conserva el layout actual y avisa; **no** borra el archivo.
 - **Stage faltante**: add/add (sin `:1:`), edit/delete (un lado ausente) → tolerado
   por `mergeThreeWay` vía `undefined`.
+- **Stage ilegible**: si `ls-files -u` lista el stage 2 o 3 pero no se puede leer, tiene
+  marcadores o no es JSON válido (`parseLayoutStrict`), `detectSidecarConflict` lanza →
+  resolución manual. Leerlo como vacío borraba todas las claves que el otro lado no tocó.
+  El stage 1 (base) sigue siendo leniente: una base virtual criss-cross puede traer
+  marcadores anidados, y una base vacía sólo produce add/add extra, nunca borrados.
 - **Loop del watcher**: tras escribir el resuelto, `diskSidecarText` se
   actualiza a la serialización compartida → el watcher dedupea. Si re-dispara, el
   archivo ya está limpio → idempotente, sin loop.
