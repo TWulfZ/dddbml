@@ -28,6 +28,11 @@ let edgeDragActive = false;
 /** Min screen-px the pointer must travel from the press before a press becomes a drag (not a click). */
 const CLICK_THRESHOLD_PX = 4;
 
+/** True while a table or edge gesture owns the pointer; undo/redo must not run under it (spec 11). */
+export function isGestureActive(): boolean {
+  return active || edgeDragActive;
+}
+
 interface ClientOrigin { left: number; top: number }
 
 /** Client-space origin of the viewport element, which `viewport.x/y` are relative to. */
