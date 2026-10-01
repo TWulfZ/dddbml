@@ -182,6 +182,9 @@ flotante "desaparecía o se partía".
   (`useAppStore(s => lodForZoom(s.viewport.zoom, s.settings.lod))`, un string estable).
 - **Transform imperativo.** Un `useEffect` hace `store.subscribe` y escribe
   `worldRef.current.style.transform` cuando cambia `viewport` — la misma técnica que el drag.
+  El nodo `.ddd-world` se engancha con un *callback ref* (`attachWorld`) que aplica la cámara
+  actual en el commit, antes del paint: con un `useEffect` post-paint el primer frame tras
+  montar (o tras "Retry" del boundary) se pintaba a escala identidad.
   `.ddd-world` **no** recibe `style` desde JSX (si lo recibiera, Preact re-aplicaría el valor
   viejo en cada render).
 - **Culling estable: `useVisibleNames`** (`render/useVisibleNames.ts`). Se suscribe al store

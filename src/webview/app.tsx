@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, useAppStore, isCanvasReadOnly } from './state/store';
 import { autoLayout, estimateSize } from './layout/autoLayout';
 import { TableNode } from './render/tableNode';
@@ -44,6 +44,10 @@ const CONTAINER_PREFIX = '__container__:';
 const containerId = (name: string) => CONTAINER_PREFIX + name;
 /** Synthetic index entries (collapsed groups, containers) — never selectable, never counted. */
 const isSynthetic = (name: string) => name.startsWith('__');
+
+const applyCamera = (el: HTMLElement, vp: { x: number; y: number; zoom: number }) => {
+  el.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`;
+};
 
 /** Open overlays that consume Escape themselves; dismissing one must not also clear the selection. */
 const ESCAPE_OWNING_OVERLAYS = 'dialog[open], .ddd-context-menu, .ddd-color-popup, .ddd-app-menu__popover';
@@ -232,22 +236,24 @@ export function App(_props: AppProps) {
   }, [schema, positions, derived, density]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
-  const worldRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement | null>(null);
   const [viewportRect, setViewportRect] = useState({ w: 0, h: 0 });
   const worldMounted = ready && schema.tables.length > 0;
 
   // The camera is applied imperatively (same technique as the drag controller): Preact never owns
   // `.ddd-world`'s transform, so pan/zoom frames touch one style property and nothing re-renders.
+  // The callback ref applies it as soon as any world node attaches (first mount, boundary Retry),
+  // before paint — a post-paint effect showed one frame at identity scale.
+  const attachWorld = useCallback((el: HTMLDivElement | null) => {
+    worldRef.current = el;
+    if (el) applyCamera(el, store.getState().viewport);
+  }, []);
   useEffect(() => {
-    const apply = (vp: { x: number; y: number; zoom: number }) => {
-      const el = worldRef.current;
-      if (el) el.style.transform = `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`;
-    };
-    apply(store.getState().viewport);
+    if (worldRef.current) applyCamera(worldRef.current, store.getState().viewport);
     return store.subscribe((s, prev) => {
-      if (s.viewport !== prev.viewport) apply(s.viewport);
+      if (s.viewport !== prev.viewport && worldRef.current) applyCamera(worldRef.current, s.viewport);
     });
-  }, [worldMounted]);
+  }, []);
 
   // Read by the marquee pointerup without re-binding the listeners on every index rebuild.
   const spatialIndexRef = useRef(spatialIndex);
@@ -580,7 +586,7 @@ export function App(_props: AppProps) {
       <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} ref={viewportRef} tabIndex={0}>
         {worldMounted ? (
           <ErrorBoundary scope="canvas">
-          <div ref={worldRef} class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'}>
+          <div ref={attachWorld} class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'}>
             {snapToGrid ? (
               <div
                 class="ddd-grid"
