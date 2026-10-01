@@ -571,7 +571,9 @@ export function App(_props: AppProps) {
     for (const name of visibleNames) if (!name.startsWith(CONTAINER_PREFIX)) n++;
     return n;
   }, [visibleNames, visibleTableCount]);
-  const totalTableCount = schema.tables.length - derived.hiddenTables.size;
+  // Counted over live tables: `hiddenTables` also holds orphan entries kept for tables that are
+  // temporarily absent from the DBML (parse error, rename + undo).
+  const totalTableCount = schema.tables.reduce((n, t) => n + (derived.hiddenTables.has(t.name) ? 0 : 1), 0);
 
   return (
     <>
