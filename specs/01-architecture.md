@@ -83,7 +83,13 @@ type WebviewToHost =
 6. Host parsea `.dbml` → envía `schema:update`.
 7. Host lee `.dbml.layout.json` (crea vacío si no existe) → envía `layout:loaded`.
 8. Webview hace auto-layout dagre para tablas sin posición conocida, renderiza.
-9. Watchers escuchan cambios en ambos archivos → reenvían mensajes al webview.
+9. Watchers escuchan cambios en ambos archivos (change + create; el sidecar también delete) →
+   un único reload externo con debounce (150 ms) re-parsea el `.dbml` y, si el sidecar cambió,
+   postea **primero** `schema:update` y **después** `layout:external-change`. Nunca layout nuevo
+   contra schema viejo: en un cambio de rama el auto-layout inventaba posiciones para tablas que
+   sólo existían en la revisión anterior y el siguiente persist las escribía. Un sidecar borrado
+   recarga un layout vacío; un persist pendiente del host se descarta al recargar. Los nombres
+   de archivo se escapan como glob literal (`[`, `]`, `{`, `}`, `*`, `?` → clase de un carácter).
 10. Drag en webview → `layout:persist` debounced → host escribe sidecar.
 
 ## Dependencias externas

@@ -103,3 +103,48 @@ describe('sidecar watcher echo guard (F01)', () => {
     expect(h.since('layout:external-change')).toHaveLength(0);
   });
 });
+
+describe('external reloads (watchers)', () => {
+  const DBML_AC = `Table a {\n  id int\n}\n\nTable c {\n  id int\n}\n`;
+
+  it('posts the new schema before the new layout when both files change (branch switch)', async () => {
+    const h = await open();
+    h.mark();
+    writeFileSync(join(h.dir, 'd.dbml'), DBML_AC);
+    h.writeSidecar(sidecarText({ 'public.a': { x: 5, y: 5 }, 'public.c': { x: 900, y: 400 } }));
+    await fake.fireFsEvent('change', h.sidecar);
+    await fake.fireFsEvent('change', h.dbml);
+    await vi.waitFor(() => expect(h.since('layout:external-change')).toHaveLength(1));
+    await vi.waitFor(() => expect(h.since('schema:update')).toHaveLength(1));
+    const order = h.web.posted.filter((m) => m.type === 'schema:update' || m.type === 'layout:external-change').slice(-2).map((m) => m.type);
+    expect(order).toEqual(['schema:update', 'layout:external-change']);
+  });
+
+  it('reloads an empty layout when the sidecar is deleted', async () => {
+    const h = await open();
+    h.mark();
+    rmSync(join(h.dir, 'd.dbml.layout.json'));
+    await fake.fireFsEvent('delete', h.sidecar);
+    await vi.waitFor(() => expect(h.since('layout:external-change')).toHaveLength(1));
+    expect(tablesOf(h.since('layout:external-change')[0])).toEqual({});
+  });
+
+  it('refreshes the schema when the .dbml is replaced (create event)', async () => {
+    const h = await open();
+    h.mark();
+    writeFileSync(join(h.dir, 'd.dbml'), DBML_AC);
+    await fake.fireFsEvent('create', h.dbml);
+    await vi.waitFor(() => expect(h.since('schema:update')).toHaveLength(1));
+  });
+
+  it('drops a pending persist that an external change supersedes', async () => {
+    const h = await open();
+    const loaded = h.web.posted.find((m) => m.type === 'layout:loaded')!;
+    await h.web.receive({ type: 'layout:persist', payload: { ...(loaded.payload as Layout), tables: { 'public.a': { x: 100, y: 0 }, 'public.b': { x: 400, y: 0 } } } });
+    const external = sidecarText({ 'public.a': { x: 777, y: 0 }, 'public.b': { x: 400, y: 0 } });
+    h.writeSidecar(external);
+    await fake.fireFsEvent('change', h.sidecar);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(h.readSidecar()).toBe(external);
+  });
+});

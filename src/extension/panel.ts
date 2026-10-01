@@ -68,6 +68,7 @@ export class DiagramPanel {
   private pendingPersist: Layout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
   private schemaTimer: NodeJS.Timeout | null = null;
+  private sidecarEventPending = false;
   private gitStatusTimer: NodeJS.Timeout | null = null;
   /** Serialized form of the last `schema:update` posted — lets the watcher skip no-op reparses. */
   private lastPostedSchema: string | null = null;
@@ -412,14 +413,6 @@ export class DiagramPanel {
     if (opts.skipIfUnchanged && serialized === this.lastPostedSchema) return;
     this.lastPostedSchema = serialized;
     this.post({ type: 'schema:update', payload });
-  }
-
-  private scheduleSchemaRefresh(): void {
-    if (this.schemaTimer) clearTimeout(this.schemaTimer);
-    this.schemaTimer = setTimeout(() => {
-      this.schemaTimer = null;
-      void this.sendSchema({ skipIfUnchanged: true });
-    }, SCHEMA_DEBOUNCE_MS);
   }
 
   private scheduleGitStatus(): void {
@@ -833,29 +826,64 @@ export class DiagramPanel {
     const layoutName = this.shortName(layoutSidecar);
 
     const dbmlWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(parentUri, dbmlName),
+      new vscode.RelativePattern(parentUri, globLiteral(dbmlName)),
     );
-    dbmlWatcher.onDidChange((uri) => {
+    const onDbmlFs = (uri: vscode.Uri) => {
       if (uri.toString() !== this.dbmlUri.toString()) return;
-      this.scheduleSchemaRefresh();
-      this.scheduleGitStatus();
-    });
+      this.scheduleExternalReload(false);
+    };
+    // Create too: tools that save via temp file + rename only emit a create.
+    dbmlWatcher.onDidChange(onDbmlFs);
+    dbmlWatcher.onDidCreate(onDbmlFs);
 
     const layoutWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(parentUri, layoutName),
+      new vscode.RelativePattern(parentUri, globLiteral(layoutName)),
     );
-    const onLayoutFs = async (uri: vscode.Uri) => {
+    const onLayoutFs = (uri: vscode.Uri) => {
       if (uri.toString() !== layoutSidecar.toString()) return;
-      this.scheduleGitStatus(); // sidecar touched on disk → dirty/clean may have flipped
-      const text = await readSidecarText(this.dbmlUri);
-      if (text === null || text === this.diskSidecarText) return;
-      await this.sendLayout(true);
-      this.maybePostMerge(); // external pull/merge may have introduced conflicts
+      this.scheduleExternalReload(true);
     };
     layoutWatcher.onDidChange(onLayoutFs);
     layoutWatcher.onDidCreate(onLayoutFs);
+    layoutWatcher.onDidDelete(onLayoutFs);
 
     this.disposables.push(dbmlWatcher, layoutWatcher);
+  }
+
+  /**
+   * Both watchers funnel into ONE debounced reload so a branch switch / pull that rewrites the
+   * .dbml and the sidecar together is applied schema-first. Posting the new layout against the old
+   * schema let the webview auto-place tables that only exist in the previous revision, and the next
+   * edit wrote those phantom entries into the new branch's sidecar.
+   */
+  private scheduleExternalReload(sidecarTouched: boolean): void {
+    if (sidecarTouched) this.sidecarEventPending = true;
+    this.scheduleGitStatus();
+    if (this.schemaTimer) clearTimeout(this.schemaTimer);
+    this.schemaTimer = setTimeout(() => {
+      this.schemaTimer = null;
+      void this.runExternalReload();
+    }, SCHEMA_DEBOUNCE_MS);
+  }
+
+  private async runExternalReload(): Promise<void> {
+    const sidecarTouched = this.sidecarEventPending;
+    this.sidecarEventPending = false;
+    await this.sendSchema({ skipIfUnchanged: true });
+    if (!sidecarTouched) return;
+    const text = await readSidecarText(this.dbmlUri);
+    if (text === this.diskSidecarText) return; // our own write's echo, or no net change
+    // The webview is about to show the external layout; a queued write of the old one would
+    // overwrite what just arrived on disk.
+    this.cancelPendingPersist();
+    await this.sendLayout(true);
+    this.maybePostMerge(); // external pull/merge may have introduced conflicts
+  }
+
+  private cancelPendingPersist(): void {
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = null;
+    this.pendingPersist = null;
   }
 
   private currentThemeKind(): 'light' | 'dark' {
@@ -914,6 +942,11 @@ function generateNonce(): string {
   let s = '';
   for (let i = 0; i < 32; i++) s += chars.charAt(Math.floor(Math.random() * chars.length));
   return s;
+}
+
+/** VS Code globs have no escape character; a one-character class matches a metacharacter literally. */
+function globLiteral(name: string): string {
+  return name.replace(/[[\]{}*?]/g, (c) => `[${c}]`);
 }
 
 function splitQualified(qn: string): [string, string] {
