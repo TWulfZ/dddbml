@@ -8,8 +8,10 @@ grafos: es un ordenador **enfocado en bases de datos** — los satélites orbita
 puente (junction M:N) caen entre sus dos padres, los hubs anclan clústeres radiales, y los
 TableGroups (bounded contexts) se respetan como contenedores de primer nivel.
 
-Expone tres modos: `all` (reordenar todo), `new` (colocar solo tablas sin posición guardada) y
-`selection` (mover solo lo seleccionado; el resto son obstáculos fijos).
+Expone dos modos al usuario: `all` (reordenar todo) y `selection` (mover solo lo seleccionado; el
+resto son obstáculos fijos). El modo `new` (colocar solo tablas sin posición) queda **interno**: lo
+usa la colocación automática de `app.tsx`; se quitó del QuickPick y del ActionsPanel porque, con
+la colocación automática inmediata, nunca le quedaba nada que colocar (decisión 2026-10-01, F19b).
 
 ## Contexto / Problema
 

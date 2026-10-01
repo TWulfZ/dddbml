@@ -272,7 +272,9 @@ en un stack trace en el Output del host.
 
 ## Preguntas abiertas (Open Questions)
 
-- [ ] **Commit del drag por frame vs. en `pointerup`.** Este spec dice "mutación DOM directa
+- [x] **Commit del drag por frame vs. en `pointerup`.** **Decisión (2026-10-01): (b)** — commit por
+  rAF, spatial index actualizado incrementalmente (`move`) y re-ruteo sólo de las refs con un
+  extremo en el conjunto arrastrado; las aristas siguen a la tabla en vivo. Contexto original: Este spec dice "mutación DOM directa
   durante drag, commit al store al `pointerup`", pero `dragController` hace `setPositionsBatch`
   en cada `pointermove` (así las aristas siguen a la tabla en vivo). Cada commit rehace
   `derived`, el spatial index, `worldBbox` y **rutea todas las refs** (`routeRefs`). Opciones:

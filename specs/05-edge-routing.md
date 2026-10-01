@@ -134,7 +134,11 @@ segmentos completos.
   en el sidecar (cambio de schema del spec 03, aditivo) y borrado por toda edición de usuario;
   (b) heurística sin cambio de schema: como el flip manual es sólo L/R (decisión 4), tratar
   `top`/`bottom` como automáticos — no distingue waypoints de A* de waypoints del usuario;
-  (c) aceptar el comportamiento actual. Pendiente de decidir con el usuario.
+  (c) aceptar el comportamiento actual. **Decisión (2026-10-01): (a).** `EdgeLayout.auto?: true`
+  se persiste en el sidecar (aditivo, spec 03) en toda salida de A\* / auto-arrange; cualquier
+  edición del usuario sobre esa arista (waypoints, flip de lado, reset, color no cuenta) lo borra.
+  `hasManualShape` ignora las aristas `auto`, y mover cualquiera de sus extremos descarta su forma
+  `auto` (waypoints y lados) en vez de dejarla apuntando a la geometría vieja.
 
 - **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
   forma en `WaypointCommand`. "Reset line" emite **un solo** `ArrangeCommand` de sólo
