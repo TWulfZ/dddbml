@@ -199,6 +199,11 @@ Matriz de casos:
 | Group existe en DBML | Sin entrada | Defaults: `collapsed: false`, `hidden: false`, color hash. |
 | Group no existe en DBML | Entrada huérfana | Igual que tabla: persiste, `Prune orphans` limpia. |
 
+`Prune orphans` se **niega** (aviso) mientras el `.dbml` no parsea en su última lectura o el
+layout aún no se cargó: contra un schema vacío o viejo toda entrada parece huérfana y se
+borraba el sidecar entero (posiciones y colores). Si hay algo que podar pide confirmación
+modal con los conteos (no tiene undo); sin huérfanas sólo informa y no escribe.
+
 ## Migración de versiones
 
 Cuando `version` cambie:

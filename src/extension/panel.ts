@@ -51,6 +51,10 @@ export class DiagramPanel {
   private readonly webviewPanel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
+  /** Whether the latest read of the .dbml parsed; lastValidSchema may be stale (or the empty
+   *  sentinel) when it did not. */
+  private lastParseOk = false;
+  private layoutLoaded = false;
   private currentLayout: Layout = emptyLayout();
   /** Exact sidecar text last seen on disk — adopted by a read or produced by our own write (null =
    *  no file). A watcher event whose file still matches it is an echo or a no-op; anything else is
@@ -156,22 +160,48 @@ export class DiagramPanel {
   }
 
   public async pruneOrphans(): Promise<void> {
-    const liveTables = new Set(this.lastValidSchema.tables.map((t) => t.name));
-    const liveGroups = new Set(this.lastValidSchema.groups.map((g) => g.name));
-    const nextTables: Record<string, { x: number; y: number }> = {};
-    for (const [k, v] of Object.entries(this.currentLayout.tables)) {
-      if (liveTables.has(k)) nextTables[k] = v;
+    // "Orphan" is judged against the schema: with no current parse (or no layout loaded yet) every
+    // entry looks orphaned and the whole sidecar — positions and colours — would be wiped.
+    if (!this.layoutLoaded || !this.lastParseOk) {
+      void vscode.window.showWarningMessage('dddbml: fix the .dbml so it parses before pruning orphan layout entries.');
+      return;
     }
-    const nextGroups: typeof this.currentLayout.groups = {};
-    for (const [k, v] of Object.entries(this.currentLayout.groups)) {
-      if (liveGroups.has(k)) nextGroups[k] = v;
+    const preview = this.computePrune();
+    if (preview.removedTables === 0 && preview.removedGroups === 0) {
+      void vscode.window.showInformationMessage('dddbml: no orphan layout entries to prune.');
+      return;
     }
-    const removedTables = Object.keys(this.currentLayout.tables).length - Object.keys(nextTables).length;
-    const removedGroups = Object.keys(this.currentLayout.groups).length - Object.keys(nextGroups).length;
+    const answer = await vscode.window.showWarningMessage(
+      `dddbml: remove ${preview.removedTables} orphan table and ${preview.removedGroups} orphan group entr(ies) from the layout file? This cannot be undone.`,
+      { modal: true },
+      'Prune',
+    );
+    if (answer !== 'Prune') return;
+    // Recomputed: the layout may have changed while the modal was open.
+    const { tables: nextTables, groups: nextGroups, removedTables, removedGroups } = this.computePrune();
     this.currentLayout = { ...this.currentLayout, tables: nextTables, groups: nextGroups };
     await this.flushPersist(this.currentLayout);
     this.post({ type: 'layout:loaded', payload: this.currentLayout });
     void vscode.window.showInformationMessage(`dddbml: pruned ${removedTables} orphan table(s), ${removedGroups} orphan group(s).`);
+  }
+
+  private computePrune(): { tables: Layout['tables']; groups: Layout['groups']; removedTables: number; removedGroups: number } {
+    const liveTables = new Set(this.lastValidSchema.tables.map((t) => t.name));
+    const liveGroups = new Set(this.lastValidSchema.groups.map((g) => g.name));
+    const tables: Layout['tables'] = {};
+    for (const [k, v] of Object.entries(this.currentLayout.tables)) {
+      if (liveTables.has(k)) tables[k] = v;
+    }
+    const groups: Layout['groups'] = {};
+    for (const [k, v] of Object.entries(this.currentLayout.groups)) {
+      if (liveGroups.has(k)) groups[k] = v;
+    }
+    return {
+      tables,
+      groups,
+      removedTables: Object.keys(this.currentLayout.tables).length - Object.keys(tables).length,
+      removedGroups: Object.keys(this.currentLayout.groups).length - Object.keys(groups).length,
+    };
   }
 
   public dispose(): void {
@@ -400,13 +430,16 @@ export class DiagramPanel {
       const source = new TextDecoder('utf-8').decode(bytes);
       const result = parseDbml(source);
       if (result.error) {
+        this.lastParseOk = false;
         payload = { schema: this.lastValidSchema, parseError: result.error };
       } else {
         this.lastValidSchema = result.schema;
+        this.lastParseOk = true;
         payload = { schema: result.schema, parseError: null };
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      this.lastParseOk = false;
       payload = { schema: this.lastValidSchema, parseError: { message } };
     }
     const serialized = JSON.stringify(payload);
@@ -425,6 +458,7 @@ export class DiagramPanel {
 
   private async sendLayout(isExternal = false): Promise<void> {
     this.currentLayout = await this.loadFullLayout();
+    this.layoutLoaded = true;
     this.post({
       type: isExternal ? 'layout:external-change' : 'layout:loaded',
       payload: this.currentLayout,
@@ -778,7 +812,22 @@ export class DiagramPanel {
       void vscode.window.showWarningMessage(`dddbml: the diagram at HEAD does not parse — ${parsedBase.error.message}`);
       return;
     }
-    const diff = diffSchemas(parsedBase.schema, this.lastValidSchema);
+    // Re-read rather than trust lastValidSchema: it is stale (or the empty sentinel) while the file
+    // is broken, and diffing against it shows every table as removed.
+    let headSource: string;
+    try {
+      headSource = new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(this.dbmlUri));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      void vscode.window.showWarningMessage(`dddbml: could not read the working diagram — ${message}`);
+      return;
+    }
+    const parsedHead = parseDbml(headSource);
+    if (parsedHead.error) {
+      void vscode.window.showWarningMessage(`dddbml: the working diagram does not parse — ${parsedHead.error.message}`);
+      return;
+    }
+    const diff = diffSchemas(parsedBase.schema, parsedHead.schema);
     if (diff.tables.length === 0 && diff.refs.length === 0) {
       void vscode.window.showInformationMessage('dddbml: no schema changes vs HEAD.');
       return;

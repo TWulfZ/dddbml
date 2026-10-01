@@ -99,7 +99,10 @@ real. "Salir" pide al host re-enviar el estado de trabajo.
 ### Diff (lo más pesado) — framing Previous/Current
 "Diff against HEAD" compara el working tree contra HEAD. El host parsea HEAD
 (`git show HEAD:<dbml>` → `parseDbml`) y corre `diffSchemas(base, head)`
-(`schemaDiff.ts`, puro; `base` = HEAD/Previous, `head` = working/Current). El webview
+(`schemaDiff.ts`, puro; `base` = HEAD/Previous, `head` = working/Current). `head` se
+re-lee y re-parsea del disco en ese momento (no el `lastValidSchema` cacheado); si el
+working tree no parsea, el host avisa y no entra en diff (antes mostraba todo como
+removido). El webview
 mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render paralelo:
 - **Focus/blur:** las tablas **no** incluidas en el diff se atenúan + desenfocan
   (`is-diff-dimmed`); toggle **"Blur background tables"** (on por defecto, store

@@ -187,4 +187,46 @@ describe('git panel ops', () => {
     expect(h.since('merge:begin')).toHaveLength(1);
     expect(fake.messages.filter((m) => m.level === 'error')).toEqual([]);
   });
+
+  it('refuses View diff while the working .dbml does not parse', async () => {
+    const h = await open();
+    const git = gitIn(h.dir);
+    git('add', '-A'); git('commit', '-q', '-m', 'v1');
+    writeFileSync(join(h.dir, 'd.dbml'), 'Table a {\n  id int\n'); // unterminated
+    // No watcher event yet: the cached schema is stale but valid; the broken file must still win.
+    h.mark();
+    await h.web.receive({ type: 'git:diff:enter' });
+    await vi.waitFor(() => expect(fake.messages.some((m) => m.level === 'warning' && m.text.includes('does not parse'))).toBe(true));
+    expect(h.since('git:diff:enter')).toHaveLength(0);
+  });
+
+  it('refuses View diff when the .dbml never parsed since the panel opened', async () => {
+    const h = await open({ dbml: 'Table a {\n  id int\n' });
+    const git = gitIn(h.dir);
+    writeFileSync(join(h.dir, 'd.dbml'), DBML);
+    git('add', '-A'); git('commit', '-q', '-m', 'v1');
+    writeFileSync(join(h.dir, 'd.dbml'), 'Table a {\n  id int\n');
+    h.mark();
+    await h.web.receive({ type: 'git:diff:enter' });
+    await vi.waitFor(() => expect(fake.messages.some((m) => m.level === 'warning')).toBe(true));
+    expect(h.since('git:diff:enter')).toHaveLength(0);
+  });
+});
+
+describe('Prune orphan layout entries (F23)', () => {
+  it('refuses while the .dbml has not parsed, instead of pruning every entry', async () => {
+    const h = await open({ dbml: 'Table a {\n  id int\n' });
+    const before = h.readSidecar();
+    fake.nextChoice = 'Prune';
+    await h.panel.pruneOrphans();
+    expect(h.readSidecar()).toBe(before);
+    expect(fake.messages.some((m) => m.level === 'warning')).toBe(true);
+  });
+
+  it('prunes only entries whose table is gone once the schema parses', async () => {
+    const h = await open({ sidecar: sidecarText({ 'public.a': { x: 0, y: 0 }, 'public.b': { x: 400, y: 0 }, 'public.gone': { x: 9, y: 9 } }) });
+    fake.nextChoice = 'Prune';
+    await h.panel.pruneOrphans();
+    expect(JSON.parse(h.readSidecar()).tables).toEqual({ 'public.a': { x: 0, y: 0 }, 'public.b': { x: 400, y: 0 } });
+  });
 });
