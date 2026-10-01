@@ -135,6 +135,23 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
     }
   }
 
+  // Aliases are global in DBML, so a ref in one schema may name an aliased table mapped later.
+  const realTables = new Set<QualifiedName>();
+  const aliasToTable = new Map<string, QualifiedName>();
+  for (const s of db.schemas) {
+    const schemaName = s.name && s.name.length > 0 ? s.name : 'public';
+    for (const t of s.tables ?? []) {
+      const qn = qualify(schemaName, unquote(t.name));
+      realTables.add(qn);
+      if (t.alias) aliasToTable.set(unquote(t.alias), qn);
+    }
+  }
+  const resolveEndpoint = (schemaName: string | null, tableName: string, defaultSchemaName: string): QualifiedName => {
+    const qn = qualify(schemaName ?? defaultSchemaName, tableName);
+    if (schemaName != null || realTables.has(qn)) return qn;
+    return aliasToTable.get(unquote(tableName.trim())) ?? qn;
+  };
+
   for (const s of db.schemas) {
     const schemaName = s.name && s.name.length > 0 ? s.name : 'public';
 
@@ -152,7 +169,7 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
     }
 
     for (const r of s.refs ?? []) {
-      const mapped = mapRef(r, schemaName);
+      const mapped = mapRef(r, schemaName, resolveEndpoint);
       if (mapped) refs.push(mapped);
     }
   }
@@ -211,17 +228,19 @@ function typeName(t: unknown): string {
   return 'unknown';
 }
 
-function mapRef(r: ExportedRef, defaultSchemaName: string): Ref | null {
+type EndpointResolver = (schemaName: string | null, tableName: string, defaultSchemaName: string) => QualifiedName;
+
+function mapRef(r: ExportedRef, defaultSchemaName: string, resolveTable: EndpointResolver): Ref | null {
   if (!r.endpoints || r.endpoints.length !== 2) return null;
   const [a, b] = r.endpoints;
   if (!a || !b) return null;
   const source = {
-    table: qualify(a.schemaName ?? defaultSchemaName, a.tableName),
+    table: resolveTable(a.schemaName, a.tableName, defaultSchemaName),
     columns: a.fieldNames.map(unquote),
     relation: normalizeRelation(a.relation),
   };
   const target = {
-    table: qualify(b.schemaName ?? defaultSchemaName, b.tableName),
+    table: resolveTable(b.schemaName, b.tableName, defaultSchemaName),
     columns: b.fieldNames.map(unquote),
     relation: normalizeRelation(b.relation),
   };

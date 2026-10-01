@@ -32,6 +32,39 @@ describe('parseDbml — TableGroup membership', () => {
   });
 });
 
+describe('parseDbml — refs written against a table alias', () => {
+  const endpoints = (src: string) =>
+    parse(src).refs.map((r) => [r.source.table, r.target.table].sort().join(' '));
+
+  it('resolves a standalone ref through the alias', () => {
+    expect(endpoints(`
+      Table users as U { id int [pk] }
+      Table posts { id int [pk]
+        user_id int }
+      Ref: posts.user_id > U.id
+    `)).toEqual(['public.posts public.users']);
+  });
+
+  it('resolves an inline ref through the alias', () => {
+    expect(endpoints(`
+      Table users as U { id int [pk] }
+      Table posts { id int [pk]
+        user_id int [ref: > U.id] }
+    `)).toEqual(['public.posts public.users']);
+  });
+
+  it("resolves an alias to its own schema, not the ref's", () => {
+    const s = parse(`
+      Table core.users as U { id int [pk] }
+      Table posts { id int [pk]
+        user_id int }
+      Ref: posts.user_id > U.id
+    `);
+    expect(s.refs.map((r) => r.target.table)).toEqual(['core.users']);
+    expect(s.refs[0]!.id).toBe('core.users(id)->public.posts(user_id)');
+  });
+});
+
 describe('parseDbml — index-level primary keys', () => {
   it('marks every member of a composite pk index as pk', () => {
     const s = parse(`

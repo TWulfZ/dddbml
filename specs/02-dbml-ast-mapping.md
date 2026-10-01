@@ -58,6 +58,8 @@ interface Schema {
 
 DBML permite refs con 2 endpoints. Cada endpoint: `{ schemaName, tableName, fieldNames[], relation }`. Mapeamos a `Ref` con `source` y `target` (orden determinado por orden en DBML — no intentamos inferir dirección por cardinalidad).
 
+**Aliases** (`Table core.users as U`): @dbml/core deja `tableName: 'U'` en el endpoint. Si el endpoint no trae schema y `<schemaDefault>.<tableName>` no es una tabla real, se resuelve por el mapa global de aliases al nombre calificado real de la tabla (`core.users`, no `public.users`). La resolución ocurre antes de calcular el ID estable, así edges y `edgeLayouts` usan el nombre real.
+
 **Relation normalization**:
 - `*`, `many`, `>` → `'*'`
 - resto (incluyendo `1`, `-`, `<`) → `'1'`
