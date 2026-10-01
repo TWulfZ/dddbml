@@ -15,11 +15,9 @@ import { AppMenu } from './render/appMenu';
 import { schedulePersist } from './persistence';
 import { isGestureActive } from './drag/dragController';
 import { panBy, zoomAt } from './render/viewport';
-import { SpatialIndex, type Bbox } from './render/spatialIndex';
-import { deriveSceneGeometry, sceneBounds } from './render/sceneGeometry';
+import { SceneCache, CONTAINER_PREFIX, containerNodeId as containerId, groupNodeId as groupId } from './render/sceneCache';
 import { lodForZoom } from './render/lod';
-import { useVisibleEdgeIds, useVisibleNames, type EdgeBox } from './render/useVisibleNames';
-import { edgeKeyedRefs } from './render/edgeKey';
+import { useVisibleEdgeIds, useVisibleNames } from './render/useVisibleNames';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
@@ -36,11 +34,6 @@ interface AppProps {
   post: (msg: WebviewToHost) => void;
 }
 
-const GROUP_PREFIX = '__group__:';
-const groupId = (name: string) => GROUP_PREFIX + name;
-/** Expanded group boxes live in the spatial index too (culled like tables) under this prefix. */
-const CONTAINER_PREFIX = '__container__:';
-const containerId = (name: string) => CONTAINER_PREFIX + name;
 /** Synthetic index entries (collapsed groups, containers) — never selectable, never counted. */
 const isSynthetic = (name: string) => name.startsWith('__');
 
@@ -147,45 +140,16 @@ export function App(_props: AppProps) {
     [schema, showOnlyPkFk, fkColumnsByTable, diffByTable, diffBaseByTable, columnDiffByTable],
   );
 
-  const derived = useMemo(() => {
-    const { hiddenTables, collapsedTables, collapsedNodes, containers, exportContainers } =
-      deriveSceneGeometry(schema, positions, groupState, individuallyHidden, tablesByName, rowGeometry.count);
-
-    const mapEndpoint = (table: QualifiedName): QualifiedName | null => {
-      if (hiddenTables.has(table)) return null;
-      if (collapsedTables.has(table)) {
-        const tbl = tablesByName.get(table);
-        if (tbl?.groupName) return groupId(tbl.groupName);
-        return null;
-      }
-      return table;
-    };
-
-    // refKeyByStableId lets the diff overlay tint a newly-added ref by its stable id (spec 16).
-    const { refs: effectiveRefs, keyByStableId: refKeyByStableId } = edgeKeyedRefs(schema.refs, mapEndpoint);
-
-    return { hiddenTables, collapsedTables, collapsedNodes, containers, exportContainers, effectiveRefs, refKeyByStableId };
-  }, [schema, tablesByName, positions, groupState, individuallyHidden, density, rowGeometry]);
+  // Scene geometry, spatial index, edge boxes and world bbox. A drag frame's positions-only delta is
+  // applied incrementally (index moves, edge re-boxing) instead of rebuilding over every table (spec 04).
+  const [sceneCache] = useState(() => new SceneCache());
+  const scene = useMemo(
+    () => sceneCache.update({ schema, positions, groupState, individuallyHidden, tablesByName, rows: rowGeometry, edgeLayouts, density }),
+    [sceneCache, schema, positions, groupState, individuallyHidden, tablesByName, rowGeometry, edgeLayouts, density],
+  );
+  const { derived, spatialIndex, edgeBoxes, worldBbox } = scene;
 
   const exportDerived = useMemo(() => ({ ...derived, containers: derived.exportContainers }), [derived]);
-
-  const spatialIndex = useMemo(() => {
-    const idx = new SpatialIndex();
-    for (const t of schema.tables) {
-      if (derived.hiddenTables.has(t.name) || derived.collapsedTables.has(t.name)) continue;
-      const pos = positions.get(t.name);
-      if (!pos) continue;
-      const size = estimateSize(rowGeometry.count(t.name));
-      idx.insert(t.name, { x: pos.x, y: pos.y, w: size.width, h: size.height });
-    }
-    for (const g of derived.collapsedNodes) {
-      idx.insert(groupId(g.name), { x: g.x, y: g.y, w: g.w, h: g.h });
-    }
-    for (const c of derived.containers) {
-      idx.insert(containerId(c.name), { x: c.x, y: c.y, w: c.w, h: c.h });
-    }
-    return idx;
-  }, [schema, positions, derived, density, rowGeometry]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
@@ -438,64 +402,8 @@ export function App(_props: AppProps) {
   // Culled set; same Set instance while membership is unchanged (see useVisibleNames).
   const visibleNames = useVisibleNames(spatialIndex, viewportRect, ready);
 
-  // Edge culling boxes: endpoint node rects ∪ waypoints. Endpoint visibility alone dropped edges
-  // crossing the screen between two off-screen tables (spec 04 "Edge culling").
-  const edgeBoxes = useMemo(() => {
-    const groupRects = new Map<string, Bbox>();
-    for (const g of derived.collapsedNodes) groupRects.set(groupId(g.name), g);
-    const rectOf = (name: QualifiedName): Bbox | null => {
-      const g = groupRects.get(name);
-      if (g) return g;
-      const p = positions.get(name);
-      if (!p) return null;
-      const size = estimateSize(tablesByName.get(name)?.columns.length ?? 0);
-      return { x: p.x, y: p.y, w: size.width, h: size.height };
-    };
-    const out: EdgeBox[] = [];
-    for (const r of derived.effectiveRefs) {
-      const a = rectOf(r.source.table);
-      const b = rectOf(r.target.table);
-      if (!a || !b) continue;
-      let minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
-      let maxX = Math.max(a.x + a.w, b.x + b.w), maxY = Math.max(a.y + a.h, b.y + b.h);
-      for (const wp of edgeLayouts.get(r.id)?.waypoints ?? []) {
-        if (wp.x < minX) minX = wp.x;
-        if (wp.y < minY) minY = wp.y;
-        if (wp.x > maxX) maxX = wp.x;
-        if (wp.y > maxY) maxY = wp.y;
-      }
-      out.push({ id: r.id, bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY } });
-    }
-    return out;
-  }, [derived, positions, tablesByName, edgeLayouts, density]);
-
   // EdgeLayer routes ALL refs once (route-all-then-cull, spec 05 §8) and filters routes by this set.
   const visibleRefIds = useVisibleEdgeIds(edgeBoxes, viewportRect, ready);
-
-  const positionsEffective = useMemo(() => {
-    const m = new Map<QualifiedName, { x: number; y: number }>();
-    for (const [k, v] of positions) m.set(k, v);
-    for (const g of derived.collapsedNodes) m.set(groupId(g.name), { x: g.x, y: g.y });
-    return m;
-  }, [positions, derived.collapsedNodes]);
-
-  // World bounding box covering every rendered element — used to size the SVG edge layer
-  // so paths are inside its coordinate viewport (more robust than overflow:visible on 0x0 parent).
-  // Edge boxes are included because waypoint runs can be slid arbitrarily far past the outermost
-  // table; without them the SVG would clip those runs and their drag handles.
-  const worldBbox = useMemo(() => {
-    const b = sceneBounds(schema, positions, derived, rowGeometry.count);
-    if (!b) return { x: 0, y: 0, w: 800, h: 600 };
-    let minX = b.x, minY = b.y, maxX = b.x + b.w, maxY = b.y + b.h;
-    for (const { bbox: e } of edgeBoxes) {
-      if (e.x < minX) minX = e.x;
-      if (e.y < minY) minY = e.y;
-      if (e.x + e.w > maxX) maxX = e.x + e.w;
-      if (e.y + e.h > maxY) maxY = e.y + e.h;
-    }
-    const P = 400;
-    return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
-  }, [schema, positions, derived, edgeBoxes, rowGeometry]);
 
   // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
   const mergeTableKeys = new Set<QualifiedName>();
@@ -521,8 +429,10 @@ export function App(_props: AppProps) {
     [diffActive, diffByTable, diffGhosts, positions, tablesByName, derived],
   );
 
-  const renderedTables = schema.tables.filter(
-    (t) => !derived.hiddenTables.has(t.name) && !derived.collapsedTables.has(t.name),
+  const { hiddenTables, collapsedTables } = derived;
+  const renderedTables = useMemo(
+    () => schema.tables.filter((t) => !hiddenTables.has(t.name) && !collapsedTables.has(t.name)),
+    [schema, hiddenTables, collapsedTables],
   );
 
   const visibleTableCount = renderedTables.length + derived.collapsedNodes.length;
@@ -562,7 +472,7 @@ export function App(_props: AppProps) {
               refs={derived.effectiveRefs}
               visibleRefIds={visibleRefIds}
               lod={lod}
-              positions={positionsEffective}
+              positions={positions}
               rows={rowGeometry}
               groupSizes={derived.collapsedNodes}
               worldBbox={worldBbox}
