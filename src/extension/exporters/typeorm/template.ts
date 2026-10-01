@@ -31,13 +31,6 @@ export function emitEntity(
   lines.push(`@Entity(${entityArgs})`);
   lines.push(`export class ${className} {`);
 
-  const fkColumnsByCol = new Map<string, RelationSide>();
-  for (const rel of relations) {
-    for (const col of rel.fkColumns) {
-      if (rel.isOwning) fkColumnsByCol.set(col, rel);
-    }
-  }
-
   const columnBlocks: string[] = [];
   const seenPk = new Set<string>();
   for (const col of table.columns) {

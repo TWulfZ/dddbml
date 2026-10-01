@@ -9,6 +9,27 @@ const fk = (id: string, column: string): Ref => ({
   target: { table: 'users', columns: ['id'], relation: '1' },
 });
 
+describe('relationsByOwner — relation properties never reuse a column property', () => {
+  it('suffixes the relation when a column is named after the target entity', () => {
+    const ref: Ref = {
+      id: 'r1',
+      source: { table: 'sections', columns: ['category'], relation: '*' },
+      target: { table: 'categories', columns: ['id'], relation: '1' },
+    };
+    const pairs = buildRelationPairs([ref], {
+      className: (t) => toClassName(t, { singularize: true }),
+      singularize: true,
+      tables: new Map(),
+    });
+    const columns = new Map([['sections', ['id', 'category']], ['categories', ['id', 'name']]]);
+    const { byOwner } = relationsByOwner(pairs, new Set(['sections', 'categories']), columns);
+
+    const section = byOwner.get('sections')!;
+    expect(section.map((s) => s.propertyName)).toEqual(['category_2']);
+    expect(byOwner.get('categories')![0]!.inversePropertyName).toBe('category_2');
+  });
+});
+
 describe('relationsByOwner — collision suffix reaches the sibling inverse callback', () => {
   it('points each ManyToOne at the OneToMany name that was actually emitted', () => {
     const pairs = buildRelationPairs([fk('r1', 'created_by'), fk('r2', 'updated_by')], {

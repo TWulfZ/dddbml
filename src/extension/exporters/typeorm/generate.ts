@@ -45,7 +45,8 @@ export function generateTypeOrm(input: ExportInput): ExportResult {
     singularize: opts.singularize,
     tables: tablesByName,
   });
-  const { byOwner, orphanedRefIds } = relationsByOwner(pairs, liveTables);
+  const columnNames = new Map(input.schema.tables.map((t) => [t.name, t.columns.map((c) => c.name)]));
+  const { byOwner, orphanedRefIds } = relationsByOwner(pairs, liveTables, columnNames);
 
   if (orphanedRefIds.size > 0) {
     for (const id of orphanedRefIds) {

@@ -215,7 +215,7 @@ DBML `Ref.source.relation` y `Ref.target.relation` ∈ `{ '1', '*' }`. Matriz:
 **Property name**:
 - En el lado `*` (que apunta a `1` o `*`): `camelCase(otherTableName)` o pluralizado si toggle. Default singular para `ManyToOne`, plural para `OneToMany`/`ManyToMany`.
 - En el lado `1` (que apunta a `*`): plural.
-- Colisión con otra propiedad de la misma clase → sufija `_<n>`.
+- Colisión con otra propiedad de la misma clase → sufija `_<n>`. Las columnas cuentan como propiedades ya tomadas y conservan su nombre (TypeORM deriva el nombre de columna de la key), así que `category int [ref: > categories.id]` emite `category` (columna) + `category_2` (relación).
 
 **Columnas referenciadas**: cada entrada de `@JoinColumn` lleva `referencedColumnName` (la columna del otro lado, en el mismo orden). Sólo se omite cuando hay una única columna FK y apunta a la PK de una sola columna de la tabla referenciada, que es lo que TypeORM asume por defecto. **Composite FKs**: si `columns.length > 1`, emite `@JoinColumn([{ name, referencedColumnName }, ...])` — sin `referencedColumnName` TypeORM ataría todas las entradas a la primera PK. Warning si el dialect no soporta composite (postgres sí).
 

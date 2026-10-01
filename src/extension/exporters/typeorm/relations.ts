@@ -188,6 +188,7 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): Re
 export function relationsByOwner(
   pairs: ReadonlyArray<RelationPair>,
   liveTables: Set<QualifiedName>,
+  columnNamesByTable: ReadonlyMap<QualifiedName, ReadonlyArray<string>> = new Map(),
 ): { byOwner: Map<QualifiedName, RelationSide[]>; orphanedRefIds: Set<string> } {
   const byOwner = new Map<QualifiedName, RelationSide[]>();
   const orphanedRefIds = new Set<string>();
@@ -207,7 +208,8 @@ export function relationsByOwner(
       return;
     }
     let used = usedByOwner.get(side.ownerTable);
-    if (!used) { used = new Set(); usedByOwner.set(side.ownerTable, used); }
+    // Column properties keep their names: TypeORM derives the DB column from the property key.
+    if (!used) { used = new Set(columnNamesByTable.get(side.ownerTable)); usedByOwner.set(side.ownerTable, used); }
     let candidate = side.propertyName;
     let i = 2;
     while (used.has(candidate)) candidate = `${side.propertyName}_${i++}`;
