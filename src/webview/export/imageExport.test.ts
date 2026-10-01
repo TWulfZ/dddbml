@@ -80,6 +80,13 @@ describe('buildExportModel — scope', () => {
     expect(m.bounds.x).toBeLessThan(0);
     expect(m.bounds.w).toBeGreaterThan(600);
   });
+
+  it('all-bounds enclose an edge bent outside the table hull', () => {
+    const bent = source();
+    bent.edgeLayouts = new Map([[ref.id, { waypoints: [{ x: 300, y: -300 }] }]]);
+    const m = buildExportModel(bent, { scope: 'all', background: true, filename: 'd' })!;
+    expect(m.bounds.y).toBeLessThan(-300);
+  });
 });
 
 describe('renderSvg', () => {
@@ -96,6 +103,18 @@ describe('renderSvg', () => {
     expect(svg).toContain('>a<'); // table name rendered
     expect(width).toBe(m.bounds.w);
     expect(height).toBe(m.bounds.h);
+  });
+
+  it('truncating a label never splits a surrogate pair (PNG/clipboard encode the SVG)', () => {
+    const emoji = source();
+    emoji.schema = {
+      ...schema,
+      tables: schema.tables.map((t) =>
+        t.name === 'public.a' ? { ...t, columns: [{ name: 'abcdefghijklmnop😀xyz', type: 'int' }] } : t,
+      ),
+    };
+    const { svg } = renderSvg(buildExportModel(emoji, { scope: 'all', background: true, filename: 'd' })!, theme, stub);
+    expect(() => encodeURIComponent(svg)).not.toThrow();
   });
 
   it('omits the background rect when background is off', () => {

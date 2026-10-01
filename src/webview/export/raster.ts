@@ -27,6 +27,11 @@ export function fitScale(width: number, height: number, desired: number): { scal
   return { scale: Math.max(0.05, max), clamped: true };
 }
 
+/** Safety net: any lone UTF-16 surrogate would make `encodeURIComponent` throw 'URI malformed'. */
+function replaceLoneSurrogates(s: string): string {
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -42,20 +47,20 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-/** Rasterize `svg` (with intrinsic `width`/`height`) to a PNG blob at `scale` (clamped). */
+/** Rasterize `svg` (with intrinsic `width`/`height`) to a PNG blob at `scale` (clamped to `scale` out). */
 export async function svgToPng(
   svg: string,
   width: number,
   height: number,
   scale: number,
-): Promise<{ blob: Blob; clamped: boolean }> {
+): Promise<{ blob: Blob; clamped: boolean; scale: number }> {
   const { scale: s, clamped } = fitScale(width, height, scale);
   // Ensure webfonts are ready so <text> rasterizes with the intended glyphs, not fallbacks.
   if (document.fonts?.ready) {
     try { await document.fonts.ready; } catch { /* non-fatal */ }
   }
   // data: URL (not blob:) so the webview CSP `img-src … data:` permits the load.
-  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(replaceLoneSurrogates(svg))}`;
   const img = await loadImage(url);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(width * s));
@@ -64,7 +69,7 @@ export async function svgToPng(
   if (!ctx) throw new Error('could not acquire a 2D canvas context');
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const blob = await canvasToBlob(canvas);
-  return { blob, clamped };
+  return { blob, clamped, scale: s };
 }
 
 /** Base64 (no data-URL prefix) of a blob — for sending image bytes to the host over postMessage. */

@@ -65,6 +65,9 @@ interface ExportEdge {
   endMarker: string;
   source: { x: number; y: number };
   target: { x: number; y: number };
+  /** Every route corner (segment endpoints). Bends can leave the table hull, so bounds need them;
+   *  the rounded fillets stay inside the corners' hull. */
+  corners: Array<{ x: number; y: number }>;
 }
 
 export interface ExportModel {
@@ -216,6 +219,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
       endMarker: ref.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)',
       source: route.source,
       target: route.target,
+      corners: route.segments.flatMap((sg) => [{ x: sg.x1, y: sg.y1 }, { x: sg.x2, y: sg.y2 }]),
     });
   }
 
@@ -234,7 +238,11 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     for (const t of tables) grow(t.x, t.y, t.w, t.h);
     for (const c of collapsed) grow(c.x, c.y, c.w, c.h);
     for (const c of containers) grow(c.x, c.y, c.w, c.h);
-    for (const e of edges) { grow(e.source.x, e.source.y); grow(e.target.x, e.target.y); }
+    for (const e of edges) {
+      grow(e.source.x, e.source.y);
+      grow(e.target.x, e.target.y);
+      for (const c of e.corners) grow(c.x, c.y);
+    }
     if (!Number.isFinite(minX)) return null; // nothing to export
     bounds = {
       x: Math.round(minX - PADDING),
@@ -398,7 +406,12 @@ function truncate(text: string, maxW: number, fontPx: number): string {
   const max = Math.floor(maxW / charW);
   if (text.length <= max) return text;
   if (max <= 1) return '…';
-  return text.slice(0, max - 1) + '…';
+  let cut = text.slice(0, max - 1);
+  // A cut between a surrogate pair leaves a lone high surrogate, which makes encodeURIComponent
+  // (PNG / clipboard data URL) throw 'URI malformed'.
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return cut + '…';
 }
 
 function esc(s: string): string {

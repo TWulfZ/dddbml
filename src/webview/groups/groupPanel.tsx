@@ -22,6 +22,7 @@ import {
 
 function GroupPanelImpl() {
   const groups = useAppStore((s) => s.schema.groups);
+  const tables = useAppStore((s) => s.schema.tables);
   const groupState = useAppStore((s) => s.groups);
   const hiddenTables = useAppStore((s) => s.hiddenTables);
   const open = useAppStore((s) => s.viewsPanelOpen);
@@ -44,6 +45,16 @@ function GroupPanelImpl() {
       return g.tables.some((t) => t.toLowerCase().includes(lcQuery));
     });
   }, [groups, lcQuery]);
+
+  // A table hidden on its own and then dropped from its TableGroup (or never in one) has no group
+  // row to un-hide it from; list it separately so it stays recoverable.
+  const ungroupedHidden = useMemo(() => {
+    if (hiddenTables.size === 0) return [];
+    const grouped = new Set(groups.flatMap((g) => g.tables));
+    return tables
+      .map((t) => t.name)
+      .filter((n) => hiddenTables.has(n) && !grouped.has(n) && (!lcQuery || n.toLowerCase().includes(lcQuery)));
+  }, [tables, groups, hiddenTables, lcQuery]);
 
   const hasGroups = groups.length > 0;
   const anyVisible = groups.some((g) => !(groupState[g.name]?.hidden));
@@ -79,19 +90,19 @@ function GroupPanelImpl() {
       <div class="ddd-group-panel__head">
         <span class="ddd-group-panel__title">Diagram Views</span>
         <div class="ddd-group-panel__actions">
+          {hasGroups || hiddenTables.size > 0 ? (
+            <Tooltip label={anyVisible ? 'Hide all' : 'Show all'}>
+              <Button variant="subtle" size="tool" onClick={toggleAllHidden}>
+                {anyVisible ? <IconEye size={13} /> : <IconEyeClosed size={13} />}
+              </Button>
+            </Tooltip>
+          ) : null}
           {hasGroups ? (
-            <>
-              <Tooltip label={anyVisible ? 'Hide all' : 'Show all'}>
-                <Button variant="subtle" size="tool" onClick={toggleAllHidden}>
-                  {anyVisible ? <IconEye size={13} /> : <IconEyeClosed size={13} />}
-                </Button>
-              </Tooltip>
-              <Tooltip label={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
-                <Button variant="subtle" size="tool" onClick={toggleAllCollapsed}>
-                  {anyExpanded ? <IconCollapseAll size={13} /> : <IconExpandAll size={13} />}
-                </Button>
-              </Tooltip>
-            </>
+            <Tooltip label={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
+              <Button variant="subtle" size="tool" onClick={toggleAllCollapsed}>
+                {anyExpanded ? <IconCollapseAll size={13} /> : <IconExpandAll size={13} />}
+              </Button>
+            </Tooltip>
           ) : null}
           <Tooltip label="Close">
             <Button variant="subtle" size="tool" onClick={() => setOpen(false)}>
@@ -117,7 +128,7 @@ function GroupPanelImpl() {
       <ul class="ddd-group-list">
         {!hasGroups ? (
           <li class="ddd-group-empty">No groups defined</li>
-        ) : filtered.length === 0 ? (
+        ) : filtered.length === 0 && ungroupedHidden.length === 0 ? (
           <li class="ddd-group-empty">No matches for "{query}"</li>
         ) : null}
         {filtered.map((g) => (
@@ -130,6 +141,21 @@ function GroupPanelImpl() {
             filter={lcQuery}
           />
         ))}
+        {ungroupedHidden.length > 0 ? (
+          <>
+            <li class="ddd-group-row">
+              <span class="ddd-group-name">Hidden (ungrouped)</span>
+              <span class="ddd-group-count">{ungroupedHidden.length}</span>
+            </li>
+            <li class="ddd-group-children">
+              <ul class="ddd-table-list">
+                {ungroupedHidden.map((name) => (
+                  <TableRow key={name} tableName={name} hidden />
+                ))}
+              </ul>
+            </li>
+          </>
+        ) : null}
       </ul>
     </div>
   );

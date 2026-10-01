@@ -282,6 +282,29 @@ export function defaultSettings(): AppSettings {
   };
 }
 
+/**
+ * `[minimum, maximum]` of every numeric setting, mirroring package.json (types.test.ts keeps them
+ * in sync). VS Code does not enforce these on read, so a hand-edited or cleared value (0) would
+ * otherwise lock zoom or disable LOD.
+ */
+export const SETTING_RANGES = {
+  'zoomStep': [1.01, 4],
+  'zoomMin': [0.01, 1],
+  'zoomMax': [1, 16],
+  'lod.lowThreshold': [0.01, 1],
+  'ui.gridSize': [2, 128],
+  'ui.layoutSpacing': [0.4, 2.5],
+} as const satisfies Partial<Record<keyof FlatSettingsPatch, readonly [number, number]>>;
+
+export type NumericSettingKey = keyof typeof SETTING_RANGES;
+
+/** Clamp a numeric setting into its range; non-finite / non-number values fall back. */
+export function clampSetting(key: NumericSettingKey, v: unknown, fallback: number): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return fallback;
+  const [lo, hi] = SETTING_RANGES[key];
+  return Math.min(hi, Math.max(lo, v));
+}
+
 /* ----- Protocol: Host → Webview ----- */
 
 export type ViewportCommand = 'zoomIn' | 'zoomOut' | 'resetView' | 'fitToContent';
@@ -322,7 +345,7 @@ export type WebviewToHost =
   | { type: 'command:reveal'; payload: { tableName: QualifiedName } }
   | { type: 'command:pruneOrphans' }
   | { type: 'command:export'; payload: ExportCommandPayload }
-  | { type: 'command:saveImage'; payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string } }
+  | { type: 'command:saveImage'; payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string; reducedScale?: number } }
   | { type: 'settings:update'; payload: Partial<FlatSettingsPatch> }
   | { type: 'merge:resolve'; payload: { decisions: Record<string, 'ours' | 'theirs'> } }
   | { type: 'git:requestStatus' }

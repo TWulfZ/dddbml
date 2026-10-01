@@ -1,3 +1,4 @@
+import { useEffect } from 'preact/hooks';
 import { store } from '../state/store';
 import { memo } from 'preact/compat';
 import { schedulePersist } from '../persistence';
@@ -13,7 +14,14 @@ interface CollapsedGroupNodeProps {
   color: string;
 }
 
+/** Drop this group's hover label. Unmounting under the cursor (double-click toggle, culling,
+ *  hiding from the panel) fires no mouseleave, so the label would otherwise stay on screen. */
+export function clearGroupLabel(name: string): void {
+  if (store.getState().tooltip?.title === name) store.getState().setTooltip(null);
+}
+
 function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color }: CollapsedGroupNodeProps) {
+  useEffect(() => () => clearGroupLabel(name), [name]);
   const onDblClick = () => {
     store.getState().setGroup(name, { collapsed: false });
     schedulePersist();

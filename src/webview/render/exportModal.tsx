@@ -152,13 +152,16 @@ function FieldEditor({ field, value, onChange }: FieldEditorProps) {
   );
 }
 
-function settingsDefaultFor(
+export function settingsDefaultFor(
   exporterId: string,
   field: ExporterOptionField,
   typeorm: { dialect: string; singularize: boolean; includeImports: boolean; emitNullableExplicit: boolean },
 ): unknown {
   if (exporterId === 'typeorm') {
-    if (field.id === 'dialect') return typeorm.dialect;
+    // A hand-edited settings.json can name an unregistered dialect; the host would emit a stub.
+    if (field.id === 'dialect') {
+      return field.type === 'enum' && !field.choices.some((c) => c.value === typeorm.dialect) ? field.default : typeorm.dialect;
+    }
     if (field.id === 'singularize') return typeorm.singularize;
     if (field.id === 'includeImports') return typeorm.includeImports;
     if (field.id === 'emitNullableExplicit') return typeorm.emitNullableExplicit;

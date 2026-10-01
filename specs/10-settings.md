@@ -60,7 +60,7 @@ export interface AppSettings {
 }
 ```
 
-`defaultSettings()` devuelve esta shape con los defaults declarados arriba. `loadSettings()` lee `vscode.workspace.getConfiguration('dddbml')` y reemplaza key por key (fallback a default si la entrada está mal tipada). `flattenSettings(s)` aplana la shape anidada al `FlatSettingsPatch` de claves punteadas que consume `settings:update` — lo usa el panel para restaurar defaults (todo, o un slice por sección).
+`defaultSettings()` devuelve esta shape con los defaults declarados arriba. `loadSettings()` lee `vscode.workspace.getConfiguration('dddbml')` y reemplaza key por key (fallback a default si la entrada está mal tipada). Los números pasan por `clampSetting()`: se recortan al `minimum`/`maximum` de `package.json` (tabla `SETTING_RANGES` en `shared/types.ts`, sincronizada por `types.test.ts`) y caen al default si no son finitos — VS Code no aplica esos rangos al leer, y un `0` (campo vaciado o `settings.json` a mano) bloqueaba el zoom o desactivaba el LOD. Los rangos garantizan además `zoomMin ≤ 1 ≤ zoomMax` y `zoomStep > 1`. `flattenSettings(s)` aplana la shape anidada al `FlatSettingsPatch` de claves punteadas que consume `settings:update` — lo usa el panel para restaurar defaults (todo, o un slice por sección).
 
 ## Propagation
 
@@ -111,7 +111,9 @@ duplicar el panel.
   que `.ddd-radio-group__option`). Nuevas secciones = una entrada más en `CATEGORIES`.
 - **Content panel** (derecha, `role="tabpanel"`) con header `[icono] Título … [info?] [reset
   sección]` y los campos de esa categoría (reusa `RadioGroup` / `NumberField` / `TextField`
-  / `Checkbox` de `ui/Field`):
+  / `Checkbox` de `ui/Field`). `NumberField` ignora un campo vaciado o inválido (restaura el
+  valor guardado en el DOM) y recorta al `min`/`max`; el panel toma esos límites de
+  `SETTING_RANGES`:
   - *Interface*: Density (RadioGroup), **Snap to grid** (Checkbox, `ui.snapToGrid`), **Grid
     size (px)** (NumberField, `ui.gridSize`, min 2 / max 128). Antes el grid size solo era
     editable por `settings.json`; el toggle imán ya vivía en la barra de acciones.
@@ -120,6 +122,10 @@ duplicar el panel.
     los 3 modos de LOD (Full / Medium / Low) renderizando el **`TableNode` real** sobre una
     tabla dummy — ver spec 12 (`render/lodPreview.tsx`).
   - *Export*: defaultFormat, typeorm.{dialect, singularize, includeImports, emitNullableExplicit}.
+    `defaultFormat` y `dialect` son `SelectField` poblados desde `store.exporters` (ids de exporter;
+    `choices` del campo `dialect` del exporter TypeORM = dialects registrados = enum de
+    `package.json`), no texto libre. Un valor guardado fuera de la lista se muestra como
+    "(unsupported)" para no ocultarlo; el modal de export lo coerciona al `default` del campo.
 
 - **Reset (por sección + global).** Cada header de sección tiene un botón reset (`discard`,
   `<Button variant="subtle" size="icon">`) que envía `settings:update` con `patchFor(CATEGORY_KEYS[cat])`

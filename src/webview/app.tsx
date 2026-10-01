@@ -13,6 +13,7 @@ import { ZoomButtons } from './render/zoomButtons';
 import { ActionsPanel } from './render/actionsPanel';
 import { AppMenu } from './render/appMenu';
 import { schedulePersist } from './persistence';
+import { isGestureActive } from './drag/dragController';
 import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
 import { lodForZoom } from './render/lod';
@@ -400,6 +401,12 @@ export function App(_props: AppProps) {
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
       const k = e.key.toLowerCase();
+      // Mid-gesture the drag rewrites positions/waypoints from its pointerdown snapshot and then
+      // pushes a command that clears `future`, so an undo here would be silently lost (spec 11).
+      if ((k === 'z' || k === 'y') && isGestureActive()) {
+        e.preventDefault();
+        return;
+      }
       if (k === 'z' && !e.shiftKey) {
         e.preventDefault();
         if (store.getState().past.length === 0) return;

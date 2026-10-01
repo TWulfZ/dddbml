@@ -54,8 +54,9 @@ ancla a coords de click, es label-only y lo comparte el scope-menu de ActionsPan
   `aria-haspopup="menu"` + `aria-expanded`. La superficie del trigger (`.ddd-app-menu`)
   está siempre visible, anclada `position:absolute; top/left: var(--ddd-space-4);
   z-index:5`, con el look de chrome de `.ddd-zoom`.
-- **Popover:** reusa el idiom de dismiss de ContextMenu — listeners de `mousedown`
-  + `Escape` adjuntados con `setTimeout(0)` (para que el click de apertura no lo
+- **Popover:** reusa el idiom de dismiss de ContextMenu — listeners de `pointerdown`
+  en fase de **captura** (el drag de tabla/arista hace `stopPropagation` + `preventDefault`
+  del `pointerdown`, lo que suprime el `mousedown`) + `Escape` adjuntados con `setTimeout(0)` (para que el click de apertura no lo
   cierre), `createPortal(..., document.body)` para escapar `overflow`. Se ancla bajo
   el trigger vía `wrapRef.getBoundingClientRect()` (el primitivo `<Button>` no
   reenvía ref → se mide el `<div>` contenedor) y se clampa con `clampMenuAnchor()`.

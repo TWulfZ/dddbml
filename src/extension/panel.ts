@@ -379,7 +379,7 @@ export class DiagramPanel {
    * save dialog (defaulting beside the .dbml), writes the bytes, and reports back so the webview
    * can close the dialog. Cancelling the dialog is a no-op (ok:false, no error).
    */
-  private async saveImage(payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string }): Promise<void> {
+  private async saveImage(payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string; reducedScale?: number }): Promise<void> {
     const ext = payload.mime === 'image/svg+xml' ? 'svg' : 'png';
     const defaultUri = vscode.Uri.joinPath(this.dbmlUri, '..', payload.suggestedName);
     try {
@@ -394,7 +394,10 @@ export class DiagramPanel {
       const bytes = Buffer.from(payload.dataBase64, 'base64');
       await vscode.workspace.fs.writeFile(target, bytes);
       this.post({ type: 'image:result', payload: { ok: true, path: target.fsPath } });
-      void vscode.window.showInformationMessage(`dddbml: image saved — ${this.shortName(target)}.`);
+      const reduced = payload.reducedScale !== undefined
+        ? ` at ${payload.reducedScale}× (reduced: too large for the requested scale; use SVG for full resolution)`
+        : '';
+      void vscode.window.showInformationMessage(`dddbml: image saved${reduced} — ${this.shortName(target)}.`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`dddbml: image export failed — ${message}`);

@@ -266,6 +266,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       if (!sameTableSet) {
         patch.past = [];
         patch.future = [];
+        patch.selection = withoutSelected(s.selection, [...s.selection].filter((n) => !newNames.has(n)));
       }
       return patch;
     });
@@ -339,14 +340,16 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       if (merged.collapsed === false) delete merged.collapsed;
       if (merged.hidden === false) delete merged.hidden;
       if (merged.color === '') delete merged.color;
-      return { groups: { ...s.groups, [name]: merged } };
+      const unrendered = merged.collapsed || merged.hidden;
+      const members = unrendered ? s.schema.groups.find((g) => g.name === name)?.tables ?? [] : [];
+      return { groups: { ...s.groups, [name]: merged }, selection: withoutSelected(s.selection, members) };
     });
   },
   setTableHidden(name, hidden) {
     set((s) => {
       const next = new Set(s.hiddenTables);
       if (hidden) next.add(name); else next.delete(name);
-      return { hiddenTables: next };
+      return { hiddenTables: next, selection: hidden ? withoutSelected(s.selection, [name]) : s.selection };
     });
   },
   setTableColor(name, color) {
@@ -647,6 +650,21 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
     set((s) => (s.edgeOrderProgress === null ? s : { edgeOrderProgress: null }));
   },
 }));
+
+/**
+ * Selection minus `names`. Unrendered (hidden / collapsed / removed) tables must leave the selection
+ * or a multi-drag and every selection-scoped action would still act on them. Returns the same Set
+ * when nothing is removed so `selection` subscribers don't re-render.
+ */
+function withoutSelected(sel: Set<QualifiedName>, names: Iterable<QualifiedName>): Set<QualifiedName> {
+  let next: Set<QualifiedName> | null = null;
+  for (const n of names) {
+    if (!sel.has(n)) continue;
+    next ??= new Set(sel);
+    next.delete(n);
+  }
+  return next ?? sel;
+}
 
 function pushHistory(s: AppState, cmd: EditCommand): Partial<AppState> {
   const next = [...s.past, cmd];

@@ -145,9 +145,14 @@ foco), de modo que mantener Space sobre el canvas arma el paneo de inmediato.
 - **Shift-click** → alterna (toggle) la tabla en/fuera del set. Sólo `Shift`
   (consistente con el marquee, que usa `Shift` para sumar).
 - **Marquee** (arrastre sobre área vacía) → sin cambios; `Shift` suma al set.
-- Click vs drag se decide en `pointerup` por distancia recorrida
-  (`CLICK_THRESHOLD_PX = 4`, screen-px): `< 4` = click (resuelve selección, sin
-  `MoveCommand`); `>= 4` = drag (mueve, empuja `MoveCommand`).
+- Click vs drag usa un umbral **latcheado** (`CLICK_THRESHOLD_PX = 4`, screen-px
+  desde el press): nada se mueve hasta cruzarlo; la primera vez que se cruza el
+  gesto pasa a drag para siempre (mueve, empuja `MoveCommand` aunque vuelva cerca
+  del origen). Si nunca se cruzó = click (resuelve selección, sin `MoveCommand`,
+  sin desplazamiento residual).
+- El delta del drag (tablas y aristas) se mide en **espacio world** desde el punto
+  agarrado, no como delta de pantalla / zoom: un zoom con rueda o pan a mitad del
+  drag mantiene la tabla bajo el cursor (se re-aplica al cambiar el viewport).
 - *Select-on-press*: un press plano sobre una tabla no seleccionada la selecciona ya
   en el `pointerdown`, así un drag mueve sólo a ella; los press aditivos (Shift)
   difieren la decisión al click. El multi-drag (press sobre miembro de una

@@ -45,7 +45,7 @@ function AppMenuImpl() {
   useEffect(() => {
     if (!open) return;
     const close = () => store.getState().setAppMenuOpen(false);
-    const onDocDown = (e: MouseEvent) => {
+    const onDocDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (popoverRef.current?.contains(t)) return;
       if (wrapRef.current?.contains(t)) return;
@@ -57,12 +57,13 @@ function AppMenuImpl() {
       wrapRef.current?.querySelector('button')?.focus();
     };
     const id = window.setTimeout(() => {
-      document.addEventListener('mousedown', onDocDown);
+      // Capture-phase pointerdown: see ContextMenu.
+      document.addEventListener('pointerdown', onDocDown, true);
       document.addEventListener('keydown', onEsc);
     }, 0);
     return () => {
       window.clearTimeout(id);
-      document.removeEventListener('mousedown', onDocDown);
+      document.removeEventListener('pointerdown', onDocDown, true);
       document.removeEventListener('keydown', onEsc);
     };
   }, [open]);

@@ -89,7 +89,7 @@ Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor
 | `pointerup` de waypoint drag con cambio neto en `waypoints[]` | Push `WaypointCommand` con `op = 'move'` (o `'remove'` si la operación colapsó a un vecino). |
 | `pointerup` de click-en-segmento (agregar) | Push `WaypointCommand` con `op = 'add'`. |
 | `dblclick` sobre círculo de waypoint | Remueve waypoint, push `WaypointCommand` con `op = 'remove'`. |
-| Context menu "Reset edge waypoints" | Limpia el array, push `WaypointCommand` con `op = 'clear'` y `to: []`. |
+| Toolbar "Reset line" | Limpia la forma (waypoints + sides + `dx/dy` legacy, conserva color) y push **un** `ArrangeCommand` de sólo aristas (`buildEdgesResetCommand`, label `Reset line`) con el `EdgeLayout` completo antes/después. Sin forma manual → no-op. |
 | Llamada `undo()` con `past` no vacío | Pop tail. Switch por `cmd.kind`: `'move'` → restaura `positions`; `'waypoint'` → restaura `edgeLayouts[refId].waypoints`. Push cmd a `future`. Llamador dispara `schedulePersist()`. |
 | Llamada `redo()` con `future` no vacío | Simétrico. |
 | `undo()` / `redo()` con stack vacío | No-op silencioso. |
@@ -151,6 +151,7 @@ El listener funciona aunque el panel esté colapsado (es global, no del DOM del 
 1. **No-op drag**: drag sin desplazamiento real (mismo from/to en todas las tablas) → `buildMoveCommand` retorna `null` → no se agrega entrada.
 2. **Schema reload con tabla removida**: si una tabla en `past`/`future` ya no existe tras `setSchema`, el diff de table set dispara `clearHistory`. Sin esto, `undo` intentaría restaurar una posición de tabla que no se renderiza.
 3. **Drag durante undo en curso**: `active = true` en `dragController` previene drags concurrentes; `undo()` es síncrono y no toca `active`. Un drag iniciado inmediatamente tras undo es seguro.
+3b. **Undo/redo durante un drag en curso**: se **ignora** (`preventDefault` + no-op) mientras `isGestureActive()` (drag de tabla o gesto de arista). El gesto reescribe desde su snapshot del `pointerdown` y al soltar empuja un comando que limpia `future`, así que un undo a mitad de gesto se perdería en silencio.
 4. **Spam de Ctrl+Z**: cada undo schedule un persist debounced 300ms. Solo el último gana. Disco lag hasta 300ms tras último undo. Aceptable.
 5. **Selection no se restaura**: undo solo mueve posiciones; `selection`/`tooltip` quedan como estaban. Documentado como intencional v1.
 6. **Tabla hidden + undo**: undo aplica posición a `positions` Map independiente de `hiddenTables`. No requiere lógica especial.

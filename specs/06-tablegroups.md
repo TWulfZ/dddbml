@@ -21,6 +21,11 @@ Cada group tiene 3 campos opcionales en `groups` del layout file:
 
 **Hidden domina sobre collapsed**: si `hidden: true`, el grupo no se renderiza, collapsed se ignora.
 
+**Selección**: ocultar o colapsar un group (y ocultar una tabla suelta) saca esas tablas de la
+`selection`; un `setSchema` que elimina tablas también las saca. Una tabla no renderizada nunca
+queda seleccionada, así el multi-drag y las acciones con scope "selección" (export, smart layout,
+reset de relaciones) no actúan sobre ella.
+
 ## Collapsed: semántica de edges
 
 Cuando un group está collapsed, todas sus tablas se sustituyen por el nodo-caja (virtual id `__group__:{name}`). Edges incidentes se transforman:
@@ -47,6 +52,10 @@ hover se revela el nombre del grupo como label en screen-space (`setTooltip`):
 - **Contenedor expandido** → handler **sólo en la franja-label** (el cuerpo es
   `pointer-events: none`), para no competir con el hover de las tablas internas.
 
+Al desmontarse bajo el cursor (doble-click expand/collapse, culling, ocultar desde el panel)
+no llega `mouseleave`, así que ambos nodos limpian su label en el cleanup de unmount (sólo si
+el slot sigue mostrando ese grupo).
+
 La condición `lodForZoom(...) === 'rect'` se evalúa dentro del handler. El slot único
 `tooltip` garantiza que nunca se muestren dos labels a la vez (ver spec 04, "Regla de
 un solo label").
@@ -56,14 +65,18 @@ un solo label").
 Panel flotante top-right dentro del viewport (título **"Diagram Views"**), colapsable a un handle
 "Views". Contiene, de arriba a abajo:
 
-- **Header**: título + acciones de header (hide-all / collapse-all — solo si hay groups — y cerrar),
-  como botones solo-ícono `size="tool"` con `Tooltip` (ver spec 12).
+- **Header**: título + acciones de header (hide/show-all — si hay groups **o** tablas ocultas —,
+  collapse-all — solo si hay groups — y cerrar), como botones solo-ícono `size="tool"` con
+  `Tooltip` (ver spec 12). Sin groups, el botón es "Show all" y des-oculta todas las tablas.
 - **View options**: toggles de vista globales. Hoy: **PK/FK columns only** (`showOnlyPkFk`). Es una
   opción de *vista* (no de grupo), por eso vive aquí y no en la barra de acciones.
 - **Search**: input con ícono; filtra groups y tablas por nombre. Expone `inputRef` para enfoque
   imperativo.
 - **Lista**: groups en orden alfabético, cada fila con swatch de color, nombre + count, y botones
   solo-ícono (`size="icon"`, filas densas) de toggle hidden / collapsed / configurar color.
+- **Hidden (ungrouped)**: al final de la lista, las tablas ocultas individualmente que no son
+  miembro de ningún group actual (p. ej. se borró su `TableGroup`), con su toggle por fila. Sin
+  esto quedarían invisibles sin forma de recuperarlas salvo Reset Layout.
 
 Toggles disparan `schedulePersist()` para guardar estado en el layout file.
 

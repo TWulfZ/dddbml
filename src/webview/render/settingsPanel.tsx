@@ -4,14 +4,15 @@ import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { Modal } from '../ui/Modal';
-import { NumberField, TextField, Checkbox } from '../ui/Field';
+import { NumberField, SelectField, Checkbox, type SelectOption } from '../ui/Field';
 import { Slider } from '../ui/Slider';
 import { RadioGroup } from '../ui/RadioGroup';
 import { Button } from '../ui/Button';
 import { HoverCard } from '../ui/HoverCard';
 import { LodPreview } from './lodPreview';
 import { IconLayout, IconZoom, IconEye, IconExport, IconInfo, IconReset } from '../icons';
-import { defaultSettings, flattenSettings, type FlatSettingsPatch, type UiDensity } from '../../shared/types';
+import type { ExporterMeta } from '../../shared/exporters/types';
+import { defaultSettings, flattenSettings, SETTING_RANGES, type FlatSettingsPatch, type NumericSettingKey, type UiDensity } from '../../shared/types';
 
 type PatchKey = keyof FlatSettingsPatch;
 type Category = 'interface' | 'viewport' | 'lod' | 'export';
@@ -45,6 +46,8 @@ function patchFor(keys: PatchKey[]): Partial<FlatSettingsPatch> {
   return out;
 }
 
+const range = (key: NumericSettingKey) => ({ min: SETTING_RANGES[key][0], max: SETTING_RANGES[key][1] });
+
 function update(patch: Partial<FlatSettingsPatch>) {
   postToHost({ type: 'settings:update', payload: patch });
 }
@@ -52,6 +55,7 @@ function update(patch: Partial<FlatSettingsPatch>) {
 function SettingsPanelImpl() {
   const open = useAppStore((s) => s.settingsPanelOpen);
   const settings = useAppStore((s) => s.settings);
+  const exporters = useAppStore((s) => s.exporters);
   const [active, setActive] = useState<Category>('interface');
 
   const apply = <K extends PatchKey>(key: K, value: FlatSettingsPatch[K]) => {
@@ -111,8 +115,7 @@ function SettingsPanelImpl() {
                 label="Grid size (px)"
                 hint="World-unit spacing of the snap grid used when magnet mode is on."
                 value={settings.ui.gridSize}
-                min={2}
-                max={128}
+                {...range('ui.gridSize')}
                 step={2}
                 onCommit={(v) => apply('ui.gridSize', v)}
               />
@@ -120,8 +123,7 @@ function SettingsPanelImpl() {
                 label="Layout spacing"
                 hint="Auto-arrange density. Lower packs tables and groups tighter; higher spreads them out. Applies on the next auto-arrange."
                 value={settings.ui.layoutSpacing}
-                min={0.4}
-                max={2.5}
+                {...range('ui.layoutSpacing')}
                 step={0.1}
                 minLabel="Compact"
                 maxLabel="Spacious"
@@ -137,13 +139,12 @@ function SettingsPanelImpl() {
                 label="Zoom step"
                 hint="Factor applied per zoom in/out (must be > 1)."
                 value={settings.zoomStep}
-                min={1.01}
-                max={4}
+                {...range('zoomStep')}
                 step={0.05}
                 onCommit={(v) => apply('zoomStep', v)}
               />
-              <NumberField label="Zoom min" value={settings.zoomMin} min={0.01} max={1} step={0.01} onCommit={(v) => apply('zoomMin', v)} />
-              <NumberField label="Zoom max" value={settings.zoomMax} min={1} max={16} step={0.5} onCommit={(v) => apply('zoomMax', v)} />
+              <NumberField label="Zoom min" value={settings.zoomMin} {...range('zoomMin')} step={0.01} onCommit={(v) => apply('zoomMin', v)} />
+              <NumberField label="Zoom max" value={settings.zoomMax} {...range('zoomMax')} step={0.5} onCommit={(v) => apply('zoomMax', v)} />
             </Section>
           ) : null}
 
@@ -162,8 +163,7 @@ function SettingsPanelImpl() {
                 label="Low threshold"
                 hint="Below this zoom, tables render as colored rectangles (name on hover); at or above, full columns."
                 value={settings.lod.lowThreshold}
-                min={0.01}
-                max={1}
+                {...range('lod.lowThreshold')}
                 step={0.05}
                 onCommit={(v) => apply('lod.lowThreshold', v)}
               />
@@ -172,8 +172,18 @@ function SettingsPanelImpl() {
 
           {active === 'export' ? (
             <Section category="export">
-              <TextField label="Default format" value={settings.export.defaultFormat} onCommit={(v) => apply('export.defaultFormat', v)} />
-              <TextField label="TypeORM dialect" value={settings.export.typeorm.dialect} onCommit={(v) => apply('export.typeorm.dialect', v)} />
+              <SelectField
+                label="Default format"
+                value={settings.export.defaultFormat}
+                options={withCurrent(exporters.map((e) => ({ value: e.id, label: e.label })), settings.export.defaultFormat)}
+                onChange={(v) => apply('export.defaultFormat', v)}
+              />
+              <SelectField
+                label="TypeORM dialect"
+                value={settings.export.typeorm.dialect}
+                options={withCurrent(dialectChoices(exporters), settings.export.typeorm.dialect)}
+                onChange={(v) => apply('export.typeorm.dialect', v)}
+              />
               <Checkbox label="Singularize class names" value={settings.export.typeorm.singularize} onCommit={(v) => apply('export.typeorm.singularize', v)} />
               <Checkbox label="Include typeorm imports" value={settings.export.typeorm.includeImports} onCommit={(v) => apply('export.typeorm.includeImports', v)} />
               <Checkbox label="Emit nullable explicit" value={settings.export.typeorm.emitNullableExplicit} onCommit={(v) => apply('export.typeorm.emitNullableExplicit', v)} />
@@ -209,6 +219,20 @@ function Section({ category, info, children }: { category: Category; info?: VNod
 
 function close() {
   store.getState().setSettingsPanelOpen(false);
+}
+
+/** Registered dialects, as declared by the host's TypeORM exporter (the package.json enum). */
+function dialectChoices(exporters: ExporterMeta[]): SelectOption[] {
+  const field = exporters.find((e) => e.id === 'typeorm')?.optionsSchema.find((f) => f.id === 'dialect');
+  return field?.type === 'enum' ? field.choices.map((c) => ({ value: c.value, label: c.label })) : [];
+}
+
+/**
+ * Keep the stored value selectable while the exporter list hasn't arrived (or names something
+ * unknown): a `<select>` whose value has no option renders blank and hides what is configured.
+ */
+function withCurrent(options: SelectOption[], current: string): SelectOption[] {
+  return options.some((o) => o.value === current) ? options : [...options, { value: current, label: options.length > 0 ? `${current} (unsupported)` : current }];
 }
 
 // memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
