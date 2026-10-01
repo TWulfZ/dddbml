@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
-import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
+import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
 import { applyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
@@ -52,7 +52,14 @@ export class DiagramPanel {
   private readonly disposables: vscode.Disposable[] = [];
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
   private currentLayout: Layout = emptyLayout();
-  private lastWrittenSerialized: string | null = null;
+  /** Exact sidecar text last seen on disk — adopted by a read or produced by our own write (null =
+   *  no file). A watcher event whose file still matches it is an echo or a no-op; anything else is
+   *  external and reloads. Must track reads too: tracking only our writes ignores a `git checkout`
+   *  that returns the file to that content after another branch's layout was loaded (F01). */
+  private diskSidecarText: string | null = null;
+  /** Canonical shared serialization of what is on disk; a persist whose shared form equals it is a
+   *  view-state-only change and must not rewrite the tracked sidecar. */
+  private diskSharedSerialized: string | null = null;
   /** Set while the sidecar on disk is unparseable; shared writes are refused until a clean read. */
   private sidecarCorrupt = false;
   /** True once the webview has sent `ready` and received schema/layout; prompts wait for this. */
@@ -450,15 +457,21 @@ export class DiagramPanel {
    */
   private async loadSharedLayout(): Promise<Layout> {
     try {
-      const layout = await readLayout(this.dbmlUri);
+      const { layout, text } = await readLayout(this.dbmlUri);
       this.pendingMerge = null; // a clean read clears any stale conflict state
       this.sidecarCorrupt = false;
+      this.diskSidecarText = text;
+      this.diskSharedSerialized = text === null ? null : serializeSharedLayout(layout);
       return layout;
     } catch (err) {
       if (err instanceof LayoutConflictError) {
+        this.diskSidecarText = err.conflictedText;
+        this.diskSharedSerialized = null;
         return this.handleConflict();
       }
       if (err instanceof LayoutParseError) {
+        this.diskSidecarText = err.text;
+        this.diskSharedSerialized = null;
         this.sidecarCorrupt = true;
         void vscode.window.showWarningMessage(
           'dddbml: the layout file is not valid JSON — fix it (or restore it from git) to save layout changes. The diagram is read from the last good layout meanwhile.',
@@ -490,8 +503,7 @@ export class DiagramPanel {
     }
     const { merged, conflicts, repoRoot, relpath } = detected;
     if (conflicts.length === 0) {
-      const serialized = await writeSharedLayout(this.dbmlUri, merged);
-      this.lastWrittenSerialized = serialized;
+      this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, merged));
       try { await gitAdd(repoRoot, relpath); } catch { /* staging is best-effort */ }
       this.pendingMerge = null;
       void vscode.window.showInformationMessage(
@@ -525,8 +537,7 @@ export class DiagramPanel {
     try {
       const resolved = applyDecisions(pending.merged, pending.conflicts, decisions);
       try {
-        const serialized = await writeSharedLayout(this.dbmlUri, resolved);
-        this.lastWrittenSerialized = serialized;
+        this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, resolved));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         void vscode.window.showErrorMessage(`dddbml: failed to write resolved layout — ${message}`);
@@ -619,12 +630,11 @@ export class DiagramPanel {
   }
 
   /**
-   * Re-read the diagram from disk after a git op rewrote the working tree (restore / stash / pop).
-   * Resets the write-dedup guard so the change isn't suppressed, then refreshes schema + layout +
-   * git status; routes any conflict markers (e.g. from a stash pop) into the merge resolver.
+   * Re-read the diagram from disk after a git op rewrote the working tree (restore / stash / pop):
+   * refreshes schema + layout + git status; routes any conflict markers (e.g. from a stash pop)
+   * into the merge resolver.
    */
   private async reloadFromDisk(): Promise<void> {
-    this.lastWrittenSerialized = null;
     await this.sendSchema();
     await this.sendLayout(true);
     this.maybePostMerge();
@@ -784,6 +794,11 @@ export class DiagramPanel {
     }, PERSIST_DEBOUNCE_MS);
   }
 
+  private noteSidecarWritten(serialized: string): void {
+    this.diskSidecarText = serialized;
+    this.diskSharedSerialized = serialized;
+  }
+
   private async flushPersist(layout: Layout): Promise<void> {
     // Git sidecar: shared design only. Skip the write when the shared form is unchanged
     // so pure pan/zoom (view-state only) never churns the tracked file.
@@ -792,9 +807,8 @@ export class DiagramPanel {
       const sharedSerialized = serializeSharedLayout(layout);
       if (this.sidecarCorrupt) {
         // Never clobber a corrupt sidecar with a layout derived from it; the watcher re-reads on fix.
-      } else if (sharedSerialized !== this.lastWrittenSerialized) {
-        await writeSharedLayout(this.dbmlUri, layout);
-        this.lastWrittenSerialized = sharedSerialized;
+      } else if (sharedSerialized !== this.diskSharedSerialized) {
+        this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, layout));
         sharedChanged = true;
       }
     } catch (err) {
@@ -833,13 +847,8 @@ export class DiagramPanel {
     const onLayoutFs = async (uri: vscode.Uri) => {
       if (uri.toString() !== layoutSidecar.toString()) return;
       this.scheduleGitStatus(); // sidecar touched on disk → dirty/clean may have flipped
-      try {
-        const bytes = await vscode.workspace.fs.readFile(uri);
-        const text = new TextDecoder('utf-8').decode(bytes);
-        if (this.lastWrittenSerialized !== null && text === this.lastWrittenSerialized) return;
-      } catch {
-        return;
-      }
+      const text = await readSidecarText(this.dbmlUri);
+      if (text === null || text === this.diskSidecarText) return;
       await this.sendLayout(true);
       this.maybePostMerge(); // external pull/merge may have introduced conflicts
     };

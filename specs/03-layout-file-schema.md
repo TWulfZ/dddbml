@@ -98,8 +98,17 @@ El writer del sidecar es **`serializeSharedLayout`** (`layoutStore.ts`): misma f
 git-friendly que `serializeLayout` pero **omite todo view-state** (sin `viewport`,
 sin `hidden`/`collapsed`, sin grupos color-less). El host además aplica un
 **churn-guard**: en `flushPersist` no reescribe el sidecar si la serialización
-compartida no cambió, de modo que un pan/zoom (que sólo toca el view-state local)
-nunca ensucia el archivo versionado.
+compartida no cambió respecto de lo que hay en disco (`diskSharedSerialized`: la forma
+canónica del último archivo leído o escrito), de modo que un pan/zoom (que sólo toca el
+view-state local) nunca ensucia el archivo versionado, ni siquiera el primero tras abrir.
+
+**Guard de eco del watcher**: el host guarda el texto exacto del sidecar que conoce en
+disco (`diskSidecarText`), actualizado tanto en cada **lectura** (apertura, watcher,
+recarga tras op git, también el texto en conflicto o corrupto) como en cada escritura
+propia. Un evento del watcher cuyo archivo coincide con ese texto es un eco o un no-op;
+cualquier otro contenido es externo y recarga. Comparar sólo contra la última escritura
+propia ignoraba un `git checkout` que devolvía el archivo a ese contenido después de
+haber cargado el layout de otra rama (F01).
 
 Reglas del writer:
 

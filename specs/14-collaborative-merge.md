@@ -146,7 +146,7 @@ Sólo el host escribe el sidecar. Flujo:
 4. **Apply:** el webview postea `merge:resolve { decisions: Record<id,'ours'|'theirs'> }`.
    El host mapea cada `id` → su `MergeConflict` retenido, `applySide(merged, c,
    side)`, **escribe limpio** (`writeSharedLayout`), `git add`, actualiza
-   `lastWrittenSerialized`, limpia `pendingMerge`, postea `layout:loaded` (final,
+   `diskSidecarText`/`diskSharedSerialized`, limpia `pendingMerge`, postea `layout:loaded` (final,
    con view-state re-aplicado) y `merge:done`. El webview sale del modo conflicto
    en `merge:done`.
 
@@ -221,7 +221,7 @@ Tailwind en `@layer utilities` ganarían sobre `@layer components`; por eso no h
   caller conserva el layout actual y avisa; **no** borra el archivo.
 - **Stage faltante**: add/add (sin `:1:`), edit/delete (un lado ausente) → tolerado
   por `mergeThreeWay` vía `undefined`.
-- **Loop del watcher**: tras escribir el resuelto, `lastWrittenSerialized` se
+- **Loop del watcher**: tras escribir el resuelto, `diskSidecarText` se
   actualiza a la serialización compartida → el watcher dedupea. Si re-dispara, el
   archivo ya está limpio → idempotente, sin loop.
 - **Un panel por `dbmlUri`** (`DiagramPanel.panels`) → sin carrera intra-ventana.
