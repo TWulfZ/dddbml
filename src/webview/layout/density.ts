@@ -8,6 +8,13 @@ export interface DensityMetrics {
 }
 
 /**
+ * Chrome the renderer draws around an expanded group's tables (padding on every side + a header
+ * strip on top). Shared with smart layout so arranged clusters reserve exactly this much room.
+ */
+export const GROUP_CONTAINER_PADDING = 24;
+export const GROUP_CONTAINER_HEADER = 20;
+
+/**
  * Pixel mirror of the CSS density tokens declared in style.css `@layer tokens`.
  * Source of truth: specs/12-design-system.md (Density system table).
  *

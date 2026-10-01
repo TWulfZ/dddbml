@@ -1,6 +1,7 @@
 import * as dagre from '@dagrejs/dagre';
 import type { QualifiedName, Ref, Table, TableGroup } from '../../../shared/types';
 import { columnCenterY, type NodeSize } from '../autoLayout';
+import { GROUP_CONTAINER_HEADER, GROUP_CONTAINER_PADDING } from '../density';
 import { classify, type TableMeta } from './classify';
 import { buildClusters, type Cluster } from './cluster';
 
@@ -43,6 +44,8 @@ export const SPACING_DEFAULT = 1;
 const COLUMN_ALIGN_PASSES = 3;
 const COLUMN_ALIGN_FACTOR = 0.3;
 const INCREMENTAL_STEP = 64;
+// Free-spot search radius in INCREMENTAL_STEP units (~2k px, ~4k candidates) before the fallback.
+const SEARCH_RINGS = 32;
 
 // Min gap between cluster boxes after compaction (scaled by spacing). Smaller than dagre's
 // inter-cluster separation on purpose — compaction's job is to close that excess.
@@ -51,6 +54,9 @@ const BASE_CLUSTER_GAP = 56;
 // Compaction rounds (each = one X pass + one Y pass). Two converges for the few-cluster case;
 // it's a constant, deterministic.
 const COMPACT_ROUNDS = 2;
+
+// Target width:height of packed disconnected parts — landscape, to match a typical editor viewport.
+const PACK_ASPECT = 1.6;
 
 /** Scaled, integer separations for one layout run (git-friendly integer coords downstream). */
 interface Seps {
@@ -115,8 +121,9 @@ interface Analysis {
  * Synchronous — dagre is sync.
  */
 export function smartLayout(
-  input: SmartLayoutInput,
+  rawInput: SmartLayoutInput,
 ): Map<QualifiedName, { x: number; y: number }> {
+  const input = canonicalOrder(rawInput);
   const mode: SmartLayoutMode = input.mode ?? 'all';
   const existing = input.existing ?? new Map<QualifiedName, { x: number; y: number }>();
   const selection = input.selection ?? new Set<QualifiedName>();
@@ -135,6 +142,26 @@ export function smartLayout(
     return layoutAll(analysis, input, orientation, seps);
   }
   return layoutIncremental(analysis, input, orientation, movable, existing, seps);
+}
+
+/** Code-unit order: unlike `localeCompare`, identical on every machine regardless of ICU locale. */
+function cmpCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Table/group order feeds classify, cluster membership and dagre node insertion, so it shapes the
+ * result. The host sorts with locale collation, which differs between teammates' locales; re-sort
+ * here so a committed sidecar does not churn per machine (audit F88).
+ */
+function canonicalOrder(input: SmartLayoutInput): SmartLayoutInput {
+  return {
+    ...input,
+    tables: [...input.tables].sort((a, b) => cmpCodeUnit(a.name, b.name)),
+    groups: [...input.groups]
+      .sort((a, b) => cmpCodeUnit(a.name, b.name))
+      .map((g) => ({ ...g, tables: [...g.tables].sort(cmpCodeUnit) })),
+  };
 }
 
 function computeFixed(
@@ -216,24 +243,29 @@ function layoutAll(
   orientation: Orientation,
   seps: Seps,
 ): Map<QualifiedName, { x: number; y: number }> {
-  // 1. Lay out each cluster locally (radial for aggregates, dagre otherwise).
+  const tableByName = new Map<QualifiedName, Table>();
+  for (const t of input.tables) tableByName.set(t.name, t);
+
+  // 1. Lay out each cluster locally (radial for aggregates, dagre otherwise) and settle it —
+  //    column-align + collisions — in LOCAL coords, so the box the outer level places is the final
+  //    geometry. Nudging after placement pushed tables out of their cluster's box and into a
+  //    neighbouring group's container (audit F18). Group clusters reserve the container chrome.
   const clusterLayouts = new Map<string, ClusterLayout>();
   for (const c of analysis.clusters) {
     if (c.members.length === 0) continue;
-    if (c.kind === 'aggregate' && c.anchor) {
-      clusterLayouts.set(c.id, radialPlace(c, input, analysis.meta, seps));
-    } else {
-      clusterLayouts.set(c.id, layoutClusterLocal(c, input, orientation, seps));
-    }
+    const local =
+      c.kind === 'aggregate' && c.anchor
+        ? radialPlace(c, input, analysis.meta, seps)
+        : layoutClusterLocal(c, input, orientation, seps);
+    columnAlignPass(local.positions, internalRefsOf(c.members, input.refs), tableByName, null, analysis.meta);
+    resolveCollisions(local.positions, input.sizeOf, null, seps);
+    const settled = normalizeLayout(local.positions, input.sizeOf);
+    clusterLayouts.set(c.id, c.kind === 'group' ? withGroupChrome(settled) : settled);
   }
 
-  // 2. Place the clusters relative to each other (outer dagre over meta-nodes).
-  const origins = layoutMeta(analysis.clusters, input.refs, clusterLayouts, orientation, seps);
-
-  // 2b. Compact the cluster boxes (remove dead inter-cluster whitespace dagre leaves) WITHOUT
-  //     changing their relative order or introducing overlaps. This is what recovers the density
-  //     ELK's compound packer had; the `spacing` factor rides on top via `seps.clusterGap`.
-  compactClusters(origins, clusterLayouts, seps.clusterGap);
+  // 2. Place the clusters relative to each other: outer dagre + compaction per connected set of
+  //    clusters, then the disconnected sets packed side by side.
+  const origins = placeClusters(analysis.clusters, input.refs, clusterLayouts, orientation, seps);
 
   // 3. Flatten cluster-local coords to world coords.
   const positions = new Map<QualifiedName, { x: number; y: number }>();
@@ -248,12 +280,126 @@ function layoutAll(
   // Defensive: any table not placed (shouldn't happen) is parked at origin; collisionGuard separates it.
   for (const t of input.tables) if (!positions.has(t.name)) positions.set(t.name, { x: 0, y: 0 });
 
-  columnAlignPass(positions, input, null, analysis.meta);
+  // Safety net only: clusters are settled and placed disjoint, so this normally moves nothing.
   resolveCollisions(positions, input.sizeOf, null, seps);
   return roundPositions(positions);
 }
 
-/** Inner dagre layout of one cluster, normalized to a 0-origin bbox. */
+function internalRefsOf(members: QualifiedName[], refs: Ref[]): Ref[] {
+  const memberSet = new Set(members);
+  return refs.filter((r) => memberSet.has(r.source.table) && memberSet.has(r.target.table));
+}
+
+/** Shift a set of table positions to a 0-origin and measure its bbox from the table rects. */
+function normalizeLayout(
+  positions: Map<QualifiedName, { x: number; y: number }>,
+  sizeOf: (name: QualifiedName) => NodeSize,
+): ClusterLayout {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [name, p] of positions) {
+    const s = sizeOf(name);
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x + s.width);
+    maxY = Math.max(maxY, p.y + s.height);
+  }
+  if (!Number.isFinite(minX)) return { positions: new Map(), bbox: { w: 0, h: 0 } };
+  const out = new Map<QualifiedName, { x: number; y: number }>();
+  for (const [name, p] of positions) out.set(name, { x: p.x - minX, y: p.y - minY });
+  return { positions: out, bbox: { w: maxX - minX, h: maxY - minY } };
+}
+
+/** Grow a group cluster's box by the container chrome the renderer draws around its tables. */
+function withGroupChrome(cl: ClusterLayout): ClusterLayout {
+  const top = GROUP_CONTAINER_PADDING + GROUP_CONTAINER_HEADER;
+  const positions = new Map<QualifiedName, { x: number; y: number }>();
+  for (const [name, p] of cl.positions) positions.set(name, { x: p.x + GROUP_CONTAINER_PADDING, y: p.y + top });
+  return {
+    positions,
+    bbox: { w: cl.bbox.w + GROUP_CONTAINER_PADDING * 2, h: cl.bbox.h + top + GROUP_CONTAINER_PADDING },
+  };
+}
+
+const refLinks = (refs: Ref[]): Array<[QualifiedName, QualifiedName]> =>
+  refs.map((r) => [r.source.table, r.target.table]);
+
+/** Undirected connected parts of `members` over `links`, each keeping the members' input order. */
+function connectedParts(members: string[], links: Array<[string, string]>): string[][] {
+  const adj = new Map<string, string[]>();
+  for (const m of members) adj.set(m, []);
+  for (const [from, to] of links) {
+    const a = adj.get(from);
+    const b = adj.get(to);
+    if (!a || !b) continue;
+    a.push(to);
+    b.push(from);
+  }
+  const partOf = new Map<string, number>();
+  let count = 0;
+  for (const start of members) {
+    if (partOf.has(start)) continue;
+    const stack = [start];
+    partOf.set(start, count);
+    while (stack.length > 0) {
+      const cur = stack.pop()!;
+      for (const nb of adj.get(cur) ?? []) {
+        if (partOf.has(nb)) continue;
+        partOf.set(nb, count);
+        stack.push(nb);
+      }
+    }
+    count++;
+  }
+  const parts: string[][] = Array.from({ length: count }, () => []);
+  for (const m of members) parts[partOf.get(m)!]!.push(m);
+  return parts;
+}
+
+interface PackItem {
+  id: string;
+  w: number;
+  h: number;
+}
+
+/**
+ * Shelf-pack rigid boxes into rows of a target width chosen for a near-landscape aspect. Tallest
+ * first keeps row waste low; the id tie-break keeps it deterministic. Returns top-left offsets.
+ */
+function shelfPack(items: PackItem[], gap: number): Map<string, { x: number; y: number }> {
+  const order = [...items].sort((a, b) => b.h - a.h || b.w - a.w || cmpCodeUnit(a.id, b.id));
+  let area = 0;
+  let widest = 0;
+  for (const it of order) {
+    area += (it.w + gap) * (it.h + gap);
+    widest = Math.max(widest, it.w);
+  }
+  const rowWidth = Math.max(widest, Math.sqrt(area * PACK_ASPECT));
+
+  const out = new Map<string, { x: number; y: number }>();
+  let x = 0;
+  let y = 0;
+  let rowH = 0;
+  for (const it of order) {
+    if (x > 0 && x + it.w > rowWidth) {
+      y += rowH + gap;
+      x = 0;
+      rowH = 0;
+    }
+    out.set(it.id, { x, y });
+    x += it.w + gap;
+    rowH = Math.max(rowH, it.h);
+  }
+  return out;
+}
+
+/**
+ * Inner layout of one cluster, normalized to a 0-origin bbox. Members with no ref path between
+ * them get no rank relation from dagre and would line up along one rank as an endless strip, so
+ * each connected part is laid out on its own and the parts are packed (audit F17).
+ */
 function layoutClusterLocal(
   cluster: Cluster,
   input: SmartLayoutInput,
@@ -263,6 +409,31 @@ function layoutClusterLocal(
   if (cluster.members.length === 0) {
     return { positions: new Map(), bbox: { w: 0, h: 0 } };
   }
+  const internalRefs = internalRefsOf(cluster.members, input.refs);
+  const parts = connectedParts(cluster.members, refLinks(internalRefs));
+  if (parts.length === 1) return layoutConnectedPart(cluster, internalRefs, input, globalOrientation, seps);
+
+  const laid = parts.map((members) => ({
+    id: members[0]!,
+    cl: layoutConnectedPart({ ...cluster, members }, internalRefsOf(members, internalRefs), input, globalOrientation, seps),
+  }));
+  const at = shelfPack(laid.map((p) => ({ id: p.id, w: p.cl.bbox.w, h: p.cl.bbox.h })), seps.intraNode);
+  const positions = new Map<QualifiedName, { x: number; y: number }>();
+  for (const p of laid) {
+    const o = at.get(p.id)!;
+    for (const [name, pos] of p.cl.positions) positions.set(name, { x: o.x + pos.x, y: o.y + pos.y });
+  }
+  return normalizeLayout(positions, input.sizeOf);
+}
+
+/** dagre layout of one connected set of tables, normalized to a 0-origin bbox. */
+function layoutConnectedPart(
+  cluster: Cluster,
+  internalRefs: Ref[],
+  input: SmartLayoutInput,
+  globalOrientation: Orientation,
+  seps: Seps,
+): ClusterLayout {
   if (cluster.members.length === 1) {
     const only = cluster.members[0]!;
     const size = input.sizeOf(only);
@@ -271,11 +442,6 @@ function layoutClusterLocal(
       bbox: { w: size.width, h: size.height },
     };
   }
-
-  const memberSet = new Set(cluster.members);
-  const internalRefs = input.refs.filter(
-    (r) => memberSet.has(r.source.table) && memberSet.has(r.target.table),
-  );
 
   const orient = pickClusterOrientation(cluster, internalRefs, globalOrientation);
 
@@ -380,22 +546,15 @@ function layoutMeta(
     });
   }
 
-  const pairWeight = new Map<string, number>();
+  // Weight accumulates on the unnamed (v,w) edge itself: cluster ids embed DBML names, which may
+  // contain any character, so no string key joining two ids is safe to split again (audit F54).
   for (const r of refs) {
-    const sc = memberToCluster.get(r.source.table);
-    const tc = memberToCluster.get(r.target.table);
-    if (!sc || !tc || sc === tc) continue;
     const { child, parent } = normalizeDirection(r);
     const from = memberToCluster.get(child);
     const to = memberToCluster.get(parent);
-    if (!from || !to || from === to) continue;
-    const key = `${from} ${to}`;
-    pairWeight.set(key, (pairWeight.get(key) ?? 0) + 1);
-  }
-  for (const [key, weight] of pairWeight) {
-    const [from, to] = key.split(' ');
-    if (!from || !to) continue;
-    g.setEdge(from, to, { weight });
+    if (!from || !to || from === to || !g.hasNode(from) || !g.hasNode(to)) continue;
+    const prev = g.edge(from, to) as { weight: number } | undefined;
+    g.setEdge(from, to, { weight: (prev?.weight ?? 0) + 1 });
   }
 
   dagre.layout(g);
@@ -410,6 +569,66 @@ function layoutMeta(
     });
   }
   return origins;
+}
+
+/**
+ * World origin of every laid-out cluster. Clusters linked by cross-cluster refs keep the ranked
+ * outer dagre + compaction; sets with no ref between them have no rank relation, so dagre would
+ * strip them along one rank — they are packed side by side instead (audit F17).
+ */
+function placeClusters(
+  clusters: Cluster[],
+  refs: Ref[],
+  clusterLayouts: Map<string, ClusterLayout>,
+  orientation: Orientation,
+  seps: Seps,
+): Map<string, { x: number; y: number }> {
+  const placed = clusters.filter((c) => clusterLayouts.has(c.id));
+  const memberToCluster = new Map<QualifiedName, string>();
+  for (const c of placed) for (const m of c.members) memberToCluster.set(m, c.id);
+  const links: Array<[string, string]> = [];
+  for (const r of refs) {
+    const a = memberToCluster.get(r.source.table);
+    const b = memberToCluster.get(r.target.table);
+    if (a && b && a !== b) links.push([a, b]);
+  }
+  const parts = connectedParts(placed.map((c) => c.id), links);
+
+  const local = new Map<string, { x: number; y: number }>();
+  const items: PackItem[] = [];
+  for (const ids of parts) {
+    const box = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+    let origins: Map<string, { x: number; y: number }>;
+    if (ids.length === 1) {
+      origins = new Map([[ids[0]!, { x: 0, y: 0 }]]);
+    } else {
+      const idSet = new Set(ids);
+      origins = layoutMeta(placed.filter((c) => idSet.has(c.id)), refs, clusterLayouts, orientation, seps);
+      compactClusters(origins, clusterLayouts, seps.clusterGap);
+    }
+    for (const [id, o] of origins) {
+      const bb = clusterLayouts.get(id)!.bbox;
+      box.minX = Math.min(box.minX, o.x);
+      box.minY = Math.min(box.minY, o.y);
+      box.maxX = Math.max(box.maxX, o.x + bb.w);
+      box.maxY = Math.max(box.maxY, o.y + bb.h);
+    }
+    if (!Number.isFinite(box.minX)) continue;
+    for (const [id, o] of origins) local.set(id, { x: o.x - box.minX, y: o.y - box.minY });
+    items.push({ id: ids[0]!, w: box.maxX - box.minX, h: box.maxY - box.minY });
+  }
+
+  const at = shelfPack(items, seps.clusterGap);
+  const out = new Map<string, { x: number; y: number }>();
+  for (const ids of parts) {
+    const o = at.get(ids[0]!);
+    if (!o) continue;
+    for (const id of ids) {
+      const l = local.get(id);
+      if (l) out.set(id, { x: o.x + l.x, y: o.y + l.y });
+    }
+  }
+  return out;
 }
 
 /* ----- Cluster compaction (order-preserving, per-axis; topology-preserving) ----- */
@@ -480,7 +699,8 @@ function compactAxis(boxes: CBox[], gap: number, horizontal: boolean): void {
     for (const p of placed) {
       const pCrossStart = horizontal ? p.y : p.x;
       const pCrossEnd = pCrossStart + (horizontal ? p.h : p.w);
-      const crossOverlap = bCrossStart < pCrossEnd && pCrossStart < bCrossEnd;
+      // Gap-inflated: a diagonal neighbour within `gap` on the cross axis must also keep `gap`.
+      const crossOverlap = bCrossStart < pCrossEnd + gap && pCrossStart < bCrossEnd + gap;
       if (!crossOverlap) continue;
       const edge = (horizontal ? p.x + p.w : p.y + p.h) + gap;
       if (edge > pos) pos = edge;
@@ -511,7 +731,7 @@ function radialPlace(
     const da = meta.get(a)?.inDeg ?? 0;
     const db = meta.get(b)?.inDeg ?? 0;
     if (da !== db) return da - db;
-    return a.localeCompare(b);
+    return cmpCodeUnit(a, b);
   });
 
   let maxSat = 0;
@@ -557,13 +777,11 @@ function radialPlace(
 
 function columnAlignPass(
   positions: Map<QualifiedName, { x: number; y: number }>,
-  input: SmartLayoutInput,
+  refs: Ref[],
+  tableByName: Map<QualifiedName, Table>,
   movableOrNull: Set<QualifiedName> | null,
   meta: Map<QualifiedName, TableMeta>,
 ): void {
-  const tableByName = new Map<QualifiedName, Table>();
-  for (const t of input.tables) tableByName.set(t.name, t);
-
   const isMovable = (name: QualifiedName): boolean =>
     movableOrNull === null ? true : movableOrNull.has(name);
   const degOf = (name: QualifiedName): number => meta.get(name)?.totalDeg ?? 0;
@@ -574,7 +792,7 @@ function columnAlignPass(
 
   for (let pass = 0; pass < COLUMN_ALIGN_PASSES; pass++) {
     let any = false;
-    for (const r of input.refs) {
+    for (const r of refs) {
       const src = tableByName.get(r.source.table);
       const tgt = tableByName.get(r.target.table);
       if (!src || !tgt) continue;
@@ -676,7 +894,7 @@ function overlap(a: Box, b: Box): boolean {
   return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
-/* ----- Incremental: lay out the movable subset, anchor to fixed FK-neighbors ----- */
+/* ----- Incremental: lay out the movable subset, place it by its group, then FK neighbours ----- */
 
 function layoutIncremental(
   analysis: Analysis,
@@ -689,50 +907,112 @@ function layoutIncremental(
   const positions = new Map<QualifiedName, { x: number; y: number }>();
   for (const [k, v] of existing) positions.set(k, { ...v });
 
+  const tableByName = new Map<QualifiedName, Table>();
+  for (const t of input.tables) tableByName.set(t.name, t);
+
+  // Tables whose position is final: fixed ones now, each movable block once placed. A movable
+  // table's stale `existing` position must neither block nor shape a container.
+  const settled = new Set<QualifiedName>();
   const obstacles: Box[] = [];
-  for (const [name, pos] of existing) {
-    if (!movable.has(name)) {
-      const s = input.sizeOf(name);
-      obstacles.push({ x: pos.x, y: pos.y, w: s.width, h: s.height });
+  const rectOf = (name: QualifiedName): Box | null => {
+    const p = positions.get(name);
+    if (!p) return null;
+    const s = input.sizeOf(name);
+    return { x: p.x, y: p.y, w: s.width, h: s.height };
+  };
+  for (const name of existing.keys()) {
+    if (movable.has(name)) continue;
+    const r = rectOf(name);
+    if (!r) continue;
+    settled.add(name);
+    obstacles.push(r);
+  }
+  const settledBox = (names: QualifiedName[]): Box | null => {
+    let box: Box | null = null;
+    for (const n of names) {
+      if (!settled.has(n)) continue;
+      const r = rectOf(n);
+      if (r) box = box ? union(box, r) : r;
+    }
+    return box;
+  };
+
+  for (const cluster of analysis.clusters) {
+    const members = cluster.members.filter((m) => movable.has(m));
+    if (members.length === 0) continue;
+
+    // Settle the block in local coords first (as in 'all'), so the spot found below stays final.
+    const local = layoutClusterLocal({ ...cluster, members }, input, orientation, seps);
+    columnAlignPass(local.positions, internalRefsOf(members, input.refs), tableByName, null, analysis.meta);
+    resolveCollisions(local.positions, input.sizeOf, null, seps);
+    const block = normalizeLayout(local.positions, input.sizeOf);
+
+    const ownGroup = cluster.kind === 'group' ? cluster.groupName ?? null : null;
+    const ownBox = ownGroup === null ? null : settledBox(groupTablesOf(input.groups, ownGroup));
+    const foreign: Box[] = [];
+    for (const g of input.groups) {
+      if (g.name === ownGroup) continue;
+      const b = settledBox(g.tables);
+      if (b) foreign.push(containerRect(b));
+    }
+
+    // A grouped block belongs next to its own group's tables (cross-group FK neighbours would
+    // drag it into a foreign container — audit F53); FK neighbours only anchor the rest.
+    const anchor = ownBox
+      ? { x: ownBox.x + (ownBox.w - block.bbox.w) / 2, y: ownBox.y + (ownBox.h - block.bbox.h) / 2 }
+      : computeAnchor(members, input.refs, settled, rectOf, obstacles, block.bbox);
+    const accept = (b: Box): boolean => {
+      const shell = ownBox ? containerRect(union(ownBox, b)) : b;
+      return foreign.every((f) => !overlap(inflate(shell, seps.minGap), f));
+    };
+    const at = findFreeSpot(anchor, block.bbox, obstacles, seps.minGap, accept);
+
+    for (const [name, pos] of block.positions) {
+      positions.set(name, { x: at.x + pos.x, y: at.y + pos.y });
+      settled.add(name);
+      const r = rectOf(name);
+      if (r) obstacles.push(r);
     }
   }
 
-  const movableByCluster = new Map<string, QualifiedName[]>();
-  for (const c of analysis.clusters) {
-    const ms = c.members.filter((m) => movable.has(m));
-    if (ms.length > 0) movableByCluster.set(c.id, ms);
-  }
-
-  for (const [cid, members] of movableByCluster) {
-    const cluster = analysis.clusters.find((c) => c.id === cid);
-    if (!cluster) continue;
-
-    const subCluster: Cluster = { ...cluster, members };
-    const cl = layoutClusterLocal(subCluster, input, orientation, seps);
-
-    const anchor = computeAnchor(members, input.refs, positions, obstacles);
-    const placement = findFreeSpot(anchor, cl.bbox, obstacles);
-
-    for (const [name, pos] of cl.positions) {
-      positions.set(name, {
-        x: placement.x + pos.x,
-        y: placement.y + pos.y,
-      });
-    }
-    obstacles.push({ x: placement.x, y: placement.y, w: cl.bbox.w, h: cl.bbox.h });
-  }
-
-  columnAlignPass(positions, input, movable, analysis.meta);
+  // Safety net only: every block was placed clear of obstacles.
   resolveCollisions(positions, input.sizeOf, movable, seps);
 
   return roundPositions(positions);
 }
 
+function groupTablesOf(groups: TableGroup[], name: string): QualifiedName[] {
+  return groups.find((g) => g.name === name)?.tables ?? [];
+}
+
+function union(a: Box, b: Box): Box {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
+function inflate(b: Box, by: number): Box {
+  return { x: b.x - by, y: b.y - by, w: b.w + by * 2, h: b.h + by * 2 };
+}
+
+/** The group container the renderer draws around a bbox of member tables. */
+function containerRect(b: Box): Box {
+  return {
+    x: b.x - GROUP_CONTAINER_PADDING,
+    y: b.y - GROUP_CONTAINER_PADDING - GROUP_CONTAINER_HEADER,
+    w: b.w + GROUP_CONTAINER_PADDING * 2,
+    h: b.h + GROUP_CONTAINER_PADDING * 2 + GROUP_CONTAINER_HEADER,
+  };
+}
+
+/** Top-left for a block centred on its settled FK neighbours; else to the right of everything. */
 function computeAnchor(
   members: QualifiedName[],
   refs: Ref[],
-  positions: Map<QualifiedName, { x: number; y: number }>,
+  settled: Set<QualifiedName>,
+  rectOf: (name: QualifiedName) => Box | null,
   obstacles: Box[],
+  size: { w: number; h: number },
 ): { x: number; y: number } {
   const memberSet = new Set(members);
   let sumX = 0;
@@ -741,15 +1021,15 @@ function computeAnchor(
   for (const r of refs) {
     const s = r.source.table;
     const t = r.target.table;
-    if (memberSet.has(s) && !memberSet.has(t)) {
-      const p = positions.get(t);
-      if (p) { sumX += p.x; sumY += p.y; n++; }
-    } else if (memberSet.has(t) && !memberSet.has(s)) {
-      const p = positions.get(s);
-      if (p) { sumX += p.x; sumY += p.y; n++; }
-    }
+    const other = memberSet.has(s) && !memberSet.has(t) ? t : memberSet.has(t) && !memberSet.has(s) ? s : null;
+    if (other === null || !settled.has(other)) continue;
+    const b = rectOf(other);
+    if (!b) continue;
+    sumX += b.x + b.w / 2;
+    sumY += b.y + b.h / 2;
+    n++;
   }
-  if (n > 0) return { x: sumX / n, y: sumY / n };
+  if (n > 0) return { x: sumX / n - size.w / 2, y: sumY / n - size.h / 2 };
 
   let maxX = 0;
   let minY = 0;
@@ -762,24 +1042,59 @@ function computeAnchor(
   return { x: maxX + INCREMENTAL_STEP, y: minY };
 }
 
+/**
+ * Nearest free top-left to `anchor` on an INCREMENTAL_STEP lattice, searched ring by ring
+ * (Chebyshev rings, Euclidean order within a ring — deterministic). A spot is free when the block,
+ * grown by `gap`, hits no obstacle and `accept` agrees. If the whole search window is taken, the
+ * block goes right of every obstacle, where nothing can collide.
+ */
 function findFreeSpot(
   anchor: { x: number; y: number },
   size: { w: number; h: number },
   obstacles: Box[],
+  gap: number,
+  accept: (b: Box) => boolean,
 ): { x: number; y: number } {
-  let x = anchor.x;
-  let y = anchor.y;
-  for (let tries = 0; tries < 64; tries++) {
-    const candidate: Box = { x, y, w: size.w, h: size.h };
-    let hit = false;
-    for (const o of obstacles) {
-      if (overlap(candidate, o)) { hit = true; break; }
+  const reach = SEARCH_RINGS * INCREMENTAL_STEP + gap;
+  const win: Box = { x: anchor.x - reach, y: anchor.y - reach, w: size.w + reach * 2, h: size.h + reach * 2 };
+  const near = obstacles.filter((o) => overlap(o, win));
+  const isFree = (x: number, y: number): boolean => {
+    const b: Box = { x, y, w: size.w, h: size.h };
+    const grown = inflate(b, gap);
+    for (const o of near) if (overlap(grown, o)) return false;
+    return accept(b);
+  };
+
+  for (let r = 0; r <= SEARCH_RINGS; r++) {
+    for (const [dx, dy] of ringOffsets(r)) {
+      const x = anchor.x + dx * INCREMENTAL_STEP;
+      const y = anchor.y + dy * INCREMENTAL_STEP;
+      if (isFree(x, y)) return { x, y };
     }
-    if (!hit) return { x, y };
-    x += INCREMENTAL_STEP;
-    if (tries % 10 === 9) { x = anchor.x; y += INCREMENTAL_STEP; }
   }
-  return { x, y };
+
+  let maxX = anchor.x;
+  for (const o of obstacles) maxX = Math.max(maxX, o.x + o.w);
+  return { x: maxX + INCREMENTAL_STEP, y: anchor.y };
+}
+
+const ringCache = new Map<number, Array<[number, number]>>();
+
+function ringOffsets(r: number): Array<[number, number]> {
+  const cached = ringCache.get(r);
+  if (cached) return cached;
+  const out: Array<[number, number]> = [];
+  if (r === 0) {
+    out.push([0, 0]);
+  } else {
+    for (let d = -r; d <= r; d++) {
+      out.push([d, -r], [d, r]);
+      if (d !== -r && d !== r) out.push([-r, d], [r, d]);
+    }
+    out.sort((a, b) => a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]) || a[1] - b[1] || a[0] - b[0]);
+  }
+  ringCache.set(r, out);
+  return out;
 }
 
 function roundPositions(
