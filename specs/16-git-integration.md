@@ -100,9 +100,9 @@ La sección **Historial** lista los commits que tocan el diagrama (`git log --
 con el view-state actual (pan/zoom/oculto se mantienen). Se renderiza en un overlay
 de solo lectura (`gitView.kind === 'timeTravel'`). **No** se ejecuta `git checkout`
 real. "Salir" pide al host re-enviar el estado de trabajo. Mientras dura, el host guarda
-el schema de la revisión (`timeTravelSchema`) y **Export Schema** exporta esa revisión (lo
-que está en pantalla, igual que Export image), no el working tree; se limpia al salir, al
-re-hidratar y al entrar en merge.
+el overlay (`gitOverlay`, con el schema+layout de la revisión) y **Export Schema** exporta esa
+revisión (lo que está en pantalla, igual que Export image), no el working tree; se limpia al
+salir y al entrar en merge. Un webview recargado recibe de nuevo `git:timeTravel:enter`.
 
 ### Diff (lo más pesado) — framing Previous/Current
 "Diff against HEAD" compara el working tree contra HEAD. El host parsea HEAD
@@ -151,7 +151,10 @@ marca `is-focused` los routes cuyo endpoint coincide. Aplica en vista normal, di
 
 El gate de solo lectura es único: `isCanvasReadOnly(s) = mergeConflicts != null ||
 gitView != null`, consultado por drag/persist/undo/redo/marquee/teclado/smart-layout,
-edición de edges y el cinturón CSS `.is-merge-locked`. Merge y git-overlay son
+edición de edges, el panel **Diagram Views** (ocultar/colapsar/color de grupos, ocultar tablas:
+botones deshabilitados y las acciones `setGroup`/`setTableHidden`/`setTableColor`/`setEdgeColor`
+del store son no-op) y el cinturón CSS `.is-merge-locked`. Entrar en time-travel limpia los mapas
+de diff (solo son válidos bajo `gitView.kind === 'diff'`). Merge y git-overlay son
 mutuamente excluyentes (un merge del host limpia `gitView`).
 
 ### Gate en dos capas: host autoritativo + webview (decisión 2026-10-01)
@@ -172,11 +175,37 @@ de entrar sigue vivo, y el host acepta cualquier escritura. Por eso:
 - **Conflictos resueltos fuera del diagrama.** El watcher del sidecar re-detecta: si ya no hay
   conflicto, el host postea `merge:end` y recarga el layout; si la detección falla, el panel
   queda en solo lectura con el error visible (nunca un layout vacío editable).
-- **Webview.** `schedulePersist` evalúa el gate **al disparar** el timer, no solo al
-  programarlo, y entrar en solo lectura cancela el timer pendiente. Un write fallido al aplicar
+- **Webview.** `schedulePersist` postea **al instante** (F22: sin timer propio que pueda
+  dispararse ya dentro de un overlay o morir con el iframe) y evalúa el gate en ese momento; la
+  última edición de trabajo ya está en el host cuando se pide un overlay. Un write fallido al aplicar
   un merge conserva las decisiones del usuario (no re-postea `merge:begin` desde cero).
 - Salir de cualquier overlay (incluido "Diff against HEAD" abierto desde time-travel) vuelve
   siempre al estado de trabajo.
+
+**Implementación.** `readOnly` del host es un getter derivado de su estado real
+(`pendingMerge` / `mergeUnreadable` → `'merge'`, si no `gitOverlay.kind`), así entrada y salida no
+pueden desincronizarse con una bandera aparte. Entrar en time-travel o diff vuelca antes el persist
+pendiente del host (la última edición de trabajo llega al disco); el webview no tiene persist
+pendiente (postea cada edición al instante). Diff desde time-travel: el host re-envía primero el schema+layout de trabajo y
+luego `git:diff:enter` (el diff siempre cubre el working tree). Un reload del watcher o de una
+operación git (stash/revert) durante un overlay se marca `reloadDeferred` y se aplica al salir;
+el host postea el `exit` **al final** (schema → layout → `merge:begin` si apareció → exit), así el
+webview nunca queda editable con la revisión pasada. Ese layout (y el que precede a un diff abierto
+desde time-travel) va como `layout:external-change` sólo si el texto del sidecar cambió desde la
+última vez que el host lo vio; si no, `layout:loaded` — el webview conserva el historial de undo
+guardado al entrar (spec 11, F76). Un webview recargado durante un diff recibe
+el diff **recalculado** (el working tree pudo cambiar); el host lo calcula **antes** de postear el
+layout/schema de trabajo, que salen seguidos del `git:diff:enter`: si no, el webview fresco quedaba
+editable mientras el host descartaba sus persists.
+
+Las transiciones de overlay (entrar/salir de time-travel o diff, y el `ready` de hidratación) se
+**serializan** en el host: un doble click en *Exit* hacía que el segundo exit se posteara antes de
+que el primero enviara el estado de trabajo, desbloqueando la revisión pasada; el siguiente drag
+escribía esa revisión sobre el sidecar. Un exit sin overlay activo (repetido, o un merge que ya
+tomó el control) no postea nada. Además `sendLayout` descarta el persist pendiente: lo que el webview
+va a mostrar es la verdad, y un persist aceptado contra lo que mostraba antes no puede sobrevivirle.
+Si el host descarta un `layout:persist` por el gate, al salir del overlay re-envía el layout aunque
+no haya otro cambio, así la edición descartada se revierte a la vista en vez de quedar como guardada.
 
 ## Modelo de datos / tipos afectados
 
@@ -205,7 +234,7 @@ lleva la tabla Previous también para las tablas **modificadas** (no solo elimin
 - Diff puro → `src/extension/schemaDiff.ts` (`diffSchemas`).
 - Orquestación host → `panel.ts` (`diagramScope`, `sendGitStatus`, `sendStashes`,
   `sendCommits`, `handleGitCommit/Restore/StashPush/StashOp`, `enterTimeTravel`,
-  `exitTimeTravel`, `enterDiff`, `reloadFromDisk`).
+  `leaveOverlay`, `enterDiff`, `reloadFromDisk`).
 - Read-only + overlay on-canvas → patrón de merge (gate `mergeConflicts`,
   `mergeGhosts`). Nuevo: `gitBanner.tsx`, `diffGhosts.tsx`. Diff inline → `tableNode.tsx`
   (`buildDiffRows` + filas `is-diff-add/del`). Cámara → `fitToBbox` (`render/viewport.ts`).
@@ -221,12 +250,13 @@ lleva la tabla Previous también para las tablas **modificadas** (no solo elimin
 
 Namespace `git:`. **Host→Webview:** `git:status`, `git:commitResult`, `git:stashes`,
 `git:opResult`, `git:commits`, `git:timeTravel:enter` (lleva schema+layout de la
-revisión), `git:timeTravel:exit`, `git:diff:enter` (lleva `SchemaDiff`).
+revisión), `git:timeTravel:exit`, `git:diff:enter` (lleva `SchemaDiff`), `git:diff:exit`.
 **Webview→Host:** `git:requestStatus`, `git:commit`, `git:requestStashes`,
 `git:restore`, `git:stashPush`, `git:stashApply`, `git:stashPop`,
 `git:requestCommits`, `git:timeTravel:enter` (`{sha,label}`), `git:timeTravel:exit`,
-`git:diff:enter`. El *exit* del diff es local al webview (el host no cambió el
-schema), a diferencia del time-travel (round-trip para restaurar).
+`git:diff:enter`, `git:diff:exit`. El *exit* del diff también es un round-trip (decisión
+2026-10-01): el host necesita saber que el overlay terminó para volver a aceptar persists, y
+responde `git:diff:exit` tras re-enviar el estado de trabajo si quedó un reload diferido.
 
 ## Anti-goals / fuera de alcance
 

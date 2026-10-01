@@ -85,3 +85,21 @@ describe('merge conflict slice', () => {
     expect(store.getState().mergeHover).toBeNull();
   });
 });
+
+describe('refreshed conflict list', () => {
+  it('keeps picks for identical conflicts and drops picks whose sides changed', () => {
+    store.getState().beginMerge(conflicts);
+    store.getState().setMergeDecisionsBulk('theirs');
+    const moved: SerializableMergeConflict = { ...conflicts[0]!, theirs: { x: 9, y: 9 } };
+    store.getState().beginMerge([moved, conflicts[1]!]);
+    expect(store.getState().mergeDecisions).toEqual({ 'groups::g': 'theirs' });
+  });
+
+  it('a conflict that git could not read blocks with an error and no conflicts to pick', () => {
+    store.getState().beginMerge([], 'could not read');
+    expect(store.getState().mergeError).toBe('could not read');
+    expect(store.getState().mergeConflicts).toEqual([]);
+    store.getState().endMerge();
+    expect(store.getState().mergeError).toBeNull();
+  });
+});

@@ -1,5 +1,6 @@
 import * as dagre from '@dagrejs/dagre';
 import type { QualifiedName, Ref, Table, TableGroup } from '../../../shared/types';
+import { cmpCodeUnit } from '../../../shared/compare';
 import { columnCenterY, type NodeSize } from '../autoLayout';
 import { GROUP_CONTAINER_HEADER, GROUP_CONTAINER_PADDING } from '../density';
 import { classify, type TableMeta } from './classify';
@@ -144,15 +145,10 @@ export function smartLayout(
   return layoutIncremental(analysis, input, orientation, movable, existing, seps);
 }
 
-/** Code-unit order: unlike `localeCompare`, identical on every machine regardless of ICU locale. */
-function cmpCodeUnit(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 /**
  * Table/group order feeds classify, cluster membership and dagre node insertion, so it shapes the
- * result. The host sorts with locale collation, which differs between teammates' locales; re-sort
- * here so a committed sidecar does not churn per machine (audit F88).
+ * result. The host already sorts by code unit; re-sorting keeps any other caller's order from
+ * leaking into a committed sidecar (audit F88).
  */
 function canonicalOrder(input: SmartLayoutInput): SmartLayoutInput {
   return {

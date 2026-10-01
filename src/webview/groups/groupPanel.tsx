@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import type { TableGroup } from '../../shared/types';
-import { store, useAppStore } from '../state/store';
+import { isCanvasReadOnly, store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { ColorPopup } from '../render/colorPopup';
 import { Button } from '../ui/Button';
@@ -28,6 +28,9 @@ function GroupPanelImpl() {
   const open = useAppStore((s) => s.viewsPanelOpen);
   const focusNonce = useAppStore((s) => s.viewsSearchFocusNonce);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  // Hide/collapse/colour are layout edits: during a merge or git overlay they would be reverted on
+  // Apply or never saved, so they are locked like the canvas.
+  const readOnly = useAppStore(isCanvasReadOnly);
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const setOpen = (v: boolean) => store.getState().setViewsPanelOpen(v);
@@ -92,14 +95,14 @@ function GroupPanelImpl() {
         <div class="ddd-group-panel__actions">
           {hasGroups || hiddenTables.size > 0 ? (
             <Tooltip label={anyVisible ? 'Hide all' : 'Show all'}>
-              <Button variant="subtle" size="tool" onClick={toggleAllHidden}>
+              <Button variant="subtle" size="tool" onClick={toggleAllHidden} disabled={readOnly}>
                 {anyVisible ? <IconEye size={13} /> : <IconEyeClosed size={13} />}
               </Button>
             </Tooltip>
           ) : null}
           {hasGroups ? (
             <Tooltip label={anyExpanded ? 'Collapse all groups' : 'Expand all groups'}>
-              <Button variant="subtle" size="tool" onClick={toggleAllCollapsed}>
+              <Button variant="subtle" size="tool" onClick={toggleAllCollapsed} disabled={readOnly}>
                 {anyExpanded ? <IconCollapseAll size={13} /> : <IconExpandAll size={13} />}
               </Button>
             </Tooltip>
@@ -139,6 +142,7 @@ function GroupPanelImpl() {
             hiddenTables={hiddenTables}
             initialExpanded={lcQuery.length > 0}
             filter={lcQuery}
+            readOnly={readOnly}
           />
         ))}
         {ungroupedHidden.length > 0 ? (
@@ -150,7 +154,7 @@ function GroupPanelImpl() {
             <li class="ddd-group-children">
               <ul class="ddd-table-list">
                 {ungroupedHidden.map((name) => (
-                  <TableRow key={name} tableName={name} hidden />
+                  <TableRow key={name} tableName={name} hidden readOnly={readOnly} />
                 ))}
               </ul>
             </li>
@@ -167,9 +171,10 @@ interface GroupRowProps {
   hiddenTables: Set<string>;
   initialExpanded: boolean;
   filter: string;
+  readOnly: boolean;
 }
 
-function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: GroupRowProps) {
+function GroupRow({ group, state, hiddenTables, initialExpanded, filter, readOnly }: GroupRowProps) {
   const [userExpanded, setUserExpanded] = useState(initialExpanded);
   const [popup, setPopup] = useState<{ x: number; y: number } | null>(null);
   const hidden = state?.hidden ?? false;
@@ -225,6 +230,7 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: Group
           variant="subtle"
           size="icon"
           off={hidden}
+          disabled={readOnly}
           onClick={toggleHidden}
           title={hidden ? 'Show group' : 'Hide group'}
         >{hidden ? <IconEyeClosed size={12} /> : <IconEye size={12} />}</Button>
@@ -232,6 +238,7 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: Group
           variant="subtle"
           size="icon"
           active={collapsed}
+          disabled={readOnly}
           onClick={toggleCollapsed}
           title={collapsed ? 'Expand group' : 'Collapse group'}
         >{collapsed ? <IconExpandAll size={12} /> : <IconCollapseAll size={12} />}</Button>
@@ -239,15 +246,17 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: Group
           variant="subtle"
           size="icon"
           onClick={onGearClick}
+          disabled={readOnly}
           title="Configure"
         ><IconSettings size={12} /></Button>
       </li>
-      {popup ? (
+      {popup && !readOnly ? (
         <ColorPopup
           current={color}
           x={popup.x}
           y={popup.y}
           onPick={applyColor}
+          onPreview={(c) => store.getState().setGroup(group.name, { color: c })}
           onReset={resetColor}
           onClose={() => setPopup(null)}
         />
@@ -256,7 +265,7 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: Group
         <li class="ddd-group-children">
           <ul class="ddd-table-list">
             {memberTables.map((name) => (
-              <TableRow key={name} tableName={name} hidden={hiddenTables.has(name)} />
+              <TableRow key={name} tableName={name} hidden={hiddenTables.has(name)} readOnly={readOnly} />
             ))}
           </ul>
         </li>
@@ -265,7 +274,7 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter }: Group
   );
 }
 
-function TableRow({ tableName, hidden }: { tableName: string; hidden: boolean }) {
+function TableRow({ tableName, hidden, readOnly }: { tableName: string; hidden: boolean; readOnly: boolean }) {
   const shortName = tableName.startsWith('public.') ? tableName.slice(7) : tableName;
   const toggle = () => {
     store.getState().setTableHidden(tableName, !hidden);
@@ -278,6 +287,7 @@ function TableRow({ tableName, hidden }: { tableName: string; hidden: boolean })
         variant="subtle"
         size="icon"
         off={hidden}
+        disabled={readOnly}
         onClick={toggle}
         title={hidden ? 'Show table' : 'Hide table'}
       >{hidden ? <IconEyeClosed size={11} /> : <IconEye size={11} />}</Button>

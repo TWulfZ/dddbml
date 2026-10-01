@@ -42,6 +42,9 @@ export interface AppState {
   selectedEdgeId: string | null;
   groups: Record<string, GroupLayout>;
   viewport: ViewportLayout;
+  /** Set by the first `setLayout`. Only that one adopts the saved camera; later host pushes
+   *  (watcher, merge apply, overlay exit, reset) keep the live one (spec 03, F26). */
+  cameraAdopted: boolean;
   theme: 'light' | 'dark';
   ready: boolean;
   selection: Set<QualifiedName>;
@@ -69,9 +72,14 @@ export interface AppState {
   future: EditCommand[];
   /** Hard cap for `past`; oldest entries drop FIFO when exceeded. */
   historyCapacity: number;
+  /** Working undo/redo set aside while a git overlay is up, with the table set it was recorded
+   *  against (spec 11: looking at a revision is not editing; F76). */
+  historyStash: { past: EditCommand[]; future: EditCommand[]; tables: Set<QualifiedName> } | null;
   /** Active layout-merge conflicts (spec 14). Non-null ⇒ the diagram is in blocking
    *  conflict-resolution mode: pan/zoom only, no select/drag/edit/persist until resolved. */
   mergeConflicts: SerializableMergeConflict[] | null;
+  /** Set when the host could not read the conflict from git: still blocking, nothing to pick. */
+  mergeError: string | null;
   /** Per-conflict decisions keyed by `SerializableMergeConflict.id`. Revertible until Apply. */
   mergeDecisions: Record<string, 'ours' | 'theirs'>;
   /** True after Apply is posted to the host, while awaiting `merge:done`. */
@@ -165,7 +173,9 @@ export interface AppActions {
   undo(): void;
   redo(): void;
   clearHistory(): void;
-  beginMerge(conflicts: SerializableMergeConflict[]): void;
+  /** The working layout changed under a git overlay: its stashed history no longer applies. */
+  dropHistoryStash(): void;
+  beginMerge(conflicts: SerializableMergeConflict[], error?: string | null): void;
   setMergeDecision(id: string, side: 'ours' | 'theirs'): void;
   setMergeDecisionsBulk(side: 'ours' | 'theirs'): void;
   setMergeApplying(applying: boolean): void;
@@ -206,6 +216,7 @@ const initial: AppState = {
   selectedEdgeId: null,
   groups: {},
   viewport: { x: 0, y: 0, zoom: 1 },
+  cameraAdopted: false,
   theme: 'light',
   ready: false,
   selection: new Set(),
@@ -225,7 +236,9 @@ const initial: AppState = {
   past: [],
   future: [],
   historyCapacity: 200,
+  historyStash: null,
   mergeConflicts: null,
+  mergeError: null,
   mergeDecisions: {},
   mergeApplying: false,
   mergeView: 'all',
@@ -249,6 +262,16 @@ const initial: AppState = {
   hoveredTable: null,
 };
 
+const NO_DIFF = {
+  diffByTable: null,
+  columnDiffByTable: null,
+  diffBaseByTable: null,
+  diffGhosts: null,
+  refDiff: null,
+  diffRemovedRefs: null,
+  diffCursor: -1,
+} satisfies Partial<AppState>;
+
 /** The canvas is read-only (pan/zoom only) during a merge OR any git overlay (time-travel / diff).
  *  Single predicate so every edit gate honors all three without scattering `||` checks (spec 14/16). */
 export function isCanvasReadOnly(s: AppState): boolean {
@@ -259,10 +282,8 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   ...initial,
   setSchema(schema, parseError) {
     set((s) => {
-      const oldNames = new Set(s.schema.tables.map((t) => t.name));
       const newNames = new Set(schema.tables.map((t) => t.name));
-      const sameTableSet =
-        oldNames.size === newNames.size && [...oldNames].every((n) => newNames.has(n));
+      const sameTableSet = sameNames(newNames, s.schema.tables.map((t) => t.name));
       const patch: Partial<AppState> = { schema, parseError, ready: true };
       if (!sameTableSet) {
         patch.past = [];
@@ -282,6 +303,8 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       if (pos.hidden) hiddenTables.add(name);
       if (pos.color) tableColors.set(name, pos.color);
     }
+    // No position: the auto-layout effect places these, and they then persist as hidden (F66).
+    for (const name of layout.hiddenUnplaced ?? []) hiddenTables.add(name);
     for (const [id, eo] of Object.entries(layout.edges ?? {})) {
       // Orphans no edge can resolve; dropping them here cleans the sidecar on the next persist.
       if (!isEdgeKey(id)) continue;
@@ -299,16 +322,17 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
         edgeLayouts.set(id, e);
       }
     }
-    set({
+    set((s) => ({
       positions,
       hiddenTables,
       tableColors,
       edgeLayouts,
       groups: { ...layout.groups },
-      viewport: { ...layout.viewport },
+      viewport: s.cameraAdopted ? s.viewport : { ...layout.viewport },
+      cameraAdopted: true,
       past: [],
       future: [],
-    });
+    }));
   },
   setTablePos(name, x, y) {
     set((s) => {
@@ -336,6 +360,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setGroup(name, patch) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s; // Diagram Views edits during merge/overlay would be reverted or lost
       const existing = s.groups[name] ?? {};
       const merged: GroupLayout = { ...existing, ...patch };
       if (merged.collapsed === false) delete merged.collapsed;
@@ -348,6 +373,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setTableHidden(name, hidden) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s;
       const next = new Set(s.hiddenTables);
       if (hidden) next.add(name); else next.delete(name);
       return { hiddenTables: next, selection: hidden ? withoutSelected(s.selection, [name]) : s.selection };
@@ -355,6 +381,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setTableColor(name, color) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s;
       const next = new Map(s.tableColors);
       if (color) next.set(name, color); else next.delete(name);
       return { tableColors: next };
@@ -394,6 +421,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setEdgeColor(refId, color) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s;
       const next = new Map(s.edgeLayouts);
       const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
       if (color) merged.color = color; else delete merged.color;
@@ -509,10 +537,14 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   clearHistory() {
     set({ past: [], future: [] });
   },
-  beginMerge(conflicts) {
+  dropHistoryStash() {
+    set((s) => (s.historyStash === null ? s : { historyStash: null }));
+  },
+  beginMerge(conflicts, error = null) {
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
     // A host merge always wins over a git overlay, so clear gitView too.
-    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: -1 });
+    const mergeDecisions = keepUnchangedDecisions(get(), conflicts);
+    set({ mergeConflicts: conflicts, mergeError: error, mergeDecisions, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, historyStash: null, ...NO_DIFF });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -549,7 +581,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     set({ mergeHover: hover });
   },
   endMerge() {
-    set({ mergeConflicts: null, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null });
+    set({ mergeConflicts: null, mergeError: null, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null });
   },
   setGitStatus(status) {
     set({ gitStatus: status });
@@ -570,8 +602,9 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     set({ gitCommits: commits });
   },
   enterTimeTravel(rev, label) {
-    // Read-only preview of a past commit; drop selection so nothing edits behind the gate.
-    set({ gitView: { kind: 'timeTravel', rev, label }, selection: new Set(), selectedEdgeId: null });
+    // Read-only preview of a past commit; drop selection so nothing edits behind the gate. Diff maps
+    // are only valid under a diff view: kept, they would tint the past revision (F63).
+    set((s) => ({ ...NO_DIFF, ...stashHistory(s), gitView: { kind: 'timeTravel', rev, label }, selection: new Set(), selectedEdgeId: null }));
   },
   enterDiff(baseLabel, headLabel, diff) {
     const diffByTable = new Map<QualifiedName, TableDiffStatus>();
@@ -596,6 +629,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       if (r.status === 'removed') removedRefs.push(r);
     }
     set({
+      ...stashHistory(s),
       gitView: { kind: 'diff', baseLabel, headLabel },
       diffByTable,
       columnDiffByTable,
@@ -609,15 +643,11 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     });
   },
   exitGitView() {
-    set({
-      gitView: null,
-      diffByTable: null,
-      columnDiffByTable: null,
-      diffBaseByTable: null,
-      diffGhosts: null,
-      refDiff: null,
-      diffRemovedRefs: null,
-      diffCursor: -1,
+    set((s) => {
+      const stash = s.historyStash;
+      // Same rule as setSchema: commands recorded against tables that no longer exist cannot undo.
+      const restore = stash !== null && sameNames(stash.tables, s.schema.tables.map((t) => t.name));
+      return { ...NO_DIFF, gitView: null, historyStash: null, ...(restore ? { past: stash.past, future: stash.future } : {}) };
     });
   },
   setFocusDimming(on) {
@@ -663,6 +693,31 @@ function withoutSelected(sel: Set<QualifiedName>, names: Iterable<QualifiedName>
     next.delete(n);
   }
   return next ?? sel;
+}
+
+/** A refreshed conflict list keeps the picks whose conflict is identical (same id, same sides); a
+ *  pick made against values that changed on disk would apply something the user never saw. */
+function keepUnchangedDecisions(s: AppState, next: SerializableMergeConflict[]): Record<string, 'ours' | 'theirs'> {
+  if (!s.mergeConflicts) return {};
+  const prev = new Map(s.mergeConflicts.map((c) => [c.id, JSON.stringify(c)]));
+  const kept: Record<string, 'ours' | 'theirs'> = {};
+  for (const c of next) {
+    const decision = s.mergeDecisions[c.id];
+    if (decision && prev.get(c.id) === JSON.stringify(c)) kept[c.id] = decision;
+  }
+  return kept;
+}
+
+/** Moving into a git overlay sets the working history aside; a diff opened from time travel keeps
+ *  the stash taken when the first overlay opened. */
+function stashHistory(s: AppState): Partial<AppState> {
+  if (s.historyStash !== null) return {};
+  return { historyStash: { past: s.past, future: s.future, tables: new Set(s.schema.tables.map((t) => t.name)) }, past: [], future: [] };
+}
+
+function sameNames(a: Set<QualifiedName>, b: QualifiedName[]): boolean {
+  const bs = new Set(b);
+  return a.size === bs.size && [...a].every((n) => bs.has(n));
 }
 
 function pushHistory(s: AppState, cmd: EditCommand): Partial<AppState> {

@@ -127,6 +127,12 @@ export interface Layout {
   tables: Record<QualifiedName, TableLayout>;
   groups: Record<string, GroupLayout>;
   edges?: Record<string, EdgeLayout>;
+  /**
+   * Personal hidden flags of tables with no `tables` entry yet (no shared position, e.g. a new or
+   * never-dragged table, or a corrupt sidecar at open). Rides with `tables` in both directions and
+   * is never serialized to the sidecar (F66).
+   */
+  hiddenUnplaced?: QualifiedName[];
 }
 
 /* ----- Collaborative merge (see specs/14) ----- */
@@ -320,11 +326,15 @@ export type HostToWebview =
   | { type: 'viewport:command'; payload: { action: ViewportCommand } }
   | { type: 'command:autoArrange'; payload: { mode: AutoArrangeMode; orderEdges?: boolean; preserveManualEdges?: boolean } }
   | { type: 'command:orderEdges'; payload: { preserveManualEdges?: boolean } }
+  | { type: 'command:resetLayout' }
   | { type: 'exporters:list'; payload: { exporters: ExporterMeta[] } }
   | { type: 'export:result'; payload: { ok: boolean; warnings?: string[]; message?: string } }
   | { type: 'settings:loaded'; payload: AppSettings }
-  | { type: 'merge:begin'; payload: { conflicts: SerializableMergeConflict[] } }
+  /** `error` set = the conflict could not be read from git: read-only with no conflicts to pick. */
+  | { type: 'merge:begin'; payload: { conflicts: SerializableMergeConflict[]; error: string | null } }
   | { type: 'merge:done' }
+  /** The Apply write failed: leave "Applying…" but keep every decision so the user can retry. */
+  | { type: 'merge:applyFailed' }
   | { type: 'git:status'; payload: GitStatusSummary }
   | { type: 'git:commitResult'; payload: { ok: boolean; message?: string } }
   | { type: 'git:stashes'; payload: { stashes: GitStashEntry[] } }
@@ -333,6 +343,8 @@ export type HostToWebview =
   | { type: 'git:timeTravel:enter'; payload: { rev: string; label: string; schema: Schema; layout: Layout } }
   | { type: 'git:timeTravel:exit' }
   | { type: 'git:diff:enter'; payload: { baseLabel: string; headLabel: string; diff: SchemaDiff } }
+  /** Sent after any deferred working state, so the webview unlocks only once it is on screen. */
+  | { type: 'git:diff:exit' }
   | { type: 'export:prompt' }
   | { type: 'exportImage:prompt' }
   | { type: 'image:result'; payload: { ok: boolean; path?: string; message?: string } };
@@ -342,6 +354,8 @@ export type HostToWebview =
 export type WebviewToHost =
   | { type: 'ready' }
   | { type: 'layout:persist'; payload: Partial<Layout> }
+  /** Personal camera, posted when pan/zoom settles; written to local view-state only (spec 03). */
+  | { type: 'viewport:persist'; payload: ViewportLayout }
   | { type: 'command:reveal'; payload: { tableName: QualifiedName } }
   | { type: 'command:pruneOrphans' }
   | { type: 'command:export'; payload: ExportCommandPayload }
@@ -359,6 +373,7 @@ export type WebviewToHost =
   | { type: 'git:timeTravel:enter'; payload: { sha: string; label: string } }
   | { type: 'git:timeTravel:exit' }
   | { type: 'git:diff:enter' }
+  | { type: 'git:diff:exit' }
   | { type: 'error:log'; payload: { message: string; stack?: string } };
 
 /**

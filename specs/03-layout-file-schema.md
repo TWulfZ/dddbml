@@ -159,10 +159,18 @@ Flujo host (`panel.ts`):
   máquina (`globalStorage`) y un panel sólo conoce los flags de las entradas que se le
   mostraron: reemplazarlo borraba hide/collapse/cámara de otra ventana y el `hidden` de
   tablas sin entrada en el sidecar (p.ej. sidecar corrupto al abrir).
+- **Ocultas sin posición (F66).** Una tabla oculta en el view-state que no tiene entrada en el
+  sidecar (nunca arrastrada, sidecar corrupto o ausente) viaja al webview en
+  `Layout.hiddenUnplaced` (marcador sin posición; nunca se serializa al sidecar). `setLayout` la
+  agrega a `hiddenTables` sin posición, el auto-layout la ubica y desde ahí persiste como
+  `hidden: true` en su entrada. Hasta entonces el webview devuelve el marcador en cada
+  `layout:persist` (va con `tables`), así des-ocultarla o no tocarla nunca se confunden.
 - **Cámara (decisión 2026-10-01, F26).** El webview persiste el `viewport` al terminar un
   pan/zoom (debounced) y solo va al view-state local, nunca al sidecar. Un push de layout del
   host (watcher, merge aplicado, salida de overlay) no reemplaza la cámara actual; el viewport
-  guardado solo se aplica en la carga inicial del panel.
+  guardado solo se aplica en la carga inicial del panel. Las escrituras de view-state del host van
+  encadenadas y leen el layout vigente **al ejecutarse**: un flush que tomó su snapshot antes de un
+  pan/zoom (mientras escribía el sidecar) ya no pisa la cámara más nueva.
 - Keyed por `sha256(dbmlUri.toString())`. Archivos huérfanos (al renombrar/borrar el
   `.dbml`) se acumulan; GC diferido (ver Preguntas abiertas).
 
@@ -217,6 +225,12 @@ Matriz de casos:
 la forma de cada edge (`waypoints`, `sourceSide`/`targetSide`, `dx`/`dy`), porque los waypoints
 absolutos quedarían sueltos al mover las tablas. **Conserva** colores (de tablas, grupos y
 edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados).
+Corre en el webview (`layout/resetLayout.ts`): el host sólo valida el gate y postea
+`command:resetLayout`; el webview recalcula con el auto-layout de la primera apertura (dagre),
+limpia la forma de **todas** las aristas, vacía el historial (sin undo: memento futuro, spec 11)
+y persiste por el `layout:persist` normal. Las entradas huérfanas (tabla fuera del schema)
+conservan posición y color: limpiarlas es trabajo de `Prune orphans`. Antes el host escribía
+`tables: {}`, que borraba colores y flags ocultos y dejaba los waypoints absolutos colgando.
 
 `Prune orphans` se **niega** (aviso) mientras el `.dbml` no parsea en su última lectura o el
 layout aún no se cargó: contra un schema vacío o viejo toda entrada parece huérfana y se

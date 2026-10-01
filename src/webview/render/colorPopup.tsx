@@ -7,6 +7,9 @@ interface ColorPopupProps {
   x: number;
   y: number;
   onPick: (color: string) => void;
+  /** Live preview while dragging inside the native picker; `onPick` then runs once on commit.
+   *  Without it every input event is a pick. */
+  onPreview?: (color: string) => void;
   onClose: () => void;
   onReset?: () => void;
 }
@@ -33,8 +36,41 @@ const PRESETS: BcPreset[] = Array.from({ length: BC_PALETTE_SIZE }, (_, i) => ({
  *
  * Presets are the 12 BC palette colors. Custom hex input remains as escape hatch.
  */
-export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPopupProps) {
+export function ColorPopup({ current, x, y, onPick, onPreview, onClose, onReset }: ColorPopupProps) {
   const popupRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
+  /** A previewed color the picker has not committed yet. */
+  const uncommitted = useRef<string | null>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    const commit = () => {
+      const color = uncommitted.current;
+      uncommitted.current = null;
+      if (color !== null) onPickRef.current(color);
+    };
+    // Native listener: preact/compat rewrites a JSX onChange on <input> into oninput.
+    input.addEventListener('change', commit);
+    return () => {
+      input.removeEventListener('change', commit);
+      commit(); // closed before the picker committed: the previewed color is on screen, so save it
+    };
+  }, []);
+
+  // Any other pick supersedes the preview, or closing the popup would re-apply it.
+  const pick = (color: string) => {
+    uncommitted.current = null;
+    onPick(color);
+  };
+  const reset = onReset
+    ? () => {
+        uncommitted.current = null;
+        onReset();
+      }
+    : null;
 
   useEffect(() => {
     const onDocDown = (e: PointerEvent) => {
@@ -73,7 +109,7 @@ export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPop
             style={{ background: preset.border }}
             title={preset.name}
             aria-label={preset.name}
-            onClick={() => { onPick(preset.border); onClose(); }}
+            onClick={() => { pick(preset.border); onClose(); }}
           />
         ))}
       </div>
@@ -84,12 +120,18 @@ export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPop
             type="color"
             class="ddd-color-popup__input"
             value={toHex(current)}
-            onInput={(e) => onPick((e.currentTarget as HTMLInputElement).value)}
+            ref={inputRef}
+            onInput={(e) => {
+              const value = (e.currentTarget as HTMLInputElement).value;
+              if (!onPreview) { pick(value); return; }
+              uncommitted.current = value;
+              onPreview(value);
+            }}
           />
           <span>Custom…</span>
         </label>
-        {onReset ? (
-          <button class="ddd-color-popup__reset" onClick={() => { onReset(); onClose(); }}>Reset</button>
+        {reset ? (
+          <button class="ddd-color-popup__reset" onClick={() => { reset(); onClose(); }}>Reset</button>
         ) : null}
       </div>
     </div>

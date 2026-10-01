@@ -76,7 +76,7 @@ Panel flotante top-right dentro del viewport (título **"Diagram Views"**), cola
   solo-ícono (`size="icon"`, filas densas) de toggle hidden / collapsed / configurar color.
 - **Hidden (ungrouped)**: al final de la lista, las tablas ocultas individualmente que no son
   miembro de ningún group actual (p. ej. se borró su `TableGroup`), con su toggle por fila. Sin
-  esto quedarían invisibles sin forma de recuperarlas salvo Reset Layout.
+  esto quedarían invisibles sin forma de recuperarlas (Reset Layout conserva los ocultos, spec 03).
 
 Toggles disparan `schedulePersist()` para guardar estado en el layout file.
 

@@ -40,7 +40,8 @@ describe('git view slice (spec 16)', () => {
     store.getState().enterTimeTravel('abc', 'abc');
     store.getState().undo();
     expect(store.getState().positions.get('public.t')).toEqual({ x: 5, y: 5 });
-    expect(store.getState().past).toHaveLength(1);
+    store.getState().exitGitView();
+    expect(store.getState().past).toEqual([move]);
   });
 
   it('enterDiff builds the per-table / column / ref maps and ghosts', () => {
@@ -132,5 +133,32 @@ describe('git view slice (spec 16)', () => {
     store.getState().beginMerge(conflicts);
     expect(store.getState().gitView).toBeNull();
     expect(store.getState().mergeConflicts).toHaveLength(1);
+  });
+});
+
+describe('read-only gate on the git overlays', () => {
+  it('entering time travel from an active diff drops the diff maps (F63)', () => {
+    store.getState().enterDiff('HEAD', 'working', {
+      tables: [{ table: 'public.a', status: 'added', columns: [], base: null, pos: null }],
+      refs: [{ id: 'r1', status: 'added', source: 'public.a', target: 'public.b' }],
+    });
+    store.getState().enterTimeTravel('abc', 'abc');
+    const s = store.getState();
+    expect(s.gitView?.kind).toBe('timeTravel');
+    expect([s.diffByTable, s.columnDiffByTable, s.diffBaseByTable, s.diffGhosts, s.refDiff, s.diffRemovedRefs]).toEqual([null, null, null, null, null, null]);
+  });
+
+  it('Diagram Views and colour edits are refused while read-only', () => {
+    store.getState().enterTimeTravel('abc', 'abc');
+    const before = store.getState();
+    store.getState().setGroup('G', { collapsed: true, hidden: true, color: '#123456' });
+    store.getState().setTableHidden('public.a', true);
+    store.getState().setTableColor('public.a', '#123456');
+    store.getState().setEdgeColor('public.a.id>public.b.id', '#123456');
+    const after = store.getState();
+    expect(after.groups).toBe(before.groups);
+    expect(after.hiddenTables).toBe(before.hiddenTables);
+    expect(after.tableColors).toBe(before.tableColors);
+    expect(after.edgeLayouts).toBe(before.edgeLayouts);
   });
 });

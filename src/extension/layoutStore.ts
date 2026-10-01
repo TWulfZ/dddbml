@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { EdgeLayout, Layout, GroupLayout, TableLayout, Waypoint } from '../shared/types';
 import { isEdgeSide } from '../shared/types';
+import { cmpCodeUnit } from '../shared/compare';
 
 export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
   return dbmlUri.with({ path: dbmlUri.path + '.layout.json' });
@@ -40,13 +41,17 @@ export function hasConflictMarkers(text: string): boolean {
  * purpose: leaving it out is what silently wiped persisted waypoints/colors/sides to `{}`.
  */
 export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
-  return {
+  // The positionless hidden markers belong to the `tables` set: a payload's tables replace both.
+  const tablesFrom = payload.tables ? payload : current;
+  const merged: Layout = {
     version: 1,
     viewport: payload.viewport ?? current.viewport,
-    tables: payload.tables ?? current.tables,
+    tables: tablesFrom.tables ?? current.tables,
     groups: payload.groups ?? current.groups,
     edges: payload.edges ?? current.edges ?? {},
   };
+  if (tablesFrom.hiddenUnplaced && tablesFrom.hiddenUnplaced.length > 0) merged.hiddenUnplaced = tablesFrom.hiddenUnplaced;
+  return merged;
 }
 
 /** Raw sidecar text, or null when the file is missing/unreadable. */
@@ -259,8 +264,7 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
   } else {
     lines.push('  },');
     lines.push('  "edges": {');
-    // Code-unit order, not localeCompare: collaborators on different locales must emit identical files.
-    edgeEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    edgeEntries.sort(([a], [b]) => cmpCodeUnit(a, b));
     edgeEntries.forEach(([k, v], i) => {
       const comma = i < edgeEntries.length - 1 ? ',' : '';
       const hasWaypoints = !!(v.waypoints && v.waypoints.length > 0);

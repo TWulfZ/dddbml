@@ -1,4 +1,5 @@
 import { Parser } from '@dbml/core';
+import { cmpCodeUnit } from '../shared/compare';
 import type {
   Column,
   ColumnDefaultKind,
@@ -174,8 +175,8 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
     }
   }
 
-  tables.sort((a, b) => a.name.localeCompare(b.name));
-  groups.sort((a, b) => a.name.localeCompare(b.name));
+  tables.sort((a, b) => cmpCodeUnit(a.name, b.name));
+  groups.sort((a, b) => cmpCodeUnit(a.name, b.name));
 
   return { tables, refs, groups };
 }

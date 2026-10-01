@@ -281,10 +281,14 @@ en un stack trace en el Output del host.
   (a) volver al spec — aristas congeladas durante el drag, commit único; (b) commit por rAF +
   ruteo incremental sólo de las refs cuyos extremos se movieron. **Decidir con el usuario**;
   no es el síntoma de pan/zoom que se corrigió en 2026-09.
-- [ ] **Persistir la cámara en pan/zoom con rueda.** Sólo los botones de zoom llaman a
-  `schedulePersist`; `panBy`/`zoomAt` no. Una sesión de sólo navegación pierde la cámara al
-  reabrir (spec 03 la guarda en view-state local, no en el sidecar, así que persistirla es
-  barato). ¿Intencional? Si no: `schedulePersist` con debounce en `setViewport`.
+- [x] **Persistir la cámara en pan/zoom.** — **Decisión 2026-10-01 (F26, spec 03 "Cámara"):**
+  una suscripción al store en `persistence.ts` postea `viewport:persist` 300 ms después del
+  último cambio de `viewport` (cualquier origen: rueda, paneo, botones, fit, tween). Mensaje
+  propio, no `schedulePersist`: ese postea el layout entero (caro con 5000 tablas) y está
+  bloqueado en solo lectura; la cámara es personal y se guarda también en overlays/merge. El
+  host la escribe sólo en el view-state local. `setLayout` adopta el `viewport` del host sólo
+  la primera vez (`cameraAdopted`); los pushes posteriores conservan la cámara viva. (Antes
+  este punto decía que los botones de zoom persistían: sólo undo/redo lo hacían.)
 - [ ] **Acotar las superficies world-size** (SVG de aristas, `.ddd-grid`) al rect visible si la
   medición en DevTools → Layers sigue mostrando presión de memoria tras el cambio a 2D.
 

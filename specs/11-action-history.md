@@ -94,8 +94,9 @@ Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor
 | Llamada `redo()` con `future` no vacío | Simétrico. |
 | `undo()` / `redo()` con stack vacío | No-op silencioso. |
 | `setLayout` (load inicial o `layout:external-change`) | `past = [], future = []`. |
-| Entrar a un overlay git (time-travel / diff) | `past`/`future` se guardan aparte; undo/redo son no-op mientras dure (gate de solo lectura). |
-| Salir del overlay git | Se restauran `past`/`future` guardados, salvo que el set de tablas del schema de trabajo haya cambiado mientras tanto (misma regla que `setSchema`). Decisión 2026-10-01: mirar una revisión no es editar. |
+| `dddbml: Reset Layout` (spec 03) | `past = [], future = []` (sin undo hasta el memento v2). |
+| Entrar a un overlay git (time-travel / diff) | `past`/`future` se mueven a `historyStash` (con el set de tablas de trabajo) **antes** de cargar la revisión; undo/redo son no-op mientras dure (gate de solo lectura y stacks vacíos). Un diff abierto desde time-travel conserva el stash del primero. |
+| Salir del overlay git | Se restauran `past`/`future` guardados, salvo que el set de tablas del schema de trabajo haya cambiado mientras tanto (misma regla que `setSchema`). Decisión 2026-10-01: mirar una revisión no es editar. También se descartan si el sidecar cambió en disco durante el overlay (el host lo re-envía como `layout:external-change`, misma regla que esa fila) o si se abrió un merge. |
 | `setSchema` con set de nombres de tabla **distinto** al anterior | `past = [], future = []`. Previene undo a tabla que ya no existe. |
 | `setSchema` con mismo set de tablas (solo columnas cambiaron) | History preservado. |
 
@@ -111,7 +112,7 @@ Round-trip:
 Usuario Ctrl+Z
   → app.tsx onKeyDown
   → store.undo()           (state update síncrono)
-  → schedulePersist()       (debounce 300ms)
+  → schedulePersist()       (post inmediato, F22)
   → postToHost('layout:persist', { tables, … })
   → host onLayoutPersist    (merge + debounce 200ms)
   → fsync atómico al sidecar JSON
@@ -152,7 +153,7 @@ El listener funciona aunque el panel esté colapsado (es global, no del DOM del 
 2. **Schema reload con tabla removida**: si una tabla en `past`/`future` ya no existe tras `setSchema`, el diff de table set dispara `clearHistory`. Sin esto, `undo` intentaría restaurar una posición de tabla que no se renderiza.
 3. **Drag durante undo en curso**: `active = true` en `dragController` previene drags concurrentes; `undo()` es síncrono y no toca `active`. Un drag iniciado inmediatamente tras undo es seguro.
 3b. **Undo/redo durante un drag en curso**: se **ignora** (`preventDefault` + no-op) mientras `isGestureActive()` (drag de tabla o gesto de arista). El gesto reescribe desde su snapshot del `pointerdown` y al soltar empuja un comando que limpia `future`, así que un undo a mitad de gesto se perdería en silencio.
-4. **Spam de Ctrl+Z**: cada undo schedule un persist debounced 300ms. Solo el último gana. Disco lag hasta 300ms tras último undo. Aceptable.
+4. **Spam de Ctrl+Z**: cada undo postea un persist al instante; el debounce de 200 ms del host coalesce la ráfaga y sólo escribe el último. Disco lag hasta 200 ms tras el último undo. Aceptable.
 5. **Selection no se restaura**: undo solo mueve posiciones; `selection`/`tooltip` quedan como estaban. Documentado como intencional v1.
 6. **Tabla hidden + undo**: undo aplica posición a `positions` Map independiente de `hiddenTables`. No requiere lógica especial.
 
