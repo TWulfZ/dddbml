@@ -250,6 +250,8 @@ Aplicado **después** del PascalCase, sobre el último segmento.
 
 **Identificadores válidos**: tras PascalCase + singularize, el nombre de clase pierde los caracteres que no son de identificador y recibe prefijo `_` si no empieza con letra/`$`/`_` (`"2fa_codes"` → `_2faCode`); los nombres de propiedad de relación derivan de él (`_2faCode`). Las columnas cuyo nombre no es identificador se emiten con key entre comillas (`"first name"?: string | null;`): TypeORM toma el nombre de columna de la key, así que no hace falta `name:`.
 
+**Colisiones de nombre de clase**: los nombres se asignan una vez por export (tablas en orden de qualified name) y todo — entity, `() => Target`, tipos de relación — lee de ese mapa. Si el nombre ya lo usa otra tabla (`user` + `users` → `User`) o choca con un import de typeorm o un global usado por los tipos (`Entity`, `Column`, `Record`, `Date`, `Buffer`, `Map`, `Promise`, ...), se sufija `2`, `3`... (`Entity2`) con warning. Los nombres de propiedad de relación siguen derivando del nombre sin sufijo (`records`, no `record2s`); las colisiones dentro de una clase ya las resuelve `_<n>`.
+
 ### Imports
 
 Encabezado de archivo (cuando `options.includeImports === true`):

@@ -180,6 +180,27 @@ describe('generateTypeOrm — relation callback parameters', () => {
   });
 });
 
+describe('generateTypeOrm — class name collisions', () => {
+  it('gives every entity a distinct class name that shadows no import or global', () => {
+    const { content, warnings } = exportDbml(`
+      Table entities { id int [pk] }
+      Table records { id int [pk]
+        entity_id int [ref: > entities.id] }
+      Table user { id int [pk] }
+      Table users { id int [pk]
+        record_id int [ref: > records.id] }
+    `);
+    const classes = [...content.matchAll(/export class (\w+) \{/g)].map((m) => m[1]);
+    expect(new Set(classes).size).toBe(4);
+    expect(classes).not.toContain('Entity');
+    expect(classes).not.toContain('Record');
+    expect(warnings).toHaveLength(3);
+    // Relation targets must name the renamed classes, not the colliding originals.
+    expect(content).not.toMatch(/=> (Entity|Record),/);
+    expect(syntaxErrors(content)).toEqual([]);
+  });
+});
+
 describe('generateTypeOrm — entities without a primary column', () => {
   it('emits a composite pk index as one @PrimaryColumn per member', () => {
     const { content, warnings } = exportDbml(`

@@ -39,6 +39,8 @@ export interface RelationPair {
 }
 
 interface NamingOpts {
+  /** Collision-free class name, used for types. */
+  className(table: QualifiedName): string;
   singularize: boolean;
 }
 
@@ -93,6 +95,7 @@ function propNameFor(
   targetTable: QualifiedName,
   opts: NamingOpts,
 ): string {
+  // The pre-dedup name reads better (`records`, not `record2s`); per-owner collisions get `_N` later.
   const camel = lowerFirst(toClassName(targetTable, opts));
   if (decorator === 'OneToMany' || decorator === 'ManyToMany') return pluralize(camel);
   return camel;
@@ -103,7 +106,7 @@ function tsTypeFor(
   targetTable: QualifiedName,
   opts: NamingOpts,
 ): string {
-  const cls = toClassName(targetTable, opts);
+  const cls = opts.className(targetTable);
   if (decorator === 'OneToMany' || decorator === 'ManyToMany') return `${cls}[]`;
   return cls;
 }

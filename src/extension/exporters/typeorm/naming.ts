@@ -126,7 +126,40 @@ export function toClassName(qualifiedName: string, opts: { singularize: boolean 
   return toIdentifier(words.join(''));
 }
 
-const IDENT = /^[\p{ID_Start}$_][\p{ID_Continue}$‌‍]*$/u;
+// A class with one of these names would clash with a typeorm import or a global the dialect types use.
+const RESERVED_CLASS_NAMES = new Set([
+  'Entity', 'Column', 'PrimaryColumn', 'PrimaryGeneratedColumn', 'Generated', 'OneToOne', 'OneToMany',
+  'ManyToOne', 'ManyToMany', 'JoinColumn', 'JoinTable',
+  'Date', 'Record', 'Buffer', 'Object', 'String', 'Number', 'Boolean', 'Array', 'Map', 'Set',
+  'Promise', 'Error', 'Symbol', 'Function',
+]);
+
+/**
+ * One class name per table, unique within the file. Tables are visited in qualified-name order
+ * so the `2`, `3`... suffixes are deterministic.
+ */
+export function assignClassNames(
+  tables: ReadonlyArray<string>,
+  opts: { singularize: boolean },
+): { names: Map<string, string>; warnings: string[] } {
+  const names = new Map<string, string>();
+  const warnings: string[] = [];
+  const used = new Set<string>();
+  for (const table of [...tables].sort()) {
+    const base = toClassName(table, opts);
+    let name = base;
+    for (let i = 2; used.has(name) || RESERVED_CLASS_NAMES.has(name); i++) name = `${base}${i}`;
+    if (name !== base) {
+      const why = RESERVED_CLASS_NAMES.has(base) ? 'is a reserved name' : 'is already used by another table';
+      warnings.push(`${table}: class name ${base} ${why} — emitted as ${name}.`);
+    }
+    used.add(name);
+    names.set(table, name);
+  }
+  return { names, warnings };
+}
+
+const IDENT =/^[\p{ID_Start}$_][\p{ID_Continue}$‌‍]*$/u;
 
 export function isIdentifier(s: string): boolean {
   return IDENT.test(s);

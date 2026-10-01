@@ -1,11 +1,11 @@
 import type { Column, QualifiedName, Table } from '../../../shared/types';
 import type { Dialect } from './dialect';
-import { isIdentifier, toClassName } from './naming';
+import { isIdentifier } from './naming';
 import type { RelationSide } from './relations';
 
 interface EmitOptions {
   dialect: Dialect;
-  singularize: boolean;
+  className(table: QualifiedName): string;
   emitNullableExplicit: boolean;
 }
 
@@ -21,7 +21,7 @@ export function emitEntity(
   relations: ReadonlyArray<RelationSide>,
   opts: EmitOptions,
 ): EmittedEntity {
-  const className = toClassName(table.name, { singularize: opts.singularize });
+  const className = opts.className(table.name);
   const warnings: string[] = [];
   const decoratorsUsed = new Set<string>(['Entity']);
 
@@ -205,7 +205,7 @@ function emitRelation(
   ownerTable: QualifiedName,
 ): string {
   decoratorsUsed.add(rel.decorator);
-  const targetClass = toClassName(rel.targetTable, { singularize: opts.singularize });
+  const targetClass = opts.className(rel.targetTable);
 
   const inverseFn = `(${shortVar(targetClass)}) => ${shortVar(targetClass)}.${rel.inversePropertyName}`;
   let decoratorArgs = `() => ${targetClass}, ${inverseFn}`;
