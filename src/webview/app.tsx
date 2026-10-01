@@ -15,6 +15,7 @@ import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
 import { lodForZoom } from './render/lod';
 import { useVisibleNames } from './render/useVisibleNames';
+import { edgeKeyedRefs } from './render/edgeKey';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
@@ -25,7 +26,7 @@ import { EdgeOrderProgress } from './render/edgeOrderProgress';
 import { GitBanner, type DiffTarget } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
 import { ErrorBoundary } from './ui/ErrorBoundary';
-import type { QualifiedName, Ref, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
+import type { QualifiedName, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
 
 interface AppProps {
   post: (msg: WebviewToHost) => void;
@@ -194,27 +195,8 @@ export function App(_props: AppProps) {
       return table;
     };
 
-    const effectiveRefs: Ref[] = [];
-    const seen = new Set<string>();
-    // Maps each ref's STABLE id (Ref.id from the parser) to the composite edge key used by the edge
-    // layer — lets the diff overlay tint a newly-added ref by its stable id (spec 16).
-    const refKeyByStableId = new Map<string, string>();
-    for (const r of schema.refs) {
-      const srcM = mapEndpoint(r.source.table);
-      const tgtM = mapEndpoint(r.target.table);
-      if (srcM == null || tgtM == null) continue;
-      if (srcM === tgtM) continue;
-      const key = `${srcM}::${r.source.columns.join(',')}|${tgtM}::${r.target.columns.join(',')}`;
-      refKeyByStableId.set(r.id, key);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      effectiveRefs.push({
-        ...r,
-        id: key,
-        source: { ...r.source, table: srcM },
-        target: { ...r.target, table: tgtM },
-      });
-    }
+    // refKeyByStableId lets the diff overlay tint a newly-added ref by its stable id (spec 16).
+    const { refs: effectiveRefs, keyByStableId: refKeyByStableId } = edgeKeyedRefs(schema.refs, mapEndpoint);
 
     return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs, refKeyByStableId };
   }, [schema, tablesByName, positions, groupState, individuallyHidden, density]);

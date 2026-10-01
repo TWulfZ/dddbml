@@ -4,6 +4,7 @@ import type { AppSettings, ColumnDiffEntry, EdgeLayout, EdgeSide, GitCommitMeta,
 import { defaultSettings, isEdgeSide } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
+import { isEdgeKey } from '../render/edgeKey';
 
 export interface TooltipState {
   title: string;
@@ -280,6 +281,8 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       if (pos.color) tableColors.set(name, pos.color);
     }
     for (const [id, eo] of Object.entries(layout.edges ?? {})) {
+      // Orphans no edge can resolve; dropping them here cleans the sidecar on the next persist.
+      if (!isEdgeKey(id)) continue;
       const e: EdgeLayout = {};
       if (Array.isArray(eo.waypoints) && eo.waypoints.length > 0) {
         e.waypoints = eo.waypoints.map((w) => ({ x: Math.round(w.x), y: Math.round(w.y) }));

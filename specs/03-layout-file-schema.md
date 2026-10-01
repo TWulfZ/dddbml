@@ -88,6 +88,7 @@ Reglas:
 - Si `waypoints` está presente y no vacío, `dx`/`dy` se omiten (los waypoints son la fuente de verdad).
 - Si `waypoints` está vacío o ausente y `dx`/`dy` están presentes, se preservan tal cual (legacy).
 - Entrada `edges[id]` se omite por completo si no tiene ningún campo con datos: ni `waypoints`, `color`, `sourceSide`, `targetSide`, `dx`, ni `dy`.
+- La clave es siempre la compuesta (`render/edgeKey.ts`), nunca el `Ref.id` estable del parser. Versiones ≤0.2.8 del ordenamiento A* / reset de relaciones escribían entradas bajo `Ref.id` (`a(cols)->b(cols)`) que ninguna arista resolvía; al cargar se descartan las claves sin `::`, y el siguiente persist las elimina del sidecar.
 
 ## Reglas de serialización Git-friendly
 

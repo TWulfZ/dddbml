@@ -21,7 +21,7 @@ const mkRef = (id: string, src: string, tgt: string): Ref => ({
 function obstacleSchema(): { schema: Schema; positions: Array<[string, { x: number; y: number }]> } {
   const schema: Schema = {
     tables: [mkTable('public.a'), mkTable('public.b'), mkTable('public.m')],
-    refs: [mkRef('a::c0|b::c0', 'public.a', 'public.b')],
+    refs: [mkRef('public.a(c0)->public.b(c0)', 'public.a', 'public.b')],
     groups: [],
   };
   // a left, b far right, m squarely between them on the same row → forces a detour.
@@ -32,6 +32,9 @@ function obstacleSchema(): { schema: Schema; positions: Array<[string, { x: numb
   ];
   return { schema, positions };
 }
+
+/** The edge layer's key for the a→b ref (render/edgeKey), which runner results must land on. */
+const EDGE_KEY = 'public.a::c0|public.b::c0';
 
 const blankLayout: Layout = { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {} };
 
@@ -56,7 +59,7 @@ describe('runEdgeOrdering — edges-only arrange (spec 05 §9)', () => {
     expect(cmd.from).toEqual([]); // edges-only: no position entries
     expect(cmd.to).toEqual([]);
     expect(cmd.edgesTo.length).toBeGreaterThan(0);
-    const routed = cmd.edgesTo.find(([id]) => id === 'a::c0|b::c0')![1]!;
+    const routed = cmd.edgesTo.find(([id]) => id === EDGE_KEY)![1]!;
     expect(routed.waypoints && routed.waypoints.length).toBeGreaterThan(0); // it detoured
   });
 
@@ -65,19 +68,19 @@ describe('runEdgeOrdering — edges-only arrange (spec 05 §9)', () => {
     store.getState().setSchema(schema, null);
     store.getState().setPositionsBatch(positions);
     // Pre-existing color the routing must preserve and undo must restore.
-    store.getState().applyEdgeLayouts([['a::c0|b::c0', { color: '#abc' }]]);
+    store.getState().applyEdgeLayouts([[EDGE_KEY, { color: '#abc' }]]);
     store.getState().clearHistory();
 
     await runEdgeOrdering({ preserveManual: false });
-    const after = store.getState().edgeLayouts.get('a::c0|b::c0')!;
+    const after = store.getState().edgeLayouts.get(EDGE_KEY)!;
     expect(after.color).toBe('#abc'); // color preserved
     expect(after.waypoints && after.waypoints.length).toBeGreaterThan(0);
 
     store.getState().undo();
-    expect(store.getState().edgeLayouts.get('a::c0|b::c0')).toEqual({ color: '#abc' });
+    expect(store.getState().edgeLayouts.get(EDGE_KEY)).toEqual({ color: '#abc' });
 
     store.getState().redo();
-    expect(store.getState().edgeLayouts.get('a::c0|b::c0')!.waypoints!.length).toBeGreaterThan(0);
+    expect(store.getState().edgeLayouts.get(EDGE_KEY)!.waypoints!.length).toBeGreaterThan(0);
   });
 
   it('preserveManual:true leaves a hand-shaped edge untouched; false re-routes it', async () => {
@@ -89,20 +92,20 @@ describe('runEdgeOrdering — edges-only arrange (spec 05 §9)', () => {
       const ordered = await computeEdgeOrdering({
         schema,
         positions: new Map(positions),
-        existingLayouts: new Map([['a::c0|b::c0', manual]]),
+        existingLayouts: new Map([['public.a(c0)->public.b(c0)', manual]]),
         preserveManual: true,
       });
-      expect(ordered.resets.find(([id]) => id === 'a::c0|b::c0')).toBeUndefined();
+      expect(ordered.resets.find(([id]) => id === 'public.a(c0)->public.b(c0)')).toBeUndefined();
     }
     // preserve = false → re-routed
     {
       const ordered = await computeEdgeOrdering({
         schema,
         positions: new Map(positions),
-        existingLayouts: new Map([['a::c0|b::c0', manual]]),
+        existingLayouts: new Map([['public.a(c0)->public.b(c0)', manual]]),
         preserveManual: false,
       });
-      const pair = ordered.resets.find(([id]) => id === 'a::c0|b::c0');
+      const pair = ordered.resets.find(([id]) => id === 'public.a(c0)->public.b(c0)');
       expect(pair).toBeDefined();
       expect(pair![1].waypoints).not.toEqual(manual.waypoints);
     }

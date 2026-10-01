@@ -1,5 +1,5 @@
-import type { EdgeLayout, QualifiedName } from '../../../shared/types';
-import { store, isCanvasReadOnly } from '../../state/store';
+import type { EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
+import { store, isCanvasReadOnly, type AppState } from '../../state/store';
 import { buildArrangeCommand, buildEdgesResetCommand } from '../../state/history';
 import { schedulePersist } from '../../persistence';
 import { postToHost } from '../../vscode';
@@ -7,6 +7,7 @@ import { estimateSize } from '../autoLayout';
 import { smartLayout, type SmartLayoutMode } from './layout';
 import { computeEdgeResets, computeSelectionEdgeResets, movedNames } from './edgeReset';
 import { computeEdgeOrdering } from './edgeOrdering';
+import { edgeKeyedRefs } from '../../render/edgeKey';
 
 /**
  * Options for an on-demand arrange. Both default ON (spec 05 §9): a table-arrange also orders the
@@ -38,6 +39,20 @@ function beginProgress(): { signal: AbortSignal; onProgress: (p: number) => void
 /** Cancel the in-flight edge-ordering run (the overlay's Cancel button). Discards — no command pushed. */
 export function cancelEdgeOrdering(): void {
   activeArrange?.abort();
+}
+
+/**
+ * Schema refs re-keyed like the rendered edges, so results land on the `edgeLayouts` keys the
+ * renderer reads. Hidden/collapsed endpoints are dropped: A* and the resets work on raw table
+ * geometry, and those edges' layouts live under group-mapped keys.
+ */
+function layoutRefs(s: AppState): Ref[] {
+  const off = new Set<QualifiedName>(s.hiddenTables);
+  for (const g of s.schema.groups) {
+    const st = s.groups[g.name];
+    if (st?.hidden || st?.collapsed) for (const t of g.tables) off.add(t);
+  }
+  return edgeKeyedRefs(s.schema.refs, (t) => (off.has(t) ? null : t)).refs;
 }
 
 /** Merge stranded table-arrange resets with A* SET pairs; A* wins for an overlapping ref id. */
@@ -95,7 +110,7 @@ export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions
   if (result.size === 0) return;
 
   const moved = movedNames(before, result);
-  const strandedResets = computeEdgeResets(s.schema.refs, moved, edgesBefore);
+  const strandedResets = computeEdgeResets(layoutRefs(s), moved, edgesBefore);
 
   if (!orderEdges) {
     // Original behavior: clear stranded waypoints, no A*.
@@ -112,7 +127,7 @@ export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions
   let ordered: Array<[string, EdgeLayout]>;
   try {
     const res = await computeEdgeOrdering({
-      schema: s.schema,
+      schema: { ...s.schema, refs: layoutRefs(s) },
       positions: result,
       existingLayouts: edgesBefore,
       preserveManual,
@@ -158,7 +173,7 @@ export async function runEdgeOrdering(opts: { preserveManual?: boolean } = {}): 
   let ordered: Array<[string, EdgeLayout]>;
   try {
     const res = await computeEdgeOrdering({
-      schema: s.schema,
+      schema: { ...s.schema, refs: layoutRefs(s) },
       positions,
       existingLayouts: edgesBefore,
       preserveManual,
@@ -196,7 +211,7 @@ export function resetSelectedEdges(): void {
   if (s.selection.size === 0) return;
 
   const edgesBefore = new Map(s.edgeLayouts);
-  const resets = computeSelectionEdgeResets(s.schema.refs, s.selection, s.edgeLayouts);
+  const resets = computeSelectionEdgeResets(layoutRefs(s), s.selection, s.edgeLayouts);
   if (resets.length === 0) return;
 
   store.getState().applyEdgeLayouts(resets);
@@ -213,5 +228,5 @@ export function resetSelectedEdges(): void {
 export function countResettableSelectionEdges(): number {
   const s = store.getState();
   if (s.selection.size === 0) return 0;
-  return computeSelectionEdgeResets(s.schema.refs, s.selection, s.edgeLayouts).length;
+  return computeSelectionEdgeResets(layoutRefs(s), s.selection, s.edgeLayouts).length;
 }

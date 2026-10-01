@@ -116,19 +116,25 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
   const groups: TableGroup[] = [];
   const tableToGroup = new Map<QualifiedName, string>();
 
+  // @dbml/core exports TableGroups under `public` (after qualified schemas), so membership
+  // must be fully known before any table is mapped.
   for (const s of db.schemas) {
     const schemaName = s.name && s.name.length > 0 ? s.name : 'public';
-
     for (const g of s.tableGroups ?? []) {
+      const groupName = unquote(g.name);
       const members: QualifiedName[] = [];
       for (const t of g.tables ?? []) {
         const q = qualify(t.schemaName ?? schemaName, t.tableName);
         members.push(q);
-        tableToGroup.set(q, g.name);
+        tableToGroup.set(q, groupName);
       }
       members.sort();
-      groups.push({ name: unquote(g.name), tables: members });
+      groups.push({ name: groupName, tables: members });
     }
+  }
+
+  for (const s of db.schemas) {
+    const schemaName = s.name && s.name.length > 0 ? s.name : 'public';
 
     for (const t of s.tables ?? []) {
       const cleanName = unquote(t.name);
