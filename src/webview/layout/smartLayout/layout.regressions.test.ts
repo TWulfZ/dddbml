@@ -187,3 +187,39 @@ describe('smartLayout — locale-independent determinism (audit F88)', () => {
     expect([...layoutOf(reversed)].sort()).toEqual([...layoutOf(schema)].sort());
   });
 });
+
+describe('smartLayout — selection re-arrange stays in its own group (audit F53)', () => {
+  it('isga.generated.dbml: every cross-group-only table', () => {
+    const schema = fixture('isga.generated.dbml');
+    const base = layoutOf(schema);
+    expect(groupViolations(schema, base)).toEqual([]);
+
+    const groupOf = new Map(schema.tables.map((t) => [t.name, t.groupName]));
+    const neighbours = new Map<QualifiedName, QualifiedName[]>();
+    for (const r of schema.refs) {
+      neighbours.set(r.source.table, [...(neighbours.get(r.source.table) ?? []), r.target.table]);
+      neighbours.set(r.target.table, [...(neighbours.get(r.target.table) ?? []), r.source.table]);
+    }
+    const crossOnly = schema.tables.filter((t) => {
+      const ns = neighbours.get(t.name) ?? [];
+      return t.groupName !== null && ns.length > 0 && ns.every((n) => groupOf.get(n) && groupOf.get(n) !== t.groupName);
+    });
+    expect(crossOnly.length).toBeGreaterThan(0);
+
+    const area = (pos: Map<QualifiedName, { x: number; y: number }>, group: string) => {
+      const c = containers(schema, pos).find((b) => b.name === group)!;
+      return c.w * c.h;
+    };
+    const failures: string[] = [];
+    for (const t of crossOnly) {
+      const pos = smartLayout({
+        tables: schema.tables, refs: schema.refs, groups: schema.groups, sizeOf: sizeOfFor(schema),
+        mode: 'selection', existing: base, selection: new Set([t.name]),
+      });
+      for (const v of groupViolations(schema, pos)) failures.push(`${t.name}: ${v}`);
+      const growth = area(pos, t.groupName!) / area(base, t.groupName!);
+      if (growth > 2) failures.push(`${t.name}: own group area x${growth.toFixed(1)}`);
+    }
+    expect(failures).toEqual([]);
+  });
+});

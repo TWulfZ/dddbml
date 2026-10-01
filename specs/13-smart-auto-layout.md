@@ -168,13 +168,25 @@ cruzado con cajas infladas por el gap (vecinos diagonales). Tras aplanar sólo q
   consciente de densidad). Desempate **determinista** (menor `totalDeg`, luego nombre).
 - **`collisionGuard`**: barrido AABB (≤8 iteraciones, sort por x + early-break) como red de
   seguridad tras los nudges, separando por el eje de menor penetración con `MIN_GAP`.
-- **Modos**: `all` (ELK completo); `new`/`selection` (incremental — solo el subconjunto movible,
-  anclado a vecinos FK fijos, colocado por búsqueda en espiral evitando obstáculos). Atajo: si
-  `movable.size === tables.length`, se usa el camino `all`.
+- **Modos**: `all` (dagre dos niveles); `new`/`selection` (incremental — solo el subconjunto
+  movible). Por clúster, el bloque movible se dispone y se asienta (alineación intra-bloque +
+  colisiones) en coords locales y luego se coloca como bloque rígido:
+  - **Ancla**: si el clúster es un `group` con miembros fijos, el bloque se centra sobre la caja de
+    esos miembros (su propio grupo); los vecinos FK sólo anclan bloques sin grupo o de un grupo
+    totalmente seleccionado (centroide de los **centros** de los vecinos fijos). Anclar por vecinos
+    FK cross-grupo dejaba la tabla dentro del contenedor de otro grupo. (auditoría F53)
+  - **Búsqueda**: anillos alrededor del ancla en una retícula de `INCREMENTAL_STEP` (hasta
+    `SEARCH_RINGS=32` anillos, orden determinista); un lugar es libre si el bloque inflado por
+    `MIN_GAP` no toca ninguna tabla asentada y — contenedores de grupos ajenos como obstáculos — el
+    contenedor resultante del propio grupo (o el bloque, si no tiene grupo) no toca ningún
+    contenedor ajeno. Si nada es libre en la ventana, el bloque va a la derecha de todo.
+  - Tras colocar todo sólo corre `resolveCollisions` como red de seguridad.
+
+  Atajo: si `movable.size === tables.length`, se usa el camino `all`.
 
 Constantes afinables: `INTRA_NODESEP=32`, `INTRA_RANKSEP=64`, `INTER_NODESEP=96`, `INTER_RANKSEP=128`,
 `CLUSTER_MARGIN=48`, `MIN_GAP=16`, `COLUMN_ALIGN_PASSES=3`, `COLUMN_ALIGN_FACTOR=0.3`,
-`INCREMENTAL_STEP=64`.
+`INCREMENTAL_STEP=64`, `SEARCH_RINGS=32`, `PACK_ASPECT=1.6`.
 
 ### Runner (`runner.ts`)
 
@@ -258,8 +270,8 @@ host.
 
 ## Fallos conocidos / casos límite
 
-- **Tabla única en `selection`**: el modo incremental la reubica anclada a sus vecinos FK fijos
-  (útil, no degenerado).
+- **Tabla única en `selection`**: el modo incremental la reubica junto a los miembros fijos de su
+  grupo (o anclada a sus vecinos FK fijos si no tiene grupo) — útil, no degenerado.
 - **FK auto-referente** (tabla→sí misma): ambos extremos "se mueven" → sus waypoints se resetean;
   el self-loop se re-rutea vía `columnYResolver`. Cubierto por test.
 - **`columns[0]`-only**: FKs compuestas alinean solo por la primera columna.
