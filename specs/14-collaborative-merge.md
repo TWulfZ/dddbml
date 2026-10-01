@@ -178,9 +178,9 @@ Sólo el host escribe el sidecar. Flujo:
    recién escrito es JSON válido), postea `layout:loaded` (final,
    con view-state re-aplicado) y `merge:done`. Si la escritura falla, postea
    `merge:applyFailed`: el webview sale de "Applying…" **conservando** las decisiones. El webview sale del modo conflicto
-   en `merge:done`. Un `layout:loaded`/`layout:external-change` que llega con el modo
-   conflicto activo **conserva la cámara actual** del webview: el viewport del host es el
-   view-state guardado antes del merge (pan/zoom no persiste) y Apply hacía saltar la vista.
+   en `merge:done`. El `layout:loaded` final **conserva la cámara actual** del webview, como
+   todo push de layout posterior a la carga inicial (spec 03 "Cámara", F26); antes Apply hacía
+   saltar la vista al viewport guardado.
 
 ### Foco: atenuar el fondo (compartido con el diff de spec 16)
 
