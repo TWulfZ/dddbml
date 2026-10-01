@@ -76,15 +76,29 @@ type WebviewToHost =
 ## Ciclo de vida de una sesión
 
 1. Usuario abre un `.dbml` en VSC.
-2. Ejecuta `dddbml: Open Diagram` (palette o context menu).
+2. Ejecuta `dddbml: Open Diagram` (palette o context menu). Desde el explorer / editor
+   title se abre el archivo clickeado (el `Uri` que pasa VS Code), no el editor activo; desde
+   la palette, el editor activo. Sólo URIs `file:` (`git:`/read-only, p.ej. el lado HEAD de
+   un diff, se rechazan con un error).
 3. `extension.ts` instancia `DiagramPanel` (reutiliza si ya existe para ese archivo).
 4. `DiagramPanel` crea webview en `ViewColumn.Beside`, carga `media/webview.js`.
 5. Webview envía `ready`.
 6. Host parsea `.dbml` → envía `schema:update`.
 7. Host lee `.dbml.layout.json` (crea vacío si no existe) → envía `layout:loaded`.
 8. Webview hace auto-layout dagre para tablas sin posición conocida, renderiza.
-9. Watchers escuchan cambios en ambos archivos → reenvían mensajes al webview.
-10. Drag en webview → `layout:persist` debounced → host escribe sidecar.
+9. Watchers escuchan cambios en ambos archivos (change + create; el sidecar también delete) →
+   un único reload externo con debounce (150 ms) re-parsea el `.dbml` y, si el sidecar cambió,
+   postea **primero** `schema:update` y **después** `layout:external-change`. Nunca layout nuevo
+   contra schema viejo: en un cambio de rama el auto-layout inventaba posiciones para tablas que
+   sólo existían en la revisión anterior y el siguiente persist las escribía. Un sidecar borrado
+   recarga un layout vacío; un persist pendiente del host se descarta al recargar. Los nombres
+   de archivo se escapan como glob literal (`[`, `]`, `{`, `}`, `*`, `?` → clase de un carácter).
+10. Drag en webview → `layout:persist` debounced → host escribe sidecar (debounce de host
+    200 ms). Al **ocultar** el panel (el webview se destruye: `retainContextWhenHidden: false`)
+    o al **cerrarlo**, el host vuela el persist pendiente en el acto en vez de descartarlo;
+    `deactivate()` espera esas escrituras. Ocultar también marca el panel como no hidratado,
+    así los prompts (`export:prompt`, `exportImage:prompt`) esperan al próximo `ready`.
+    Pendiente (webview, fuera del host): el debounce propio del webview muere con el iframe.
 
 ## Dependencias externas
 

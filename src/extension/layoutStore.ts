@@ -10,16 +10,16 @@ export function emptyLayout(): Layout {
   return { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
 }
 
-/** Raised by `readLayout` when the sidecar still holds unresolved git conflict markers.
- *  Callers route this to the 3-way merge resolver instead of silently wiping the layout. */
 /** The sidecar exists but is not valid JSON (hand edit gone wrong). Distinct from a conflict. */
 export class LayoutParseError extends Error {
-  constructor(public readonly parseError: unknown) {
+  constructor(public readonly parseError: unknown, public readonly text: string) {
     super('dddbml: layout sidecar is not valid JSON');
     this.name = 'LayoutParseError';
   }
 }
 
+/** Raised by `readLayout` when the sidecar still holds unresolved git conflict markers.
+ *  Callers route this to the 3-way merge resolver instead of silently wiping the layout. */
 export class LayoutConflictError extends Error {
   constructor(public readonly conflictedText: string) {
     super('dddbml: layout sidecar contains unresolved git conflict markers');
@@ -49,26 +49,39 @@ export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
   };
 }
 
-export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
-  const uri = sidecarUri(dbmlUri);
-  let text: string;
+/** Raw sidecar text, or null when the file is missing/unreadable. */
+export async function readSidecarText(dbmlUri: vscode.Uri): Promise<string | null> {
   try {
-    const bytes = await vscode.workspace.fs.readFile(uri);
-    text = new TextDecoder('utf-8').decode(bytes);
+    const bytes = await vscode.workspace.fs.readFile(sidecarUri(dbmlUri));
+    return new TextDecoder('utf-8').decode(bytes);
   } catch {
-    return emptyLayout(); // missing/unreadable sidecar → treat as empty
+    return null;
   }
+}
+
+/**
+ * Strict counterpart of {@link parseLayout}: throws {@link LayoutConflictError} on conflict markers
+ * and {@link LayoutParseError} on invalid JSON. parseLayout stays lenient (diff/time-travel need
+ * it); any path whose result may be written back must use this, or a corrupt file is adopted as
+ * "empty" and overwritten.
+ */
+export function parseLayoutStrict(text: string): Layout {
   // Do NOT feed conflict-marker soup to JSON.parse: it throws and the old catch wiped the
   // layout to empty. Signal the conflict so the caller can run the 3-way merge instead.
   if (hasConflictMarkers(text)) throw new LayoutConflictError(text);
-  // parseLayout is deliberately lenient (merge/diff paths need it); the live read is not — a
-  // corrupt file must surface instead of being adopted as "empty" and overwritten on next persist.
   try {
     JSON.parse(text);
   } catch (err) {
-    throw new LayoutParseError(err);
+    throw new LayoutParseError(err, text);
   }
   return parseLayout(text);
+}
+
+/** Live read of the sidecar. `text` is the exact content adopted (null = no file → empty layout). */
+export async function readLayout(dbmlUri: vscode.Uri): Promise<{ layout: Layout; text: string | null }> {
+  const text = await readSidecarText(dbmlUri);
+  if (text === null) return { layout: emptyLayout(), text: null };
+  return { layout: parseLayoutStrict(text), text };
 }
 
 /** Writes the Git-tracked sidecar. Always the SHARED form — per-user view-state
@@ -246,7 +259,8 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
   } else {
     lines.push('  },');
     lines.push('  "edges": {');
-    edgeEntries.sort(([a], [b]) => a.localeCompare(b));
+    // Code-unit order, not localeCompare: collaborators on different locales must emit identical files.
+    edgeEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     edgeEntries.forEach(([k, v], i) => {
       const comma = i < edgeEntries.length - 1 ? ',' : '';
       const hasWaypoints = !!(v.waypoints && v.waypoints.length > 0);

@@ -4,10 +4,11 @@ import './exporters'; // side-effect: register built-in exporters
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('dddbml.openDiagram', async () => {
-      const uri = resolveActiveDbmlUri();
+    // Explorer context menu and editor/title pass the clicked resource; the palette passes nothing.
+    vscode.commands.registerCommand('dddbml.openDiagram', async (arg?: unknown) => {
+      const uri = arg instanceof vscode.Uri && isWorkingDbml(arg) ? arg : resolveActiveDbmlUri();
       if (!uri) {
-        vscode.window.showErrorMessage('dddbml: open a .dbml file first.');
+        vscode.window.showErrorMessage(NO_DBML_MESSAGE);
         return;
       }
       DiagramPanel.createOrShow(context, uri);
@@ -35,7 +36,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const uri = resolveActiveDbmlUri();
       if (!uri) {
-        vscode.window.showErrorMessage('dddbml: open a .dbml file first.');
+        vscode.window.showErrorMessage(NO_DBML_MESSAGE);
         return;
       }
       DiagramPanel.createOrShow(context, uri);
@@ -50,7 +51,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const uri = resolveActiveDbmlUri();
       if (!uri) {
-        vscode.window.showErrorMessage('dddbml: open a .dbml file first.');
+        vscode.window.showErrorMessage(NO_DBML_MESSAGE);
         return;
       }
       DiagramPanel.createOrShow(context, uri);
@@ -84,14 +85,21 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-export function deactivate(): void {
+/** Returning the promise makes VS Code wait (briefly) for edits flushed on close to reach disk. */
+export function deactivate(): Promise<void> {
   DiagramPanel.disposeAll();
+  return DiagramPanel.settle();
+}
+
+const NO_DBML_MESSAGE = 'dddbml: open a working-tree .dbml file first (git/read-only views are not supported).';
+
+/** Only real files: a git:/readonly view (e.g. the HEAD side of a diff) would derive a bogus
+ *  sidecar URI and run git ops against the working tree. Remote hosts still see file: URIs. */
+function isWorkingDbml(uri: vscode.Uri): boolean {
+  return uri.scheme === 'file' && uri.path.toLowerCase().endsWith('.dbml');
 }
 
 function resolveActiveDbmlUri(): vscode.Uri | null {
-  const editor = vscode.window.activeTextEditor;
-  if (editor && editor.document.fileName.endsWith('.dbml')) {
-    return editor.document.uri;
-  }
-  return null;
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  return uri && isWorkingDbml(uri) ? uri : null;
 }

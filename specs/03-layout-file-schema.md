@@ -43,7 +43,11 @@ Razón de naming visible en lugar de carpeta oculta: usuario explicitó querer v
 escriben aquí**. Un grupo sin `color` no produce entrada (no hay nada compartido
 que guardar). El lector sigue tolerando archivos viejos que aún los contengan:
 `toViewport(undefined)` rinde `{0,0,1}` y los flags se ignoran al cargar (se
-re-derivan del estado de vista local), y al siguiente persist se "soft-strip".
+re-derivan del estado de vista local: `applyViewState` toma de las tablas sólo
+`x/y/color` y de los grupos sólo `color`), y al siguiente persist con cambio compartido
+se "soft-strip". **Única excepción (migración ≤ v0.2.2):** si el usuario todavía no tiene
+archivo de view-state (`readViewState` → `null`), en la carga en vivo se siembra una vez
+desde los flags del sidecar y el siguiente persist lo guarda. Time-travel nunca siembra.
 
 ### Campos
 
@@ -98,12 +102,21 @@ El writer del sidecar es **`serializeSharedLayout`** (`layoutStore.ts`): misma f
 git-friendly que `serializeLayout` pero **omite todo view-state** (sin `viewport`,
 sin `hidden`/`collapsed`, sin grupos color-less). El host además aplica un
 **churn-guard**: en `flushPersist` no reescribe el sidecar si la serialización
-compartida no cambió, de modo que un pan/zoom (que sólo toca el view-state local)
-nunca ensucia el archivo versionado.
+compartida no cambió respecto de lo que hay en disco (`diskSharedSerialized`: la forma
+canónica del último archivo leído o escrito), de modo que un pan/zoom (que sólo toca el
+view-state local) nunca ensucia el archivo versionado, ni siquiera el primero tras abrir.
+
+**Guard de eco del watcher**: el host guarda el texto exacto del sidecar que conoce en
+disco (`diskSidecarText`), actualizado tanto en cada **lectura** (apertura, watcher,
+recarga tras op git, también el texto en conflicto o corrupto) como en cada escritura
+propia. Un evento del watcher cuyo archivo coincide con ese texto es un eco o un no-op;
+cualquier otro contenido es externo y recarga. Comparar sólo contra la última escritura
+propia ignoraba un `git checkout` que devolvía el archivo a ese contenido después de
+haber cargado el layout de otra rama (F01).
 
 Reglas del writer:
 
-1. **Keys alfabéticamente ordenadas** en ambos niveles (tablas y grupos). Orden determinista = diffs mínimos.
+1. **Keys ordenadas por code unit** (comparación `<`, nunca `localeCompare`) en tablas, grupos y aristas. Orden determinista e independiente del locale de cada colaborador = diffs mínimos.
 2. **Indent 2 spaces**, no tabs.
 3. **Line endings LF** (no CRLF), incluso en Windows.
 4. **Trailing newline** al final del archivo (convención POSIX, evita "No newline at end of file" en Git).
@@ -139,7 +152,13 @@ Flujo host (`panel.ts`):
   El webview **no cambia**: sigue recibiendo y enviando un `Layout` completo.
 - **Persist** (`flushPersist`): parte el `Layout` entrante en dos destinos —
   `writeSharedLayout` (git, con churn-guard) y `writeViewState`
-  (`extractViewState` → archivo local).
+  (`extractViewState` → archivo local). El view-state **no se reemplaza entero**: el host
+  guarda el view-state que le dio al webview en la última carga/escritura
+  (`viewStateBaseline`) y escribe sólo el delta (`mergeViewStateChange`) sobre una lectura
+  fresca del archivo; sin delta no escribe. El archivo lo comparten todas las ventanas de la
+  máquina (`globalStorage`) y un panel sólo conoce los flags de las entradas que se le
+  mostraron: reemplazarlo borraba hide/collapse/cámara de otra ventana y el `hidden` de
+  tablas sin entrada en el sidecar (p.ej. sidecar corrupto al abrir).
 - **Cámara (decisión 2026-10-01, F26).** El webview persiste el `viewport` al terminar un
   pan/zoom (debounced) y solo va al view-state local, nunca al sidecar. Un push de layout del
   host (watcher, merge aplicado, salida de overlay) no reemplaza la cámara actual; el viewport
@@ -197,9 +216,12 @@ Matriz de casos:
 **`dddbml: Reset Layout` (decisión 2026-10-01, F24).** Recalcula todas las posiciones y limpia
 la forma de cada edge (`waypoints`, `sourceSide`/`targetSide`, `dx`/`dy`), porque los waypoints
 absolutos quedarían sueltos al mover las tablas. **Conserva** colores (de tablas, grupos y
-edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados). `Prune orphans`
-solo corre si el `.dbml` parseó al menos una vez desde que se abrió el panel; con un schema
-vacío por error de parse borraría todas las entradas (F23).
+edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados).
+
+`Prune orphans` se **niega** (aviso) mientras el `.dbml` no parsea en su última lectura o el
+layout aún no se cargó: contra un schema vacío o viejo toda entrada parece huérfana y se
+borraba el sidecar entero (posiciones y colores). Si hay algo que podar pide confirmación
+modal con los conteos (no tiene undo); sin huérfanas sólo informa y no escribe.
 
 ## Migración de versiones
 

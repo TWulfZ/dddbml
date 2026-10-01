@@ -1737,6 +1737,7 @@
 
   .ddd-edge.is-diff-added { stroke: var(--ddd-success); stroke-width: 2.5; }
   .ddd-edge.is-diff-removed { stroke: var(--ddd-danger); stroke-dasharray: 5 4; }
+  .ddd-edge.is-diff-changed { stroke: var(--ddd-warning); stroke-width: 2.5; }
   /* Removed-table ghost card (no live node exists). */
   .ddd-diff-ghost {
     opacity: 0.7;

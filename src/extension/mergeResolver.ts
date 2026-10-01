@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 import type { Layout, SerializableMergeConflict } from '../shared/types';
-import { emptyLayout, parseLayout, sidecarUri } from './layoutStore';
+import { emptyLayout, parseLayout, parseLayoutStrict, sidecarUri } from './layoutStore';
 import { getRepoRoot, getUnmergedStages, showStage, toRepoRelative } from './gitStages';
 import { mergeThreeWay, type ConflictSection, type MergeConflict } from './mergeThreeWay';
 
@@ -33,12 +33,22 @@ export async function detectSidecarConflict(dbmlUri: vscode.Uri): Promise<Sideca
   const stages = await getUnmergedStages(repoRoot, relpath);
   if (stages.size === 0) throw new Error('dddbml: layout file is not in a git-unmerged state');
 
+  // Base stays lenient: a criss-cross virtual base may itself hold nested markers, and an empty
+  // base only yields extra add/add conflicts, never deletions.
   const base = stages.has(1) ? parseLayout((await showStage(repoRoot, 1, relpath)) ?? '') : emptyLayout();
-  const ours = stages.has(2) ? parseLayout((await showStage(repoRoot, 2, relpath)) ?? '') : emptyLayout();
-  const theirs = stages.has(3) ? parseLayout((await showStage(repoRoot, 3, relpath)) ?? '') : emptyLayout();
+  const ours = stages.has(2) ? await readStageStrict(repoRoot, 2, relpath) : emptyLayout();
+  const theirs = stages.has(3) ? await readStageStrict(repoRoot, 3, relpath) : emptyLayout();
 
   const { merged, conflicts } = mergeThreeWay(base, ours, theirs);
   return { merged, conflicts, repoRoot, relpath };
+}
+
+/** A listed side stage that is unreadable or not a clean layout must abort the merge: read as
+ *  empty, every key the other side kept would be "deleted" by that side and silently dropped. */
+async function readStageStrict(repoRoot: string, stage: 2 | 3, relpath: string): Promise<Layout> {
+  const text = await showStage(repoRoot, stage, relpath);
+  if (text === null) throw new Error(`dddbml: could not read merge stage ${stage} of the layout file`);
+  return parseLayoutStrict(text);
 }
 
 /** Stable conflict id used to key the webview's decision map. */

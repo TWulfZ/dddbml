@@ -182,7 +182,7 @@ export type GitOp = 'restore' | 'stashPush' | 'stashApply' | 'stashPop';
 
 export type TableDiffStatus = 'added' | 'removed' | 'modified';
 export type ColumnDiffStatus = 'added' | 'removed' | 'changed';
-export type RefDiffStatus = 'added' | 'removed';
+export type RefDiffStatus = 'added' | 'removed' | 'changed';
 
 export interface ColumnDiffEntry {
   name: string;

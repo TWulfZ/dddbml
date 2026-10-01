@@ -81,11 +81,17 @@ del diagrama: `git add -- <paths>` y `git commit -m <msg> -- <paths>` (el orden 
 "Revertir cambios" abre un `<Modal>` de confirmación (botón `danger`) que avisa que
 **no se podrá deshacer** y ofrece *"Usar Stash en su lugar"*. Restore =
 `git checkout HEAD -- <paths>` sobre los archivos **trackeados** sucios (los
-untracked no tienen versión en HEAD → se omiten). Stash = `git stash push -- <paths>`
+untracked no tienen versión en HEAD → se omiten; los staged-new `A` tampoco la tienen →
+sólo se des-stagean con `git rm --cached -f`, quedan untracked en disco; incluirlos en el
+checkout hacía fallar el revert entero). Stash = `git stash push -- <paths>`
 sobre los trackeados; la sección **Stash** lista los stashes (`git stash list`) con
 *Aplicar* (`apply`) y *Pop* (`pop`). Tras restaurar/stash/pop el host re-lee el
 diagrama del disco (`reloadFromDisk`) y un `pop` con conflicto cae en el resolver de
-merge existente (marcadores → `loadSharedLayout`).
+merge existente (marcadores → `loadSharedLayout`). git sale con código ≠ 0 en ese caso
+aunque el stash sí se aplicó: si algún archivo del diagrama queda unmerged
+(`ls-files -u`), el host lo trata como **aplicado con conflictos** (recarga, refresca la
+lista de stashes, `git:opResult ok:true` + aviso informativo de que el stash se conserva
+hasta resolver), nunca como "falló".
 
 ### Explorar versiones (time-travel virtual, solo lectura)
 La sección **Historial** lista los commits que tocan el diagrama (`git log --
@@ -93,12 +99,18 @@ La sección **Historial** lista los commits que tocan el diagrama (`git log --
 `git show <rev>:<path>`, los parsea **en memoria** y re-viste el layout compartido
 con el view-state actual (pan/zoom/oculto se mantienen). Se renderiza en un overlay
 de solo lectura (`gitView.kind === 'timeTravel'`). **No** se ejecuta `git checkout`
-real. "Salir" pide al host re-enviar el estado de trabajo.
+real. "Salir" pide al host re-enviar el estado de trabajo. Mientras dura, el host guarda
+el schema de la revisión (`timeTravelSchema`) y **Export Schema** exporta esa revisión (lo
+que está en pantalla, igual que Export image), no el working tree; se limpia al salir, al
+re-hidratar y al entrar en merge.
 
 ### Diff (lo más pesado) — framing Previous/Current
 "Diff against HEAD" compara el working tree contra HEAD. El host parsea HEAD
 (`git show HEAD:<dbml>` → `parseDbml`) y corre `diffSchemas(base, head)`
-(`schemaDiff.ts`, puro; `base` = HEAD/Previous, `head` = working/Current). El webview
+(`schemaDiff.ts`, puro; `base` = HEAD/Previous, `head` = working/Current). `head` se
+re-lee y re-parsea del disco en ese momento (no el `lastValidSchema` cacheado); si el
+working tree no parsea, el host avisa y no entra en diff (antes mostraba todo como
+removido). El webview
 mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render paralelo:
 - **Focus/blur:** las tablas **no** incluidas en el diff se atenúan + desenfocan
   (`is-diff-dimmed`); toggle **"Blur background tables"** (on por defecto, store
@@ -113,7 +125,11 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
 - **Navegación:** la barra (`GitBanner`) trae botones prev/next + contador que enfocan la
   cámara en cada cambio (`fitToBbox`, store `diffCursor`).
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
-  layer); eliminadas → conector punteado en `DiffGhosts`. Los edges con cambio quedan a
+  layer); **cambiadas** (`'changed'`: mismo id pero otra cardinalidad, dirección o
+  emparejamiento de columnas compuestas; se comparan en orientación canónica, así `a > b` y
+  `b < a` son iguales) → tinte `--ddd-warning` sobre el edge vivo; eliminadas → conector
+  punteado en `DiffGhosts`. El id estable no basta para detectar cambios: ignora relación y
+  emparejamiento. Los edges con cambio quedan a
   opacidad llena (auto-focus) mientras los demás siguen el fade global (ver abajo).
 
 ### Edges suavizados (fade + reveal on focus)

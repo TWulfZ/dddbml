@@ -37,17 +37,23 @@ export function extractViewState(layout: Layout): ViewState {
 
 /** Re-injects local view-state onto a shared (git) layout to reconstruct the full
  *  layout the webview expects. Group keys are unioned: a group may exist only for its
- *  shared color, only for a local hidden flag, or both. */
+ *  shared color, only for a local hidden flag, or both. Hidden/collapsed flags still present in
+ *  an old (≤ v0.2.2) sidecar are ignored — a teammate's file must not hide things for everyone;
+ *  the one-time migration seeds `vs` from them instead (see {@link readViewState}). */
 export function applyViewState(shared: Layout, vs: ViewState): Layout {
   const tables: Record<QualifiedName, TableLayout> = {};
   for (const [k, v] of Object.entries(shared.tables)) {
-    tables[k] = vs.tables[k]?.hidden ? { ...v, hidden: true } : { ...v };
+    const t: TableLayout = { x: v.x, y: v.y };
+    if (v.color) t.color = v.color;
+    if (vs.tables[k]?.hidden) t.hidden = true;
+    tables[k] = t;
   }
 
   const groups: Record<string, GroupLayout> = {};
   const groupKeys = new Set([...Object.keys(shared.groups), ...Object.keys(vs.groups)]);
   for (const k of groupKeys) {
-    const g: GroupLayout = { ...(shared.groups[k] ?? {}) };
+    const color = shared.groups[k]?.color;
+    const g: GroupLayout = color !== undefined ? { color } : {};
     const view = vs.groups[k];
     if (view?.hidden) g.hidden = true;
     if (view?.collapsed) g.collapsed = true;
@@ -55,6 +61,49 @@ export function applyViewState(shared: Layout, vs: ViewState): Layout {
   }
 
   return { ...shared, viewport: vs.viewport, tables, groups };
+}
+
+type GroupFlags = { hidden?: boolean; collapsed?: boolean };
+
+/**
+ * Applies only what changed between `base` (what this panel loaded) and `next` (what it now holds)
+ * onto the file's current content. The file is shared by every window on the machine, and a panel
+ * only knows the flags of entries it was shown: replacing the whole file erased another window's
+ * hide/collapse/camera, and the hidden flags of tables that had no shared sidecar entry.
+ */
+export function mergeViewStateChange(disk: ViewState, base: ViewState, next: ViewState): ViewState {
+  const sameViewport = base.viewport.x === next.viewport.x && base.viewport.y === next.viewport.y && base.viewport.zoom === next.viewport.zoom;
+  const tables: ViewState['tables'] = { ...disk.tables };
+  for (const k of new Set([...Object.keys(base.tables), ...Object.keys(next.tables)])) {
+    const now = !!next.tables[k]?.hidden;
+    if (!!base.tables[k]?.hidden === now) continue;
+    if (now) tables[k] = { hidden: true };
+    else delete tables[k];
+  }
+  const groups: ViewState['groups'] = {};
+  for (const [k, v] of Object.entries(disk.groups)) groups[k] = { ...v };
+  for (const k of new Set([...Object.keys(base.groups), ...Object.keys(next.groups)])) {
+    const g: GroupFlags = groups[k] ?? {};
+    for (const flag of ['hidden', 'collapsed'] as const) {
+      const now = !!next.groups[k]?.[flag];
+      if (!!base.groups[k]?.[flag] === now) continue;
+      if (now) g[flag] = true;
+      else delete g[flag];
+    }
+    if (g.hidden || g.collapsed) groups[k] = g;
+    else delete groups[k];
+  }
+  return { viewport: sameViewport ? disk.viewport : next.viewport, tables, groups };
+}
+
+export function sameViewState(a: ViewState, b: ViewState): boolean {
+  return canonical(a) === canonical(b);
+}
+
+function canonical(vs: ViewState): string {
+  const tables = Object.keys(vs.tables).filter((k) => vs.tables[k]?.hidden).sort();
+  const groups = Object.keys(vs.groups).sort().map((k) => [k, !!vs.groups[k]?.hidden, !!vs.groups[k]?.collapsed]);
+  return JSON.stringify([vs.viewport.x, vs.viewport.y, vs.viewport.zoom, tables, groups]);
 }
 
 function viewStateDir(context: vscode.ExtensionContext): vscode.Uri {
@@ -66,16 +115,19 @@ function viewStateFileUri(context: vscode.ExtensionContext, dbmlUri: vscode.Uri)
   return vscode.Uri.joinPath(viewStateDir(context), `${key}.json`);
 }
 
+/** The user's view-state for this diagram, or null when none was ever written — the caller's cue
+ *  to seed it once from a legacy sidecar's flags. An unreadable/corrupt file counts as empty. */
 export async function readViewState(
   context: vscode.ExtensionContext,
   dbmlUri: vscode.Uri,
-): Promise<ViewState> {
+): Promise<ViewState | null> {
+  let bytes: Uint8Array;
   try {
-    const bytes = await vscode.workspace.fs.readFile(viewStateFileUri(context, dbmlUri));
-    return parseViewState(new TextDecoder('utf-8').decode(bytes));
+    bytes = await vscode.workspace.fs.readFile(viewStateFileUri(context, dbmlUri));
   } catch {
-    return emptyViewState();
+    return null;
   }
+  return parseViewState(new TextDecoder('utf-8').decode(bytes));
 }
 
 export async function writeViewState(

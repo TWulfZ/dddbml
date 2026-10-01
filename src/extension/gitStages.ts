@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const pexec = promisify(execFile);
@@ -55,7 +56,20 @@ export async function getRepoRoot(fsPath: string): Promise<string | null> {
 
 /** Git index paths are always forward-slash and relative to the repo root. */
 export function toRepoRelative(repoRoot: string, fsPath: string): string {
-  return path.relative(repoRoot, fsPath).split(path.sep).join('/');
+  return path.relative(repoRoot, canonicalDir(fsPath)).split(path.sep).join('/');
+}
+
+/**
+ * git reports the toplevel with symlinks resolved, so a workspace opened through a symlink would
+ * relativize to '../…' and silently match nothing. Only the directory is resolved: a symlinked
+ * file itself must keep its own name in this repo, not jump to its target.
+ */
+function canonicalDir(fsPath: string): string {
+  try {
+    return path.join(fs.realpathSync.native(path.dirname(fsPath)), path.basename(fsPath));
+  } catch {
+    return fsPath;
+  }
 }
 
 /** Which of stages 1/2/3 exist for `relpath` (empty set = not unmerged). */
@@ -106,13 +120,17 @@ export async function getCurrentBranch(repoRoot: string): Promise<string | null>
 export async function gitStatusPorcelain(repoRoot: string, relpaths: string[]): Promise<GitPathStatus[]> {
   if (relpaths.length === 0) return [];
   try {
-    const out = await runGit(['status', '--porcelain=v1', '--', ...relpaths], repoRoot);
+    // -z: paths come back unquoted (spaces / non-ASCII), so they are reusable as pathspecs.
+    const out = await runGit(['status', '--porcelain=v1', '-z', '--', ...relpaths], repoRoot);
     const result: GitPathStatus[] = [];
-    for (const line of out.split('\n')) {
-      if (line.length < 4) continue;
-      const code = line.slice(0, 2);
-      const relpath = line.slice(3).trim();
-      result.push({ relpath, status: classifyPorcelain(code) });
+    const fields = out.split('\0');
+    for (let i = 0; i < fields.length; i++) {
+      const entry = fields[i]!;
+      if (entry.length < 4) continue;
+      const code = entry.slice(0, 2);
+      result.push({ relpath: entry.slice(3), status: classifyPorcelain(code) });
+      // A rename/copy entry is followed by its original path as a separate field.
+      if (code.includes('R') || code.includes('C')) i++;
     }
     return result;
   } catch {
@@ -160,12 +178,20 @@ export async function gitCommit(repoRoot: string, relpaths: string[], message: s
   await runGit(['commit', '-m', message, '--', ...relpaths], repoRoot);
 }
 
-/** Discard working-tree changes to the given (tracked) paths, restoring them to HEAD. DESTRUCTIVE —
- *  uncommitted edits are lost. Untracked paths have no HEAD version; the caller filters those out.
- *  Throws on git failure. */
+/** Discard working-tree changes to the given paths, restoring them to HEAD. DESTRUCTIVE —
+ *  uncommitted edits are lost. Every path must exist at HEAD: untracked and staged-new ('added')
+ *  paths have no HEAD version and make git reject the whole call. Throws on git failure. */
 export async function gitRestore(repoRoot: string, relpaths: string[]): Promise<void> {
   if (relpaths.length === 0) throw new Error('no paths to restore');
   await runGit(['checkout', 'HEAD', '--', ...relpaths], repoRoot);
+}
+
+/** Remove staged-new paths from the index, keeping the working-tree file (it becomes untracked).
+ *  `-f` only skips the "staged content differs from file" check (an `AM` sidecar the extension
+ *  rewrote after staging); with `--cached` the working tree is never touched. */
+export async function gitUnstageNew(repoRoot: string, relpaths: string[]): Promise<void> {
+  if (relpaths.length === 0) return;
+  await runGit(['rm', '--cached', '-f', '-q', '--', ...relpaths], repoRoot);
 }
 
 /** Stash the working-tree changes to the given paths (scoped — never the whole repo). Throws on

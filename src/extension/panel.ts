@@ -2,12 +2,13 @@ import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
-import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
-import { applyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
+import { findTableLine } from './tableLocation';
+import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
+import { applyViewState, emptyViewState, extractViewState, mergeViewStateChange, readViewState, sameViewState, writeViewState, type ViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
 import type { MergeConflict } from './mergeThreeWay';
-import { getCurrentBranch, getRepoRoot, gitAdd, gitCommit, gitLog, gitRestore, gitStashApply, gitStashList, gitStashPop, gitStashPush, gitStatusPorcelain, showBlob, toRepoRelative } from './gitStages';
+import { getCurrentBranch, getRepoRoot, getUnmergedStages, gitAdd, gitCommit, gitLog, gitRestore, gitStashApply, gitStashList, gitUnstageNew, gitStashPop, gitStashPush, gitStatusPorcelain, showBlob, toRepoRelative } from './gitStages';
 import type { GitOp } from '../shared/types';
 import { getExporter, listExporters } from './exporters';
 import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
@@ -48,11 +49,35 @@ export class DiagramPanel {
     DiagramPanel.panels.clear();
   }
 
+  /** Persists started by a close/hide flush. deactivate() awaits them: on window reload the panels
+   *  may already be disposed (and their flushes in flight) before deactivate runs. */
+  private static readonly inFlightFlushes = new Set<Promise<void>>();
+
+  public static async settle(): Promise<void> {
+    while (DiagramPanel.inFlightFlushes.size > 0) await Promise.all([...DiagramPanel.inFlightFlushes]);
+  }
+
   private readonly webviewPanel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
+  /** Whether the latest read of the .dbml parsed; lastValidSchema may be stale (or the empty
+   *  sentinel) when it did not. */
+  private lastParseOk = false;
+  private layoutLoaded = false;
+  /** The past revision on screen while time-travelling; null on the working state. */
+  private timeTravelSchema: Schema | null = null;
   private currentLayout: Layout = emptyLayout();
-  private lastWrittenSerialized: string | null = null;
+  /** Exact sidecar text last seen on disk — adopted by a read or produced by our own write (null =
+   *  no file). A watcher event whose file still matches it is an echo or a no-op; anything else is
+   *  external and reloads. Must track reads too: tracking only our writes ignores a `git checkout`
+   *  that returns the file to that content after another branch's layout was loaded (F01). */
+  private diskSidecarText: string | null = null;
+  /** Canonical shared serialization of what is on disk; a persist whose shared form equals it is a
+   *  view-state-only change and must not rewrite the tracked sidecar. */
+  private diskSharedSerialized: string | null = null;
+  /** View-state as last loaded into / persisted from this panel; flushes write only the delta
+   *  against it (see mergeViewStateChange). null = no view-state file existed at load. */
+  private viewStateBaseline: ViewState | null = null;
   /** Set while the sidecar on disk is unparseable; shared writes are refused until a clean read. */
   private sidecarCorrupt = false;
   /** True once the webview has sent `ready` and received schema/layout; prompts wait for this. */
@@ -61,6 +86,8 @@ export class DiagramPanel {
   private pendingPersist: Layout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
   private schemaTimer: NodeJS.Timeout | null = null;
+  private sidecarEventPending = false;
+  private disposed = false;
   private gitStatusTimer: NodeJS.Timeout | null = null;
   /** Serialized form of the last `schema:update` posted — lets the watcher skip no-op reparses. */
   private lastPostedSchema: string | null = null;
@@ -96,6 +123,13 @@ export class DiagramPanel {
       this.disposables,
     );
     this.webviewPanel.onDidDispose(() => this.dispose(), null, this.disposables);
+    this.webviewPanel.onDidChangeViewState((e) => {
+      if (e.webviewPanel.visible) return;
+      // Hiding destroys the webview (retainContextWhenHidden: false): prompts must wait for the
+      // next `ready`, and a debounced persist must land before the re-shown webview reads disk.
+      this.hydrated = false;
+      return this.flushPendingPersistNow();
+    }, null, this.disposables);
 
     this.disposables.push(
       vscode.window.onDidChangeActiveColorTheme(() => {
@@ -125,6 +159,8 @@ export class DiagramPanel {
   }
 
   public reveal(): void {
+    // The hide event may not have reached the extension host yet; a hidden panel will reload.
+    if (!this.webviewPanel.visible) this.hydrated = false;
     this.webviewPanel.reveal(vscode.ViewColumn.Beside, true);
   }
 
@@ -148,30 +184,55 @@ export class DiagramPanel {
   }
 
   public async pruneOrphans(): Promise<void> {
-    const liveTables = new Set(this.lastValidSchema.tables.map((t) => t.name));
-    const liveGroups = new Set(this.lastValidSchema.groups.map((g) => g.name));
-    const nextTables: Record<string, { x: number; y: number }> = {};
-    for (const [k, v] of Object.entries(this.currentLayout.tables)) {
-      if (liveTables.has(k)) nextTables[k] = v;
+    // "Orphan" is judged against the schema: with no current parse (or no layout loaded yet) every
+    // entry looks orphaned and the whole sidecar — positions and colours — would be wiped.
+    if (!this.layoutLoaded || !this.lastParseOk) {
+      void vscode.window.showWarningMessage('dddbml: fix the .dbml so it parses before pruning orphan layout entries.');
+      return;
     }
-    const nextGroups: typeof this.currentLayout.groups = {};
-    for (const [k, v] of Object.entries(this.currentLayout.groups)) {
-      if (liveGroups.has(k)) nextGroups[k] = v;
+    const preview = this.computePrune();
+    if (preview.removedTables === 0 && preview.removedGroups === 0) {
+      void vscode.window.showInformationMessage('dddbml: no orphan layout entries to prune.');
+      return;
     }
-    const removedTables = Object.keys(this.currentLayout.tables).length - Object.keys(nextTables).length;
-    const removedGroups = Object.keys(this.currentLayout.groups).length - Object.keys(nextGroups).length;
+    const answer = await vscode.window.showWarningMessage(
+      `dddbml: remove ${preview.removedTables} orphan table(s) and ${preview.removedGroups} orphan group(s) from the layout file? This cannot be undone.`,
+      { modal: true },
+      'Prune',
+    );
+    if (answer !== 'Prune') return;
+    // Recomputed: the layout may have changed while the modal was open.
+    const { tables: nextTables, groups: nextGroups, removedTables, removedGroups } = this.computePrune();
     this.currentLayout = { ...this.currentLayout, tables: nextTables, groups: nextGroups };
     await this.flushPersist(this.currentLayout);
     this.post({ type: 'layout:loaded', payload: this.currentLayout });
     void vscode.window.showInformationMessage(`dddbml: pruned ${removedTables} orphan table(s), ${removedGroups} orphan group(s).`);
   }
 
-  public dispose(): void {
-    DiagramPanel.panels.delete(this.dbmlUri.toString());
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
+  private computePrune(): { tables: Layout['tables']; groups: Layout['groups']; removedTables: number; removedGroups: number } {
+    const liveTables = new Set(this.lastValidSchema.tables.map((t) => t.name));
+    const liveGroups = new Set(this.lastValidSchema.groups.map((g) => g.name));
+    const tables: Layout['tables'] = {};
+    for (const [k, v] of Object.entries(this.currentLayout.tables)) {
+      if (liveTables.has(k)) tables[k] = v;
     }
+    const groups: Layout['groups'] = {};
+    for (const [k, v] of Object.entries(this.currentLayout.groups)) {
+      if (liveGroups.has(k)) groups[k] = v;
+    }
+    return {
+      tables,
+      groups,
+      removedTables: Object.keys(this.currentLayout.tables).length - Object.keys(tables).length,
+      removedGroups: Object.keys(this.currentLayout.groups).length - Object.keys(groups).length,
+    };
+  }
+
+  public dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    DiagramPanel.panels.delete(this.dbmlUri.toString());
+    void this.flushPendingPersistNow();
     if (this.schemaTimer) clearTimeout(this.schemaTimer);
     if (this.gitStatusTimer) clearTimeout(this.gitStatusTimer);
     while (this.disposables.length) {
@@ -182,7 +243,17 @@ export class DiagramPanel {
   }
 
   private post(msg: HostToWebview): void {
+    if (this.disposed) return; // the webview getter throws once disposed (e.g. a late flush)
     void this.webviewPanel.webview.postMessage(msg);
+  }
+
+  private flushPendingPersistNow(): Promise<void> | undefined {
+    const pending = this.pendingPersist;
+    this.cancelPendingPersist();
+    if (!pending) return undefined;
+    const flush: Promise<void> = this.flushPersist(pending).finally(() => DiagramPanel.inFlightFlushes.delete(flush));
+    DiagramPanel.inFlightFlushes.add(flush);
+    return flush;
   }
 
   private handleWebviewMessage(msg: WebviewToHost): void {
@@ -260,9 +331,11 @@ export class DiagramPanel {
       return;
     }
 
+    // Export what is on screen: during time travel that is the past revision, not the working tree.
+    const source = this.timeTravelSchema ?? this.lastValidSchema;
     const filtered = payload.scope === 'selected'
-      ? filterSchemaBySelection(this.lastValidSchema, new Set(payload.selection))
-      : this.lastValidSchema;
+      ? filterSchemaBySelection(source, new Set(payload.selection))
+      : source;
 
     if (filtered.tables.length === 0) {
       const message = payload.scope === 'selected'
@@ -330,24 +403,12 @@ export class DiagramPanel {
   }
 
   private async revealTable(qualifiedName: string): Promise<void> {
-    // qualifiedName is "schema.tableName". DBML allows either `Table name` (public) or `Table schema.name`.
     try {
-      const bytes = await vscode.workspace.fs.readFile(this.dbmlUri);
-      const source = new TextDecoder('utf-8').decode(bytes);
-      const [schema, tableName] = splitQualified(qualifiedName);
-      const lines = source.split(/\r?\n/);
-      const re = /^\s*Table\s+([\w.]+)(?:\s+as\s+[\w]+)?\s*(?:\[[^\]]*\])?\s*\{/i;
-      let lineIdx = -1;
-      for (let i = 0; i < lines.length; i++) {
-        const m = re.exec(lines[i] ?? '');
-        if (!m) continue;
-        const ident = m[1] ?? '';
-        const parts = ident.split('.');
-        const s = parts.length > 1 ? parts[0]! : 'public';
-        const t = parts.length > 1 ? parts.slice(1).join('.') : ident;
-        if (s === schema && t === tableName) { lineIdx = i; break; }
-      }
-      if (lineIdx < 0) {
+      // The editor buffer, not the disk: line numbers must match what showTextDocument displays
+      // even with unsaved edits.
+      const source = (await vscode.workspace.openTextDocument(this.dbmlUri)).getText();
+      const lineIdx = findTableLine(source, qualifiedName);
+      if (lineIdx === null) {
         void vscode.window.showWarningMessage(`dddbml: could not find "${qualifiedName}" in source.`);
         return;
       }
@@ -364,6 +425,7 @@ export class DiagramPanel {
   }
 
   private async hydrate(): Promise<void> {
+    this.timeTravelSchema = null; // a fresh webview always starts on the working state
     // Send layout first so that when the schema arrives, positions are already in the
     // store and the auto-layout effect skips tables that already have a saved position.
     await this.sendLayout();
@@ -392,13 +454,16 @@ export class DiagramPanel {
       const source = new TextDecoder('utf-8').decode(bytes);
       const result = parseDbml(source);
       if (result.error) {
+        this.lastParseOk = false;
         payload = { schema: this.lastValidSchema, parseError: result.error };
       } else {
         this.lastValidSchema = result.schema;
+        this.lastParseOk = true;
         payload = { schema: result.schema, parseError: null };
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      this.lastParseOk = false;
       payload = { schema: this.lastValidSchema, parseError: { message } };
     }
     const serialized = JSON.stringify(payload);
@@ -407,15 +472,8 @@ export class DiagramPanel {
     this.post({ type: 'schema:update', payload });
   }
 
-  private scheduleSchemaRefresh(): void {
-    if (this.schemaTimer) clearTimeout(this.schemaTimer);
-    this.schemaTimer = setTimeout(() => {
-      this.schemaTimer = null;
-      void this.sendSchema({ skipIfUnchanged: true });
-    }, SCHEMA_DEBOUNCE_MS);
-  }
-
   private scheduleGitStatus(): void {
+    if (this.disposed) return;
     if (this.gitStatusTimer) clearTimeout(this.gitStatusTimer);
     this.gitStatusTimer = setTimeout(() => {
       this.gitStatusTimer = null;
@@ -425,6 +483,7 @@ export class DiagramPanel {
 
   private async sendLayout(isExternal = false): Promise<void> {
     this.currentLayout = await this.loadFullLayout();
+    this.layoutLoaded = true;
     this.post({
       type: isExternal ? 'layout:external-change' : 'layout:loaded',
       payload: this.currentLayout,
@@ -437,9 +496,17 @@ export class DiagramPanel {
    * (viewport / per-user hidden+collapsed). The webview never sees the split.
    */
   private async loadFullLayout(): Promise<Layout> {
-    const shared = await this.loadSharedLayout();
+    return this.withViewState(await this.loadSharedLayout());
+  }
+
+  /** Clothes a working shared layout with this user's view-state. With no view-state file yet, it is
+   *  seeded once from flags a legacy (≤ v0.2.2) sidecar still carries; the next persist saves it. */
+  private async withViewState(shared: Layout): Promise<Layout> {
     const vs = await readViewState(this.context, this.dbmlUri);
-    return applyViewState(shared, vs);
+    const layout = applyViewState(shared, vs ?? extractViewState(shared));
+    // What the webview now knows; null forces the first persist to create the file (seeding).
+    this.viewStateBaseline = vs === null ? null : extractViewState(layout);
+    return layout;
   }
 
   /**
@@ -450,15 +517,21 @@ export class DiagramPanel {
    */
   private async loadSharedLayout(): Promise<Layout> {
     try {
-      const layout = await readLayout(this.dbmlUri);
+      const { layout, text } = await readLayout(this.dbmlUri);
       this.pendingMerge = null; // a clean read clears any stale conflict state
       this.sidecarCorrupt = false;
+      this.diskSidecarText = text;
+      this.diskSharedSerialized = text === null ? null : serializeSharedLayout(layout);
       return layout;
     } catch (err) {
       if (err instanceof LayoutConflictError) {
+        this.diskSidecarText = err.conflictedText;
+        this.diskSharedSerialized = null;
         return this.handleConflict();
       }
       if (err instanceof LayoutParseError) {
+        this.diskSidecarText = err.text;
+        this.diskSharedSerialized = null;
         this.sidecarCorrupt = true;
         void vscode.window.showWarningMessage(
           'dddbml: the layout file is not valid JSON — fix it (or restore it from git) to save layout changes. The diagram is read from the last good layout meanwhile.',
@@ -490,8 +563,7 @@ export class DiagramPanel {
     }
     const { merged, conflicts, repoRoot, relpath } = detected;
     if (conflicts.length === 0) {
-      const serialized = await writeSharedLayout(this.dbmlUri, merged);
-      this.lastWrittenSerialized = serialized;
+      this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, merged));
       try { await gitAdd(repoRoot, relpath); } catch { /* staging is best-effort */ }
       this.pendingMerge = null;
       void vscode.window.showInformationMessage(
@@ -514,6 +586,7 @@ export class DiagramPanel {
       void vscode.window.showWarningMessage('dddbml: the layout changed on disk — the conflict list was refreshed.');
     }
     this.lastPostedMergeSig = sig;
+    this.timeTravelSchema = null; // beginMerge drops the webview out of any git view
     this.post({ type: 'merge:begin', payload: { conflicts } });
   }
 
@@ -525,8 +598,7 @@ export class DiagramPanel {
     try {
       const resolved = applyDecisions(pending.merged, pending.conflicts, decisions);
       try {
-        const serialized = await writeSharedLayout(this.dbmlUri, resolved);
-        this.lastWrittenSerialized = serialized;
+        this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, resolved));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         void vscode.window.showErrorMessage(`dddbml: failed to write resolved layout — ${message}`);
@@ -540,8 +612,7 @@ export class DiagramPanel {
       this.lastPostedMergeSig = null;
       const chosen = pending.conflicts.length;
       const auto = countKeys(resolved) - chosen;
-      const vs = await readViewState(this.context, this.dbmlUri);
-      this.currentLayout = applyViewState(resolved, vs);
+      this.currentLayout = await this.withViewState(resolved);
       // Apply the final layout WHILE still in conflict mode (conflicting tables are hidden behind
       // their ghosts), THEN exit — so each conflicting table goes ghost → final position with no
       // intermediate frame at the provisional (ours) spot.
@@ -619,12 +690,11 @@ export class DiagramPanel {
   }
 
   /**
-   * Re-read the diagram from disk after a git op rewrote the working tree (restore / stash / pop).
-   * Resets the write-dedup guard so the change isn't suppressed, then refreshes schema + layout +
-   * git status; routes any conflict markers (e.g. from a stash pop) into the merge resolver.
+   * Re-read the diagram from disk after a git op rewrote the working tree (restore / stash / pop):
+   * refreshes schema + layout + git status; routes any conflict markers (e.g. from a stash pop)
+   * into the merge resolver.
    */
   private async reloadFromDisk(): Promise<void> {
-    this.lastWrittenSerialized = null;
     await this.sendSchema();
     await this.sendLayout(true);
     this.maybePostMerge();
@@ -636,19 +706,22 @@ export class DiagramPanel {
   }
 
   /** Discard uncommitted changes to the diagram files (restore to HEAD). DESTRUCTIVE — the webview
-   *  already confirmed. Untracked files have no HEAD version, so they're left as-is. */
+   *  already confirmed. Untracked files have no HEAD version, so they're left as-is; staged-new
+   *  files have none either, so they're only unstaged (left untracked, same rule). */
   private async handleGitRestore(): Promise<void> {
     const scope = await this.diagramScope();
     if (!scope) { this.postOpResult('restore', false, 'Not a git repository'); return; }
-    const restorable = (await gitStatusPorcelain(scope.repoRoot, scope.relpaths))
-      .filter((f) => f.status !== 'untracked')
-      .map((f) => f.relpath);
-    if (restorable.length === 0) { this.postOpResult('restore', false, 'No tracked changes to revert'); return; }
+    const status = await gitStatusPorcelain(scope.repoRoot, scope.relpaths);
+    const restorable = status.filter((f) => f.status !== 'untracked' && f.status !== 'added').map((f) => f.relpath);
+    const stagedNew = status.filter((f) => f.status === 'added').map((f) => f.relpath);
+    const count = restorable.length + stagedNew.length;
+    if (count === 0) { this.postOpResult('restore', false, 'No tracked changes to revert'); return; }
     try {
-      await gitRestore(scope.repoRoot, restorable);
+      if (restorable.length > 0) await gitRestore(scope.repoRoot, restorable);
+      await gitUnstageNew(scope.repoRoot, stagedNew);
       await this.reloadFromDisk();
       this.postOpResult('restore', true);
-      void vscode.window.showInformationMessage(`dddbml: reverted ${restorable.length} diagram file(s) to HEAD.`);
+      void vscode.window.showInformationMessage(`dddbml: reverted ${count} diagram file(s) to HEAD.`);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       this.postOpResult('restore', false, m);
@@ -689,10 +762,28 @@ export class DiagramPanel {
       await this.sendStashes();
       this.postOpResult(op, true);
     } catch (err) {
+      // git exits non-zero when the stash applied but conflicted: the working tree DID change, so
+      // reporting "failed" invites a retry or a Revert that discards the half-applied stash.
+      if (await this.hasUnmergedDiagramFiles(scope)) {
+        await this.reloadFromDisk();
+        await this.sendStashes();
+        this.postOpResult(op, true, 'Applied with conflicts');
+        void vscode.window.showInformationMessage('dddbml: the stash was applied with conflicts — resolve them; the stash is kept until then.');
+        return;
+      }
       const m = err instanceof Error ? err.message : String(err);
       this.postOpResult(op, false, m);
       void vscode.window.showErrorMessage(`dddbml: stash ${op === 'stashPop' ? 'pop' : 'apply'} failed — ${m}`);
     }
+  }
+
+  private async hasUnmergedDiagramFiles(scope: { repoRoot: string; relpaths: string[] }): Promise<boolean> {
+    for (const relpath of scope.relpaths) {
+      try {
+        if ((await getUnmergedStages(scope.repoRoot, relpath)).size > 0) return true;
+      } catch { /* treat as not unmerged */ }
+    }
+    return false;
   }
 
   /** List commits touching the diagram files and push them to the webview (History pane). */
@@ -725,13 +816,16 @@ export class DiagramPanel {
     const schema = parsed.schema;
     const sidecarSrc = await showBlob(scope.repoRoot, sha, scope.sidecarRel);
     const shared = sidecarSrc != null ? parseLayout(sidecarSrc) : emptyLayout();
-    const vs = await readViewState(this.context, this.dbmlUri);
+    // Never seed from the past sidecar's legacy flags: a peek always wears the current view-state.
+    const vs = (await readViewState(this.context, this.dbmlUri)) ?? emptyViewState();
     const layout = applyViewState(shared, vs);
+    this.timeTravelSchema = schema;
     this.post({ type: 'git:timeTravel:enter', payload: { rev: sha, label, schema, layout } });
   }
 
   /** Leave time-travel: flip the webview out of read-only mode, then re-send the working state. */
   private async exitTimeTravel(): Promise<void> {
+    this.timeTravelSchema = null;
     this.post({ type: 'git:timeTravel:exit' });
     await this.sendSchema();
     await this.sendLayout();
@@ -754,7 +848,22 @@ export class DiagramPanel {
       void vscode.window.showWarningMessage(`dddbml: the diagram at HEAD does not parse — ${parsedBase.error.message}`);
       return;
     }
-    const diff = diffSchemas(parsedBase.schema, this.lastValidSchema);
+    // Re-read rather than trust lastValidSchema: it is stale (or the empty sentinel) while the file
+    // is broken, and diffing against it shows every table as removed.
+    let headSource: string;
+    try {
+      headSource = new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(this.dbmlUri));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      void vscode.window.showWarningMessage(`dddbml: could not read the working diagram — ${message}`);
+      return;
+    }
+    const parsedHead = parseDbml(headSource);
+    if (parsedHead.error) {
+      void vscode.window.showWarningMessage(`dddbml: the working diagram does not parse — ${parsedHead.error.message}`);
+      return;
+    }
+    const diff = diffSchemas(parsedBase.schema, parsedHead.schema);
     if (diff.tables.length === 0 && diff.refs.length === 0) {
       void vscode.window.showInformationMessage('dddbml: no schema changes vs HEAD.');
       return;
@@ -778,10 +887,13 @@ export class DiagramPanel {
     if (this.persistTimer) clearTimeout(this.persistTimer);
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
-      const next = this.pendingPersist;
-      this.pendingPersist = null;
-      if (next) void this.flushPersist(next);
+      void this.flushPendingPersistNow();
     }, PERSIST_DEBOUNCE_MS);
+  }
+
+  private noteSidecarWritten(serialized: string): void {
+    this.diskSidecarText = serialized;
+    this.diskSharedSerialized = serialized;
   }
 
   private async flushPersist(layout: Layout): Promise<void> {
@@ -792,9 +904,8 @@ export class DiagramPanel {
       const sharedSerialized = serializeSharedLayout(layout);
       if (this.sidecarCorrupt) {
         // Never clobber a corrupt sidecar with a layout derived from it; the watcher re-reads on fix.
-      } else if (sharedSerialized !== this.lastWrittenSerialized) {
-        await writeSharedLayout(this.dbmlUri, layout);
-        this.lastWrittenSerialized = sharedSerialized;
+      } else if (sharedSerialized !== this.diskSharedSerialized) {
+        this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, layout));
         sharedChanged = true;
       }
     } catch (err) {
@@ -803,7 +914,13 @@ export class DiagramPanel {
     }
     // Local view-state: never tracked by git, so failures here are non-fatal.
     try {
-      await writeViewState(this.context, this.dbmlUri, extractViewState(layout));
+      const next = extractViewState(layout);
+      const base = this.viewStateBaseline;
+      if (base === null || !sameViewState(base, next)) {
+        const disk = (await readViewState(this.context, this.dbmlUri)) ?? emptyViewState();
+        await writeViewState(this.context, this.dbmlUri, mergeViewStateChange(disk, base ?? emptyViewState(), next));
+        this.viewStateBaseline = next;
+      }
     } catch (err) {
       console.error('[dddbml] failed to write view-state', err);
     }
@@ -819,34 +936,64 @@ export class DiagramPanel {
     const layoutName = this.shortName(layoutSidecar);
 
     const dbmlWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(parentUri, dbmlName),
+      new vscode.RelativePattern(parentUri, globLiteral(dbmlName)),
     );
-    dbmlWatcher.onDidChange((uri) => {
+    const onDbmlFs = (uri: vscode.Uri) => {
       if (uri.toString() !== this.dbmlUri.toString()) return;
-      this.scheduleSchemaRefresh();
-      this.scheduleGitStatus();
-    });
+      this.scheduleExternalReload(false);
+    };
+    // Create too: tools that save via temp file + rename only emit a create.
+    dbmlWatcher.onDidChange(onDbmlFs);
+    dbmlWatcher.onDidCreate(onDbmlFs);
 
     const layoutWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(parentUri, layoutName),
+      new vscode.RelativePattern(parentUri, globLiteral(layoutName)),
     );
-    const onLayoutFs = async (uri: vscode.Uri) => {
+    const onLayoutFs = (uri: vscode.Uri) => {
       if (uri.toString() !== layoutSidecar.toString()) return;
-      this.scheduleGitStatus(); // sidecar touched on disk → dirty/clean may have flipped
-      try {
-        const bytes = await vscode.workspace.fs.readFile(uri);
-        const text = new TextDecoder('utf-8').decode(bytes);
-        if (this.lastWrittenSerialized !== null && text === this.lastWrittenSerialized) return;
-      } catch {
-        return;
-      }
-      await this.sendLayout(true);
-      this.maybePostMerge(); // external pull/merge may have introduced conflicts
+      this.scheduleExternalReload(true);
     };
     layoutWatcher.onDidChange(onLayoutFs);
     layoutWatcher.onDidCreate(onLayoutFs);
+    layoutWatcher.onDidDelete(onLayoutFs);
 
     this.disposables.push(dbmlWatcher, layoutWatcher);
+  }
+
+  /**
+   * Both watchers funnel into ONE debounced reload so a branch switch / pull that rewrites the
+   * .dbml and the sidecar together is applied schema-first. Posting the new layout against the old
+   * schema let the webview auto-place tables that only exist in the previous revision, and the next
+   * edit wrote those phantom entries into the new branch's sidecar.
+   */
+  private scheduleExternalReload(sidecarTouched: boolean): void {
+    if (sidecarTouched) this.sidecarEventPending = true;
+    this.scheduleGitStatus();
+    if (this.schemaTimer) clearTimeout(this.schemaTimer);
+    this.schemaTimer = setTimeout(() => {
+      this.schemaTimer = null;
+      void this.runExternalReload();
+    }, SCHEMA_DEBOUNCE_MS);
+  }
+
+  private async runExternalReload(): Promise<void> {
+    const sidecarTouched = this.sidecarEventPending;
+    this.sidecarEventPending = false;
+    await this.sendSchema({ skipIfUnchanged: true });
+    if (!sidecarTouched) return;
+    const text = await readSidecarText(this.dbmlUri);
+    if (text === this.diskSidecarText) return; // our own write's echo, or no net change
+    // The webview is about to show the external layout; a queued write of the old one would
+    // overwrite what just arrived on disk.
+    this.cancelPendingPersist();
+    await this.sendLayout(true);
+    this.maybePostMerge(); // external pull/merge may have introduced conflicts
+  }
+
+  private cancelPendingPersist(): void {
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = null;
+    this.pendingPersist = null;
   }
 
   private currentThemeKind(): 'light' | 'dark' {
@@ -907,16 +1054,17 @@ function generateNonce(): string {
   return s;
 }
 
-function splitQualified(qn: string): [string, string] {
-  const idx = qn.indexOf('.');
-  if (idx < 0) return ['public', qn];
-  return [qn.slice(0, idx), qn.slice(idx + 1)];
+/** VS Code globs have no escape character; a one-character class matches a metacharacter literally. */
+function globLiteral(name: string): string {
+  return name.replace(/[[\]{}*?]/g, (c) => `[${c}]`);
 }
 
 function filterSchemaBySelection(schema: Schema, selection: Set<QualifiedName>): Schema {
   const tables = schema.tables.filter((t) => selection.has(t.name));
+  // A ref with one selected end is kept so the exporter sees the cut and warns (spec 09); refs with
+  // both ends outside the selection are dropped, or every unrelated relation would warn.
   const refs: Ref[] = schema.refs.filter(
-    (r) => selection.has(r.source.table) && selection.has(r.target.table),
+    (r) => selection.has(r.source.table) || selection.has(r.target.table),
   );
   const groups = schema.groups
     .map((g) => ({ ...g, tables: g.tables.filter((t) => selection.has(t)) }))
