@@ -51,3 +51,17 @@ describe('hasConflictMarkers — data-loss guard', () => {
     expect(hasConflictMarkers(serializeSharedLayout(layout))).toBe(false);
   });
 });
+
+describe('serializeSharedLayout — locale-independent edge order', () => {
+  it('sorts edge keys by code unit, like tables and groups', () => {
+    const l: Layout = {
+      version: 1,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      tables: {},
+      groups: {},
+      edges: { b: { color: '#111' }, B: { color: '#222' }, a: { color: '#333' }, ch: { color: '#444' } },
+    };
+    const keys = [...serializeSharedLayout(l).matchAll(/^ {4}"([^"]+)":/gm)].map((m) => m[1]);
+    expect(keys).toEqual(['B', 'a', 'b', 'ch']);
+  });
+});

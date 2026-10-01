@@ -246,7 +246,8 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
   } else {
     lines.push('  },');
     lines.push('  "edges": {');
-    edgeEntries.sort(([a], [b]) => a.localeCompare(b));
+    // Code-unit order, not localeCompare: collaborators on different locales must emit identical files.
+    edgeEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     edgeEntries.forEach(([k, v], i) => {
       const comma = i < edgeEntries.length - 1 ? ',' : '';
       const hasWaypoints = !!(v.waypoints && v.waypoints.length > 0);

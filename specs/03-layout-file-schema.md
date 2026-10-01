@@ -103,7 +103,7 @@ nunca ensucia el archivo versionado.
 
 Reglas del writer:
 
-1. **Keys alfabéticamente ordenadas** en ambos niveles (tablas y grupos). Orden determinista = diffs mínimos.
+1. **Keys ordenadas por code unit** (comparación `<`, nunca `localeCompare`) en tablas, grupos y aristas. Orden determinista e independiente del locale de cada colaborador = diffs mínimos.
 2. **Indent 2 spaces**, no tabs.
 3. **Line endings LF** (no CRLF), incluso en Windows.
 4. **Trailing newline** al final del archivo (convención POSIX, evita "No newline at end of file" en Git).
