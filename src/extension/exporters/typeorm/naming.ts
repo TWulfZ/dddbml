@@ -12,7 +12,30 @@ const IRREGULAR_SINGULAR: Record<string, string> = {
   geese: 'goose',
   mice: 'mouse',
   teeth: 'tooth',
+  quizzes: 'quiz',
+  // Plurals of -u words, which the -us guard below would otherwise keep as-is.
+  menus: 'menu',
+  skus: 'sku',
+  gurus: 'guru',
 };
+
+/** -ie nouns whose plural would otherwise fall into the `ies → y` rule. */
+const IE_NOUNS = new Set([
+  'movie',
+  'cookie',
+  'zombie',
+  'calorie',
+  'rookie',
+  'selfie',
+  'hoodie',
+  'genie',
+  'prairie',
+  'smoothie',
+  'brownie',
+  'goalie',
+  'newbie',
+  'sortie',
+]);
 
 const SINGULAR_INVARIANT = new Set([
   'series',
@@ -37,11 +60,6 @@ export function toPascalCase(input: string): string {
   return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join('');
 }
 
-export function toCamelCase(input: string): string {
-  const pascal = toPascalCase(input);
-  if (pascal.length === 0) return pascal;
-  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
-}
 
 /**
  * Best-effort English singularization. Applied to the last word of a PascalCase token.
@@ -54,14 +72,18 @@ export function singularizeEnglish(word: string): string {
   if (IRREGULAR_SINGULAR[lower]) {
     return matchCase(IRREGULAR_SINGULAR[lower]!, word);
   }
-  // (.+)ies → $1y
-  const ies = /(.+)ies$/i.exec(word);
-  if (ies) return ies[1] + 'y';
-  // (.+s|ch|sh|x|z)es → $1
-  const xes = /(.+(?:s|ch|sh|x|z))es$/i.exec(word);
-  if (xes) return xes[1]!;
-  // (.+)s → $1 (not "ss")
-  if (/[^s]s$/.test(word)) return word.slice(0, -1);
+  if (/ies$/i.test(word)) {
+    // ties, pies, lies: a single letter before `ies` means the singular ends in -ie.
+    if (word.length <= 4 || IE_NOUNS.has(lower.slice(0, -1))) return word.slice(0, -1);
+    return word.slice(0, -3) + 'y';
+  }
+  // Sibilant plurals take -es: addresses, boxes, matches, quizzes, statuses.
+  const sibilant = /(.+(?:ss|sh|ch|x|zz|us))es$/i.exec(word);
+  if (sibilant) return sibilant[1]!;
+  // status, campus, analysis, class are already singular.
+  if (/(?:us|is|ss)$/i.test(word)) return word;
+  // courses, purchases, sizes: the singular ends in -e, so only the s goes.
+  if (/s$/i.test(word)) return word.slice(0, -1);
   return word;
 }
 
@@ -97,11 +119,60 @@ function splitPascalWords(pascal: string): string[] {
 
 export function toClassName(qualifiedName: string, opts: { singularize: boolean }): string {
   const pascal = toPascalCase(qualifiedName);
-  if (!opts.singularize) return pascal;
+  if (!opts.singularize) return toIdentifier(pascal);
   const words = splitPascalWords(pascal);
-  if (words.length === 0) return pascal;
+  if (words.length === 0) return toIdentifier(pascal);
   words[words.length - 1] = singularizeEnglish(words[words.length - 1]!);
-  return words.join('');
+  return toIdentifier(words.join(''));
+}
+
+// A class with one of these names would clash with a typeorm import or a global the dialect types use.
+const RESERVED_CLASS_NAMES = new Set([
+  'Entity', 'Column', 'PrimaryColumn', 'PrimaryGeneratedColumn', 'Generated', 'OneToOne', 'OneToMany',
+  'ManyToOne', 'ManyToMany', 'JoinColumn', 'JoinTable',
+  'Date', 'Record', 'Buffer', 'Object', 'String', 'Number', 'Boolean', 'Array', 'Map', 'Set',
+  'Promise', 'Error', 'Symbol', 'Function',
+]);
+
+/**
+ * One class name per table, unique within the file. Tables are visited in qualified-name order
+ * so the `2`, `3`... suffixes are deterministic.
+ */
+export function assignClassNames(
+  tables: ReadonlyArray<string>,
+  opts: { singularize: boolean },
+): { names: Map<string, string>; warnings: string[] } {
+  const names = new Map<string, string>();
+  const warnings: string[] = [];
+  const used = new Set<string>();
+  for (const table of [...tables].sort()) {
+    const base = toClassName(table, opts);
+    let name = base;
+    for (let i = 2; used.has(name) || RESERVED_CLASS_NAMES.has(name); i++) name = `${base}${i}`;
+    if (name !== base) {
+      const why = RESERVED_CLASS_NAMES.has(base) ? 'is a reserved name' : 'is already used by another table';
+      warnings.push(`${table}: class name ${base} ${why} — emitted as ${name}.`);
+    }
+    used.add(name);
+    names.set(table, name);
+  }
+  return { names, warnings };
+}
+
+const IDENT =/^[\p{ID_Start}$_][\p{ID_Continue}$‌‍]*$/u;
+
+export function isIdentifier(s: string): boolean {
+  return IDENT.test(s);
+}
+
+function toIdentifier(s: string): string {
+  const cleaned = s.replace(/[^\p{ID_Continue}$‌‍]/gu, '');
+  return /^[\p{ID_Start}$_]/u.test(cleaned) ? cleaned : `_${cleaned}`;
+}
+
+/** Not toPascalCase-based: re-splitting on `_` would drop the prefix that keeps `_2faCode` valid. */
+export function lowerFirst(identifier: string): string {
+  return identifier.charAt(0).toLowerCase() + identifier.slice(1);
 }
 
 export function pluralize(word: string): string {

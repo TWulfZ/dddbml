@@ -179,18 +179,29 @@ Match case-insensitive, ignorando paréntesis para length/precision:
 | `bytea` | `Buffer` | `{ type: 'bytea' }` |
 | desconocido | `string` | `{ type: <raw> }` + warning |
 
+Sufijos (lo que sigue a los argumentos no se descarta):
+- Arrays `T[]`, `T(…)[]`, `T[][]` (el importer Postgres de @dbml/core los emite entre comillas: `"varchar(50)[]"`) → mapeo de `T` + `array: true`, y `[]` en el tipo TS por cada dimensión.
+- Modificador tras `)` → se une a la base: `timestamp(3) with time zone` = `timestamp with time zone` → `timestamptz`. Si la base resultante no está en la tabla → desconocido + warning.
+- `timestamp(P)`, `timestamptz(P)`, `time(P)`, `timetz(P)` → `precision: P`.
+
 ### Column decorators (`template.ts`)
 
-- `pk && increment` + tipo int* → `@PrimaryGeneratedColumn()`.
+- "Generado" = `increment` en el DBML, o un tipo de la familia serial (`serial`, `serial4`, `smallserial`, `serial2`, `bigserial`, `serial8`; el dialect lo marca con `generated: 'increment'`).
+- `pk` + generado + tipo `int` → `@PrimaryGeneratedColumn()`.
+- `pk` + generado + otro tipo entero → `@PrimaryGeneratedColumn({ type: 'bigint' | 'smallint' })` (la forma objeto mantiene strategy `increment` y TypeORM emite BIGSERIAL/SMALLSERIAL; sin `type` sería SERIAL int4 y desbordaría en 2^31).
 - `pk && increment` + tipo uuid → `@PrimaryGeneratedColumn('uuid')` (DBML raro pero valido).
-- `pk` solo → `@PrimaryColumn(<opts>)` con tipo explícito.
+- No-pk generado → `@Column({ type, nullable: false })` + `@Generated('increment')`; sin `default` (serial ya define el suyo) y siempre NOT NULL, como serial en Postgres.
+- `pk` solo → `@PrimaryColumn(<opts>)` con tipo explícito y su `default` si lo tiene (p.ej. `uuid [pk, default: `gen_random_uuid()`]` → `{ type: 'uuid', default: () => 'gen_random_uuid()' }`). No se convierte a `@PrimaryGeneratedColumn('uuid')`: eso cambiaría la expresión por la que elija `uuidExtension`.
+- PK compuesta (`indexes { (a, b) [pk] }`): el parser marca `pk` en cada miembro, así que se emite un `@PrimaryColumn` por miembro (TypeORM los trata como clave compuesta).
+- Tabla sin ninguna columna `pk` → warning: TypeORM rechaza entities sin primary column al inicializar el DataSource.
 - `unique` (no pk) → opción `{ unique: true }`.
-- `notNull` → `{ nullable: false }`. Default TypeORM es `nullable: false` para columnas regulares; emitimos explícito siempre que el DBML diga `notNull`, **y** explícito `nullable: true` cuando no diga `notNull` ni `pk`. (Reduce sorpresas.)
-- `default` no-null:
-  - String literal con función SQL (`now()`, `gen_random_uuid()`) → `{ default: () => 'now()' }`.
-  - Otro string → `{ default: '<value>' }` literal.
-  - Numeric/bool → valor literal sin quotes.
-  - Heurística: si empieza con `(` o termina con `)` o coincide regex `^[a-z_]+\(`, tratar como expresión SQL.
+- Nulabilidad (columnas regulares): sin `notNull` → `{ nullable: true }` **siempre** (default de TypeORM es NOT NULL, así que omitirlo cambiaría el schema). Con `notNull` → `{ nullable: false }` sólo si `emitNullableExplicit` (es redundante; la opción sólo controla eso).
+- `default`: se decide por `Column.defaultKind` (el tipo que @dbml/core reporta en `dbdefault.type`), no por el texto:
+  - `expression` (backticks, p.ej. `` `now()` ``, `` `CURRENT_TIMESTAMP` ``) → `{ default: () => 'now()' }`.
+  - `string` → `{ default: '<value>' }` literal, aunque parezca número, booleano o llamada (`'00501'`, `'true'`, `'now()'`). Si contiene `'`, se emite como expresión con las comillas duplicadas (`() => "'it''s'"`), porque TypeORM no escapa los string defaults.
+  - `number` / `boolean` → valor literal sin quotes.
+  - `null` (`[default: null]`) → se omite.
+  - Sin `defaultKind` (productores antiguos): heurística por texto — `^[a-z_]+\(` o empieza con `(` → expresión SQL.
 - `note` → bloque de comentario `/** ... */` sobre la propiedad.
 
 ### Relations (`relations.ts`)
@@ -204,14 +215,21 @@ DBML `Ref.source.relation` y `Ref.target.relation` ∈ `{ '1', '*' }`. Matriz:
 | `*` | `1` | `@ManyToOne(() => Target)` + `@JoinColumn({ name: <fk_col> })` | `@OneToMany(() => Source, src => src.<prop>)` |
 | `*` | `*` | `@ManyToMany(() => Target)` + `@JoinTable()` | `@ManyToMany(() => Source, src => src.<prop>)` |
 
-**Lado dueño (JoinColumn)**: convención DBML — el endpoint que aparece como `source` es el lado que escribió la cláusula `Ref:`. Tratamos `source` como dueño en 1:1 y *:*.
+**Lado dueño (JoinColumn)**:
+- *:1 / 1:* → el lado `*` (el que tiene la FK).
+- *:* → `source`.
+- 1:1 → regla estructural, porque el orden de endpoints no sirve: en un ref inline (`user_id int [ref: - users.id]`) @dbml/core emite primero el endpoint referenciado, y en un `Ref:` standalone, el orden escrito. Dueño = el lado menos "clave": rango 2 si sus columnas son exactamente la PK de su tabla, 1 si es una sola columna `unique`, 0 si no. Gana el de menor rango; si empatan (p.ej. PK compartida `profiles.id - users.id`), el dueño es `target` (endpoint 2), igual que el SQL que genera @dbml/core. La fila 1:1 de la matriz de arriba asume `source` dueño; si el dueño es `target`, los decorators se intercambian.
 
 **Property name**:
 - En el lado `*` (que apunta a `1` o `*`): `camelCase(otherTableName)` o pluralizado si toggle. Default singular para `ManyToOne`, plural para `OneToMany`/`ManyToMany`.
 - En el lado `1` (que apunta a `*`): plural.
-- Colisión con otra propiedad de la misma clase → sufija `_<n>`.
+- Colisión con otra propiedad de la misma clase → sufija `_<n>`. Las columnas cuentan como propiedades ya tomadas y conservan su nombre (TypeORM deriva el nombre de columna de la key), así que `category int [ref: > categories.id]` emite `category` (columna) + `category_2` (relación).
 
-**Composite FKs**: si `columns.length > 1`, emite `@JoinColumn` con array de objetos `[{ name }]`. Warning si el dialect no soporta composite (postgres sí).
+**Columnas referenciadas**: cada entrada de `@JoinColumn` lleva `referencedColumnName` (la columna del otro lado, en el mismo orden). Sólo se omite cuando hay una única columna FK y apunta a la PK de una sola columna de la tabla referenciada, que es lo que TypeORM asume por defecto. **Composite FKs**: si `columns.length > 1`, emite `@JoinColumn([{ name, referencedColumnName }, ...])` — sin `referencedColumnName` TypeORM ataría todas las entradas a la primera PK. Warning si el dialect no soporta composite (postgres sí).
+
+**Parámetro del callback inverso**: `(user) => user.orders` usa el nombre de clase con la primera letra en minúscula; si eso es palabra reservada en un módulo ES (`class`, `return`, `package`, `interface`, ...) se sufija `_` (`(class_) => class_.refunds`).
+
+**Acciones referenciales** (`[delete: cascade, update: set null]`): `Ref.onDelete/onUpdate` se emiten como tercer argumento del decorator del lado dueño, normalizadas a la unión de TypeORM (`cascade→'CASCADE'`, `restrict→'RESTRICT'`, `set null→'SET NULL'`, `set default→'SET DEFAULT'`, `no action→'NO ACTION'`): `@ManyToOne(() => Team, (team) => team.enrollments, { onDelete: 'CASCADE' })`. En `*:*` o con un valor desconocido se omiten con warning (TypeORM las aplicaría a la join table, no a las columnas del DBML).
 
 **Scope='selected', endpoint fuera de selección**: preserva la columna FK (renderiza como propiedad regular con su tipo), omite el decorator de relación, agrega warning `"Relation <Source> ↔ <Target>: <Target> not in selection — emitted FK column only."`.
 
@@ -226,14 +244,21 @@ toPascalCase('billing.invoices') // 'BillingInvoices' (schema preserved for non-
 **Singularize (English heuristic)**, sólo si `options.singularize === true`:
 
 Regla de orden:
-1. Tabla irregular conocida → mapeo directo (`children→child`, `people→person`, `men→man`, `women→woman`, `feet→foot`, `geese→goose`, `mice→mouse`, `teeth→tooth`).
-2. `(.+)ies$` → `$1y` excepto `series`, `species`.
-3. `(.+)ses$` → `$1s` (e.g. `addresses→address`).
-4. `(.+s|ch|sh|x|z)es$` → `$1` (e.g. `boxes→box`).
-5. `(.+)s$` (no `ss`) → `$1`.
+0. Invariantes (`series`, `species`, `news`, `data`, `metadata`, `media`, `sheep`, `fish`, `deer`) → unchanged.
+1. Tabla irregular conocida → mapeo directo (`children→child`, `people→person`, `men→man`, `women→woman`, `feet→foot`, `geese→goose`, `mice→mouse`, `teeth→tooth`, `quizzes→quiz`, y plurales de palabras en -u: `menus→menu`, `skus→sku`, `gurus→guru`).
+2. `ies$`: si queda una sola letra antes (`ties`, `pies`) o el singular es un sustantivo -ie conocido (`movies`, `cookies`, `zombies`, ...) → quita sólo la `s`; si no → `y` (`categories→category`).
+3. `(ss|sh|ch|x|zz|us)es$` → quita `es` (`addresses→address`, `boxes→box`, `matches→match`, `statuses→status`).
+4. Termina en `us`, `is` o `ss` → unchanged (ya es singular: `status`, `campus`, `analysis`, `class`).
+5. `s$` → quita la `s` (`users→user`, y también `courses→course`, `purchases→purchase`, `sizes→size`, cuyo singular termina en -e).
 6. Otro caso → unchanged.
 
+Limitaciones aceptadas: `caches→cach` (regla 3), `heroes→heroe`, `analyses→analyse`.
+
 Aplicado **después** del PascalCase, sobre el último segmento.
+
+**Identificadores válidos**: tras PascalCase + singularize, el nombre de clase pierde los caracteres que no son de identificador y recibe prefijo `_` si no empieza con letra/`$`/`_` (`"2fa_codes"` → `_2faCode`); los nombres de propiedad de relación derivan de él (`_2faCode`). Las columnas cuyo nombre no es identificador se emiten con key entre comillas (`"first name"?: string | null;`): TypeORM toma el nombre de columna de la key, así que no hace falta `name:`.
+
+**Colisiones de nombre de clase**: los nombres se asignan una vez por export (tablas en orden de qualified name) y todo — entity, `() => Target`, tipos de relación — lee de ese mapa. Si el nombre ya lo usa otra tabla (`user` + `users` → `User`) o choca con un import de typeorm o un global usado por los tipos (`Entity`, `Column`, `Record`, `Date`, `Buffer`, `Map`, `Promise`, ...), se sufija `2`, `3`... (`Entity2`) con warning. Los nombres de propiedad de relación siguen derivando del nombre sin sufijo (`records`, no `record2s`); las colisiones dentro de una clase ya las resuelve `_<n>`.
 
 ### Imports
 
@@ -269,7 +294,7 @@ optionsSchema: [
     choices: [{ value: 'postgres', label: 'PostgreSQL' }] },
   { id: 'singularize', type: 'boolean', label: 'Singularize class names (English)', default: true },
   { id: 'includeImports', type: 'boolean', label: 'Include typeorm imports', default: true },
-  { id: 'emitNullableExplicit', type: 'boolean', label: 'Emit nullable: true/false explicitly', default: true },
+  { id: 'emitNullableExplicit', type: 'boolean', label: 'Emit nullable: true/false explicitly', default: true },  // sólo agrega el redundante `nullable: false`; `nullable: true` sale siempre
 ]
 ```
 
@@ -305,7 +330,7 @@ Defaults se sobre-escriben por `settings.export.typeorm.*` cuando hay setting co
 
 - `test/unit/exporters/typeorm/relations.test.ts`:
   - 4 cardinalidades emiten decorators y JoinColumn esperados.
-  - Composite FK → `@JoinColumn([{ name: 'a' }, { name: 'b' }])`.
+  - Composite FK → `@JoinColumn([{ name: 'a', referencedColumnName: 'x' }, { name: 'b', referencedColumnName: 'y' }])`; FK a columna no-PK → `referencedColumnName` explícito.
   - Colisión de property names → sufija.
 
 - `test/unit/exporters/typeorm/generate.test.ts`:

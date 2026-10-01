@@ -1,6 +1,7 @@
 import { Parser } from '@dbml/core';
 import type {
   Column,
+  ColumnDefaultKind,
   ParseError,
   QualifiedName,
   Ref,
@@ -64,6 +65,7 @@ interface ExportedTable {
   alias: string | null;
   note: string;
   headerColor: string | null;
+  indexes?: Array<{ pk?: boolean; columns: Array<{ type: string; value: string }> }>;
 }
 
 interface ExportedRef {
@@ -133,6 +135,23 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
     }
   }
 
+  // Aliases are global in DBML, so a ref in one schema may name an aliased table mapped later.
+  const realTables = new Set<QualifiedName>();
+  const aliasToTable = new Map<string, QualifiedName>();
+  for (const s of db.schemas) {
+    const schemaName = s.name && s.name.length > 0 ? s.name : 'public';
+    for (const t of s.tables ?? []) {
+      const qn = qualify(schemaName, unquote(t.name));
+      realTables.add(qn);
+      if (t.alias) aliasToTable.set(unquote(t.alias), qn);
+    }
+  }
+  const resolveEndpoint = (schemaName: string | null, tableName: string, defaultSchemaName: string): QualifiedName => {
+    const qn = qualify(schemaName ?? defaultSchemaName, tableName);
+    if (schemaName != null || realTables.has(qn)) return qn;
+    return aliasToTable.get(unquote(tableName.trim())) ?? qn;
+  };
+
   for (const s of db.schemas) {
     const schemaName = s.name && s.name.length > 0 ? s.name : 'public';
 
@@ -143,14 +162,14 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
         name: qn,
         schemaName,
         tableName: cleanName,
-        columns: (t.fields ?? []).map(mapField),
+        columns: markIndexPk((t.fields ?? []).map(mapField), t.indexes),
         note: t.note || null,
         groupName: tableToGroup.get(qn) ?? null,
       });
     }
 
     for (const r of s.refs ?? []) {
-      const mapped = mapRef(r, schemaName);
+      const mapped = mapRef(r, schemaName, resolveEndpoint);
       if (mapped) refs.push(mapped);
     }
   }
@@ -162,7 +181,7 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
 }
 
 function mapField(f: ExportedField): Column {
-  return {
+  const col: Column = {
     name: unquote(f.name),
     type: typeName(f.type),
     pk: f.pk || undefined,
@@ -172,6 +191,31 @@ function mapField(f: ExportedField): Column {
     default: f.dbdefault != null ? String((f.dbdefault as { value?: unknown })?.value ?? f.dbdefault) : null,
     note: f.note || null,
   };
+  const kind = defaultKindOf(f.dbdefault);
+  if (kind) col.defaultKind = kind;
+  return col;
+}
+
+/** `indexes { (a, b) [pk] }` is how DBML spells a composite primary key; @dbml/core leaves the fields' `pk` false. */
+function markIndexPk(columns: Column[], indexes: ExportedTable['indexes']): Column[] {
+  for (const idx of indexes ?? []) {
+    if (idx.pk !== true) continue;
+    for (const member of idx.columns) {
+      if (member.type !== 'column') continue;
+      const col = columns.find((c) => c.name === unquote(member.value));
+      if (col) col.pk = true;
+    }
+  }
+  return columns;
+}
+
+function defaultKindOf(dbdefault: unknown): ColumnDefaultKind | undefined {
+  if (!dbdefault || typeof dbdefault !== 'object') return undefined;
+  const { type, value } = dbdefault as { type?: unknown; value?: unknown };
+  // @dbml/core reports a bare `null` default as a boolean whose value is the text 'null'.
+  if (type === 'boolean' && value === 'null') return 'null';
+  if (type === 'string' || type === 'number' || type === 'boolean' || type === 'expression') return type;
+  return undefined;
 }
 
 function typeName(t: unknown): string {
@@ -184,22 +228,27 @@ function typeName(t: unknown): string {
   return 'unknown';
 }
 
-function mapRef(r: ExportedRef, defaultSchemaName: string): Ref | null {
+type EndpointResolver = (schemaName: string | null, tableName: string, defaultSchemaName: string) => QualifiedName;
+
+function mapRef(r: ExportedRef, defaultSchemaName: string, resolveTable: EndpointResolver): Ref | null {
   if (!r.endpoints || r.endpoints.length !== 2) return null;
   const [a, b] = r.endpoints;
   if (!a || !b) return null;
   const source = {
-    table: qualify(a.schemaName ?? defaultSchemaName, a.tableName),
+    table: resolveTable(a.schemaName, a.tableName, defaultSchemaName),
     columns: a.fieldNames.map(unquote),
     relation: normalizeRelation(a.relation),
   };
   const target = {
-    table: qualify(b.schemaName ?? defaultSchemaName, b.tableName),
+    table: resolveTable(b.schemaName, b.tableName, defaultSchemaName),
     columns: b.fieldNames.map(unquote),
     relation: normalizeRelation(b.relation),
   };
   const id = stableRefId(source.table, source.columns, target.table, target.columns);
-  return { id, source, target, name: r.name || null };
+  const ref: Ref = { id, source, target, name: r.name || null };
+  if (typeof r.onDelete === 'string') ref.onDelete = r.onDelete;
+  if (typeof r.onUpdate === 'string') ref.onUpdate = r.onUpdate;
+  return ref;
 }
 
 function normalizeRelation(rel: unknown): RefEndpointRelation {

@@ -1,5 +1,5 @@
-import type { QualifiedName, Ref } from '../../../shared/types';
-import { pluralize, toCamelCase, toClassName } from './naming';
+import type { QualifiedName, Ref, Table } from '../../../shared/types';
+import { lowerFirst, pluralize, toClassName } from './naming';
 
 export type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many';
 
@@ -18,6 +18,14 @@ export interface RelationSide {
   isOwning: boolean;
   /** Columns on the owner that form the FK (only meaningful when `isOwning`). */
   fkColumns: string[];
+  /**
+   * Target columns paired index-by-index with `fkColumns`. Empty when the FK targets the
+   * referenced table's single-column PK, which is what TypeORM assumes without `referencedColumnName`.
+   */
+  referencedColumns: string[];
+  /** Raw DBML referential actions; only set on the owning side. */
+  onDelete?: string;
+  onUpdate?: string;
   /** Inverse property name on the other entity, used for the `tgt => tgt.foo` callback. */
   inversePropertyName: string;
   /** Original ref id — for traceability + dedup. */
@@ -31,7 +39,33 @@ export interface RelationPair {
 }
 
 interface NamingOpts {
+  /** Collision-free class name, used for types. */
+  className(table: QualifiedName): string;
   singularize: boolean;
+}
+
+interface PairOpts extends NamingOpts {
+  tables: ReadonlyMap<QualifiedName, Table>;
+}
+
+/** 2 = exactly the table's PK, 1 = a single unique column, 0 = neither. */
+function keyRank(table: Table | undefined, columns: ReadonlyArray<string>): number {
+  if (!table) return 0;
+  const pk = table.columns.filter((c) => c.pk).map((c) => c.name);
+  if (pk.length > 0 && pk.length === columns.length && pk.every((c) => columns.includes(c))) return 2;
+  if (columns.length === 1 && table.columns.some((c) => c.name === columns[0] && c.unique)) return 1;
+  return 0;
+}
+
+/**
+ * Endpoint order cannot decide 1:1 ownership: @dbml/core emits an inline `[ref: - users.id]`
+ * with the referenced side first but a standalone `Ref:` in written order. The FK holder is the
+ * less key-like side; on a tie, the second endpoint owns, matching @dbml/core's own SQL export.
+ */
+function sourceOwnsOneToOne(ref: Ref, tables: PairOpts['tables']): boolean {
+  const s = keyRank(tables.get(ref.source.table), ref.source.columns);
+  const t = keyRank(tables.get(ref.target.table), ref.target.columns);
+  return s < t;
 }
 
 function cardinalityOf(ref: Ref): Cardinality {
@@ -61,8 +95,8 @@ function propNameFor(
   targetTable: QualifiedName,
   opts: NamingOpts,
 ): string {
-  const className = toClassName(targetTable, opts);
-  const camel = toCamelCase(className);
+  // The pre-dedup name reads better (`records`, not `record2s`); per-owner collisions get `_N` later.
+  const camel = lowerFirst(toClassName(targetTable, opts));
   if (decorator === 'OneToMany' || decorator === 'ManyToMany') return pluralize(camel);
   return camel;
 }
@@ -72,7 +106,7 @@ function tsTypeFor(
   targetTable: QualifiedName,
   opts: NamingOpts,
 ): string {
-  const cls = toClassName(targetTable, opts);
+  const cls = opts.className(targetTable);
   if (decorator === 'OneToMany' || decorator === 'ManyToMany') return `${cls}[]`;
   return cls;
 }
@@ -81,7 +115,7 @@ function tsTypeFor(
  * Convert refs into relation pairs. Each Ref produces two RelationSides — one per endpoint.
  * Ownership rules: see specs/09-exporters.md § Relations.
  */
-export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: NamingOpts): RelationPair[] {
+export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): RelationPair[] {
   const out: RelationPair[] = [];
   for (const ref of refs) {
     const card = cardinalityOf(ref);
@@ -89,12 +123,10 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: NamingOpts): 
     const sourceDecorator = decoratorFor(card, 'source');
     const targetDecorator = decoratorFor(card, 'target');
 
-    // Ownership: source side owns JoinColumn for 1:1, *:1, *:*; target side owns JoinColumn for 1:*.
-    // i.e. the side whose decorator is ManyToOne / (the picked owner for OneToOne / ManyToMany).
     let sourceOwns: boolean;
     switch (card) {
       case 'one-to-one':
-        sourceOwns = true; // DBML inline `ref:` writer convention
+        sourceOwns = sourceOwnsOneToOne(ref, opts.tables);
         break;
       case 'many-to-many':
         sourceOwns = true;
@@ -109,6 +141,12 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: NamingOpts): 
 
     const sourceProp = propNameFor(sourceDecorator, ref.target.table, opts);
     const targetProp = propNameFor(targetDecorator, ref.source.table, opts);
+    const referenced = (end: Ref['source']) =>
+      end.columns.length === 1 && keyRank(opts.tables.get(end.table), end.columns) === 2 ? [] : [...end.columns];
+
+    const actions: Pick<RelationSide, 'onDelete' | 'onUpdate'> = {};
+    if (ref.onDelete) actions.onDelete = ref.onDelete;
+    if (ref.onUpdate) actions.onUpdate = ref.onUpdate;
 
     out.push({
       cardinality: card,
@@ -120,6 +158,8 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: NamingOpts): 
         tsType: tsTypeFor(sourceDecorator, ref.target.table, opts),
         isOwning: sourceOwns,
         fkColumns: sourceOwns ? [...ref.source.columns] : [],
+        referencedColumns: sourceOwns ? referenced(ref.target) : [],
+        ...(sourceOwns ? actions : {}),
         inversePropertyName: targetProp,
         refId: ref.id,
       },
@@ -131,6 +171,8 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: NamingOpts): 
         tsType: tsTypeFor(targetDecorator, ref.source.table, opts),
         isOwning: !sourceOwns,
         fkColumns: !sourceOwns ? [...ref.target.columns] : [],
+        referencedColumns: !sourceOwns ? referenced(ref.source) : [],
+        ...(!sourceOwns ? actions : {}),
         inversePropertyName: sourceProp,
         refId: ref.id,
       },
@@ -146,6 +188,7 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: NamingOpts): 
 export function relationsByOwner(
   pairs: ReadonlyArray<RelationPair>,
   liveTables: Set<QualifiedName>,
+  columnNamesByTable: ReadonlyMap<QualifiedName, ReadonlyArray<string>> = new Map(),
 ): { byOwner: Map<QualifiedName, RelationSide[]>; orphanedRefIds: Set<string> } {
   const byOwner = new Map<QualifiedName, RelationSide[]>();
   const orphanedRefIds = new Set<string>();
@@ -165,7 +208,8 @@ export function relationsByOwner(
       return;
     }
     let used = usedByOwner.get(side.ownerTable);
-    if (!used) { used = new Set(); usedByOwner.set(side.ownerTable, used); }
+    // Column properties keep their names: TypeORM derives the DB column from the property key.
+    if (!used) { used = new Set(columnNamesByTable.get(side.ownerTable)); usedByOwner.set(side.ownerTable, used); }
     let candidate = side.propertyName;
     let i = 2;
     while (used.has(candidate)) candidate = `${side.propertyName}_${i++}`;

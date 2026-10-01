@@ -1,11 +1,11 @@
 import type { Column, QualifiedName, Table } from '../../../shared/types';
 import type { Dialect } from './dialect';
-import { toClassName } from './naming';
+import { isIdentifier } from './naming';
 import type { RelationSide } from './relations';
 
 interface EmitOptions {
   dialect: Dialect;
-  singularize: boolean;
+  className(table: QualifiedName): string;
   emitNullableExplicit: boolean;
 }
 
@@ -21,7 +21,7 @@ export function emitEntity(
   relations: ReadonlyArray<RelationSide>,
   opts: EmitOptions,
 ): EmittedEntity {
-  const className = toClassName(table.name, { singularize: opts.singularize });
+  const className = opts.className(table.name);
   const warnings: string[] = [];
   const decoratorsUsed = new Set<string>(['Entity']);
 
@@ -31,13 +31,6 @@ export function emitEntity(
   lines.push(`@Entity(${entityArgs})`);
   lines.push(`export class ${className} {`);
 
-  const fkColumnsByCol = new Map<string, RelationSide>();
-  for (const rel of relations) {
-    for (const col of rel.fkColumns) {
-      if (rel.isOwning) fkColumnsByCol.set(col, rel);
-    }
-  }
-
   const columnBlocks: string[] = [];
   const seenPk = new Set<string>();
   for (const col of table.columns) {
@@ -45,10 +38,13 @@ export function emitEntity(
     columnBlocks.push(block);
     if (col.pk) seenPk.add(col.name);
   }
+  if (seenPk.size === 0) {
+    warnings.push(`${table.name}: no primary key — TypeORM requires at least one primary column on ${className}.`);
+  }
 
   const relationBlocks: string[] = [];
   for (const rel of relations) {
-    relationBlocks.push(emitRelation(rel, opts, decoratorsUsed));
+    relationBlocks.push(emitRelation(rel, opts, decoratorsUsed, warnings, table.name));
   }
 
   const allBlocks = [...columnBlocks, ...relationBlocks];
@@ -84,41 +80,51 @@ function emitColumn(
 
   const colOpts: Record<string, unknown> = { ...mapping.columnOptions };
 
-  // Primary keys
-  if (col.pk && col.increment) {
-    const isUuid = mapping.columnOptions.type === 'uuid';
+  const generated = col.increment || mapping.generated === 'increment';
+
+  if (col.pk && generated) {
+    const type = mapping.columnOptions.type;
     decoratorsUsed.add('PrimaryGeneratedColumn');
-    const arg = isUuid ? `'uuid'` : '';
+    // The object form keeps strategy 'increment' and makes TypeORM emit BIGSERIAL/SMALLSERIAL.
+    const arg = type === 'uuid' ? `'uuid'` : type === 'int' ? '' : formatOptions({ type });
     const lines: string[] = [];
     if (col.note) lines.push(`/** ${escapeBlockComment(col.note)} */`);
     lines.push(`@PrimaryGeneratedColumn(${arg})`);
-    lines.push(`${col.name}!: ${mapping.tsType};`);
+    lines.push(`${propertyKey(col.name)}!: ${mapping.tsType};`);
     return lines.join('\n');
   }
 
   if (col.pk) {
+    const pkDefault = emitDefault(col);
+    if (pkDefault !== undefined) colOpts.default = pkDefault;
     decoratorsUsed.add('PrimaryColumn');
     const lines: string[] = [];
     if (col.note) lines.push(`/** ${escapeBlockComment(col.note)} */`);
     lines.push(`@PrimaryColumn(${formatOptions(colOpts)})`);
-    lines.push(`${col.name}!: ${mapping.tsType};`);
+    lines.push(`${propertyKey(col.name)}!: ${mapping.tsType};`);
     return lines.join('\n');
   }
 
-  // Regular column
   if (col.unique) colOpts.unique = true;
-  const nullable = !col.notNull;
-  if (opts.emitNullableExplicit) colOpts.nullable = nullable;
-  const defaultExpr = emitDefault(col.default);
+  // Postgres serial columns are NOT NULL by definition.
+  const nullable = !col.notNull && !generated;
+  // TypeORM defaults to NOT NULL, so only `nullable: false` is ever redundant.
+  if (nullable) colOpts.nullable = true;
+  else if (opts.emitNullableExplicit) colOpts.nullable = false;
+  const defaultExpr = generated ? undefined : emitDefault(col);
   if (defaultExpr !== undefined) colOpts.default = defaultExpr;
 
   decoratorsUsed.add('Column');
   const lines: string[] = [];
   if (col.note) lines.push(`/** ${escapeBlockComment(col.note)} */`);
   lines.push(`@Column(${formatOptions(colOpts)})`);
+  if (generated) {
+    decoratorsUsed.add('Generated');
+    lines.push(`@Generated("increment")`);
+  }
   const optMark = nullable ? '?' : '!';
   const tsType = nullable ? `${mapping.tsType} | null` : mapping.tsType;
-  lines.push(`${col.name}${optMark}: ${tsType};`);
+  lines.push(`${propertyKey(col.name)}${optMark}: ${tsType};`);
   return lines.join('\n');
 }
 
@@ -127,29 +133,85 @@ interface DefaultMarker {
   raw: string;
 }
 
-function emitDefault(value: string | null | undefined): unknown {
+function emitDefault(col: Column): unknown {
+  const value = col.default;
   if (value == null) return undefined;
+  switch (col.defaultKind) {
+    case 'null':
+      return undefined;
+    case 'expression':
+      return sqlDefault(value);
+    case 'number': {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : sqlDefault(value);
+    }
+    case 'boolean':
+      return value === 'true';
+    case 'string':
+      // TypeORM wraps string defaults in quotes without escaping embedded ones.
+      return value.includes("'") ? sqlDefault(`'${value.replace(/'/g, "''")}'`) : value;
+    case undefined:
+      break;
+  }
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
   if (trimmed === 'true' || trimmed === 'false') return trimmed === 'true';
-  if (/^[a-z_][\w]*\s*\(/i.test(trimmed) || trimmed.startsWith('(')) {
-    const marker: DefaultMarker = { __sql: true, raw: trimmed };
-    return marker;
-  }
+  if (/^[a-z_][\w]*\s*\(/i.test(trimmed) || trimmed.startsWith('(')) return sqlDefault(trimmed);
   return trimmed;
+}
+
+function sqlDefault(raw: string): DefaultMarker {
+  return { __sql: true, raw };
+}
+
+const REFERENTIAL_ACTIONS: Record<string, string> = {
+  'cascade': 'CASCADE',
+  'restrict': 'RESTRICT',
+  'set null': 'SET NULL',
+  'set default': 'SET DEFAULT',
+  'no action': 'NO ACTION',
+};
+
+function referentialActionOptions(
+  rel: RelationSide,
+  warnings: string[],
+  ownerTable: QualifiedName,
+): string | undefined {
+  const parts: string[] = [];
+  for (const key of ['onDelete', 'onUpdate'] as const) {
+    const raw = rel[key];
+    if (!raw) continue;
+    const label = `${ownerTable}.${rel.propertyName}: ${key} "${raw}"`;
+    // TypeORM applies ManyToMany actions to the generated join table, not to the DBML columns.
+    if (rel.decorator === 'ManyToMany') {
+      warnings.push(`${label} dropped — not representable on a ManyToMany relation.`);
+      continue;
+    }
+    const action = REFERENTIAL_ACTIONS[raw.trim().toLowerCase().replace(/\s+/g, ' ')];
+    if (!action) {
+      warnings.push(`${label} dropped — unknown referential action.`);
+      continue;
+    }
+    parts.push(`${key}: ${JSON.stringify(action)}`);
+  }
+  return parts.length > 0 ? `{ ${parts.join(', ')} }` : undefined;
 }
 
 function emitRelation(
   rel: RelationSide,
   opts: EmitOptions,
   decoratorsUsed: Set<string>,
+  warnings: string[],
+  ownerTable: QualifiedName,
 ): string {
   decoratorsUsed.add(rel.decorator);
-  const targetClass = toClassName(rel.targetTable, { singularize: opts.singularize });
+  const targetClass = opts.className(rel.targetTable);
 
   const inverseFn = `(${shortVar(targetClass)}) => ${shortVar(targetClass)}.${rel.inversePropertyName}`;
-  const decoratorArgs = `() => ${targetClass}, ${inverseFn}`;
+  let decoratorArgs = `() => ${targetClass}, ${inverseFn}`;
+  const actionOpts = referentialActionOptions(rel, warnings, ownerTable);
+  if (actionOpts) decoratorArgs += `, ${actionOpts}`;
 
   const lines: string[] = [];
   lines.push(`@${rel.decorator}(${decoratorArgs})`);
@@ -160,12 +222,14 @@ function emitRelation(
       lines.push('@JoinTable()');
     } else {
       decoratorsUsed.add('JoinColumn');
-      if (rel.fkColumns.length === 1) {
-        lines.push(`@JoinColumn({ name: ${JSON.stringify(rel.fkColumns[0])} })`);
-      } else if (rel.fkColumns.length > 1) {
-        const joins = rel.fkColumns.map((c) => `{ name: ${JSON.stringify(c)} }`).join(', ');
-        lines.push(`@JoinColumn([${joins}])`);
-      }
+      const joins = rel.fkColumns.map((c, i) => {
+        const referenced = rel.referencedColumns[i];
+        return referenced === undefined
+          ? `{ name: ${JSON.stringify(c)} }`
+          : `{ name: ${JSON.stringify(c)}, referencedColumnName: ${JSON.stringify(referenced)} }`;
+      });
+      if (joins.length === 1) lines.push(`@JoinColumn(${joins[0]})`);
+      else if (joins.length > 1) lines.push(`@JoinColumn([${joins.join(', ')}])`);
     }
   }
 
@@ -175,9 +239,24 @@ function emitRelation(
   return lines.join('\n');
 }
 
+/** TypeORM derives the DB column name from the property key, so a quoted key keeps the raw name intact. */
+function propertyKey(name: string): string {
+  return isIdentifier(name) ? name : JSON.stringify(name);
+}
+
+// Names that cannot be a binding in an ES module (strict mode), where the generated file lives.
+const RESERVED_BINDINGS = new Set([
+  'arguments', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default',
+  'delete', 'do', 'else', 'enum', 'eval', 'export', 'extends', 'false', 'finally', 'for', 'function',
+  'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'null', 'package',
+  'private', 'protected', 'public', 'return', 'static', 'super', 'switch', 'this', 'throw', 'true',
+  'try', 'typeof', 'var', 'void', 'while', 'with', 'yield',
+]);
+
 function shortVar(className: string): string {
   if (className.length === 0) return 'x';
-  return className.charAt(0).toLowerCase() + className.slice(1);
+  const v = className.charAt(0).toLowerCase() + className.slice(1);
+  return RESERVED_BINDINGS.has(v) ? `${v}_` : v;
 }
 
 function escapeBlockComment(s: string): string {

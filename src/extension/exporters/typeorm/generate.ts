@@ -1,7 +1,7 @@
 import type { ExportInput, ExportResult } from '../../../shared/exporters/types';
 import type { QualifiedName } from '../../../shared/types';
 import { getDialect } from './dialect';
-import { toClassName } from './naming';
+import { assignClassNames, toClassName } from './naming';
 import { buildRelationPairs, relationsByOwner } from './relations';
 import { emitEntity, emitImports } from './template';
 
@@ -35,8 +35,18 @@ export function generateTypeOrm(input: ExportInput): ExportResult {
   }
 
   const liveTables = new Set<QualifiedName>(input.schema.tables.map((t) => t.name));
-  const pairs = buildRelationPairs(input.schema.refs, { singularize: opts.singularize });
-  const { byOwner, orphanedRefIds } = relationsByOwner(pairs, liveTables);
+  const tablesByName = new Map(input.schema.tables.map((t) => [t.name, t]));
+  const classNames = assignClassNames([...liveTables], { singularize: opts.singularize });
+  warnings.push(...classNames.warnings);
+  const className = (table: QualifiedName) =>
+    classNames.names.get(table) ?? toClassName(table, { singularize: opts.singularize });
+  const pairs = buildRelationPairs(input.schema.refs, {
+    className,
+    singularize: opts.singularize,
+    tables: tablesByName,
+  });
+  const columnNames = new Map(input.schema.tables.map((t) => [t.name, t.columns.map((c) => c.name)]));
+  const { byOwner, orphanedRefIds } = relationsByOwner(pairs, liveTables, columnNames);
 
   if (orphanedRefIds.size > 0) {
     for (const id of orphanedRefIds) {
@@ -48,9 +58,7 @@ export function generateTypeOrm(input: ExportInput): ExportResult {
 
   const decoratorsUsed = new Set<string>();
   const tablesSorted = [...input.schema.tables].sort((a, b) => {
-    const ac = toClassName(a.name, { singularize: opts.singularize });
-    const bc = toClassName(b.name, { singularize: opts.singularize });
-    return ac.localeCompare(bc);
+    return className(a.name).localeCompare(className(b.name));
   });
 
   const entityBlocks: string[] = [];
@@ -58,7 +66,7 @@ export function generateTypeOrm(input: ExportInput): ExportResult {
     const rels = byOwner.get(table.name) ?? [];
     const emitted = emitEntity(table, rels, {
       dialect,
-      singularize: opts.singularize,
+      className,
       emitNullableExplicit: opts.emitNullableExplicit,
     });
     for (const d of emitted.decoratorsUsed) decoratorsUsed.add(d);

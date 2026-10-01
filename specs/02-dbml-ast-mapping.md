@@ -46,21 +46,26 @@ interface Schema {
 |---|---|---|
 | `name` | `name` | directo |
 | `type` | `type` | si es objeto, usa `type_name` o `name`; fallback `'unknown'` |
-| `pk` | `pk` | `true \| undefined` (omitir si falso para JSON compacto) |
+| `pk` | `pk` | `true \| undefined` (omitir si falso para JSON compacto). También `true` para cada columna miembro de un índice `indexes { (a, b) [pk] }` (PK compuesta); los miembros expresión se ignoran |
 | `not_null` | `notNull` | idem |
 | `unique` | `unique` | idem |
 | `increment` | `increment` | idem |
-| `dbdefault` | `default` | stringificado si es objeto `{value}` |
+| `dbdefault` | `default` | stringificado si es objeto `{value}` (`[default: null]` queda como `'null'`) |
+| `dbdefault.type` | `defaultKind` | `'string' \| 'number' \| 'boolean' \| 'expression' \| 'null'`; omitido si no hay default. Lo consume el exporter; el webview sólo muestra `default` |
 | `note` | `note` | `string \| null` |
 
 ### Ref (`endpoints[2]` → `Ref`)
 
 DBML permite refs con 2 endpoints. Cada endpoint: `{ schemaName, tableName, fieldNames[], relation }`. Mapeamos a `Ref` con `source` y `target` (orden determinado por orden en DBML — no intentamos inferir dirección por cardinalidad).
 
+**Aliases** (`Table core.users as U`): @dbml/core deja `tableName: 'U'` en el endpoint. Si el endpoint no trae schema y `<schemaDefault>.<tableName>` no es una tabla real, se resuelve por el mapa global de aliases al nombre calificado real de la tabla (`core.users`, no `public.users`). La resolución ocurre antes de calcular el ID estable, así edges y `edgeLayouts` usan el nombre real.
+
 **Relation normalization**:
 - `*`, `many`, `>` → `'*'`
 - resto (incluyendo `1`, `-`, `<`) → `'1'`
 - La dirección (`>` vs `<`) se pierde intencionalmente en v1; el orden `source→target` la preserva.
+
+**Acciones referenciales**: `onDelete` / `onUpdate` del export se copian tal cual (`'cascade'`, `'set null'`, ...) sólo si son string; si no, la key se omite (el JSON de refs sin acciones no cambia). No participan en el ID estable.
 
 **ID estable**: hash determinista `sourceTable(col1,col2)->targetTable(col3,col4)`, orden canónico (alfabético). Asegura que al re-parsear obtenemos el mismo ID → edges no "saltan" de identidad entre frames.
 
@@ -80,7 +85,7 @@ También cada `Table.groupName` apunta al group que la contiene (para lookup rá
 ## Fallos conocidos / ignorados en v1
 
 - **Enums**: parseados pero no renderizados. v1.1 candidate.
-- **Indexes**: parseados pero no renderizados (sólo labels en tabla podrían mostrarlos). v1.1.
+- **Indexes**: parseados pero no renderizados (sólo labels en tabla podrían mostrarlos). v1.1. Excepción: los índices `[pk]` marcan `pk` en sus columnas (ver tabla de columnas).
 - **StickyNotes**: ignorados.
 - **Records (seed data)**: ignorados.
 - **TablePartials** (DBML v3): ignorados en v1 (los partials se inyectan al parsear, así que sus campos aparecen igual en la tabla final; no hay AST dedicado).
