@@ -223,6 +223,12 @@ Matriz de casos:
 la forma de cada edge (`waypoints`, `sourceSide`/`targetSide`, `dx`/`dy`), porque los waypoints
 absolutos quedarían sueltos al mover las tablas. **Conserva** colores (de tablas, grupos y
 edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados).
+Corre en el webview (`layout/resetLayout.ts`): el host sólo valida el gate y postea
+`command:resetLayout`; el webview recalcula con el auto-layout de la primera apertura (dagre),
+limpia la forma de **todas** las aristas, vacía el historial (sin undo: memento futuro, spec 11)
+y persiste por el `layout:persist` normal. Las entradas huérfanas (tabla fuera del schema)
+conservan posición y color: limpiarlas es trabajo de `Prune orphans`. Antes el host escribía
+`tables: {}`, que borraba colores y flags ocultos y dejaba los waypoints absolutos colgando.
 
 `Prune orphans` se **niega** (aviso) mientras el `.dbml` no parsea en su última lectura o el
 layout aún no se cargó: contra un schema vacío o viejo toda entrada parece huérfana y se

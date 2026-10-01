@@ -343,6 +343,19 @@ describe('camera persistence (F26)', () => {
   });
 });
 
+describe('Reset Layout (F24)', () => {
+  it('hands the reset to the webview instead of wiping the sidecar (colors, edges, hidden flags)', async () => {
+    const colored = sidecarText({ 'public.a': { x: 0, y: 0 }, 'public.b': { x: 400, y: 0 } }).replace('"x": 400, "y": 0 }', '"x": 400, "y": 0, "color": "#ff0000" }');
+    const h = await open({ sidecar: colored });
+    h.mark();
+    await h.panel.resetLayout();
+    await DiagramPanel.settle();
+    expect(h.since('command:resetLayout')).toHaveLength(1);
+    expect(h.since('layout:loaded')).toHaveLength(0);
+    expect(h.readSidecar()).toBe(colored);
+  });
+});
+
 describe('go to definition (F25)', () => {
   const SRC = `Table "auth"."users"\n{\n  id int\n}\n\nTable usuários as U {\n  id int\n}\n\nTable "plain" {\n  id int\n}\n`;
 

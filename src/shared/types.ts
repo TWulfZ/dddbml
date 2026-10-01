@@ -326,6 +326,7 @@ export type HostToWebview =
   | { type: 'viewport:command'; payload: { action: ViewportCommand } }
   | { type: 'command:autoArrange'; payload: { mode: AutoArrangeMode; orderEdges?: boolean; preserveManualEdges?: boolean } }
   | { type: 'command:orderEdges'; payload: { preserveManualEdges?: boolean } }
+  | { type: 'command:resetLayout' }
   | { type: 'exporters:list'; payload: { exporters: ExporterMeta[] } }
   | { type: 'export:result'; payload: { ok: boolean; warnings?: string[]; message?: string } }
   | { type: 'settings:loaded'; payload: AppSettings }

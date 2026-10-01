@@ -94,6 +94,7 @@ Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor
 | Llamada `redo()` con `future` no vacío | Simétrico. |
 | `undo()` / `redo()` con stack vacío | No-op silencioso. |
 | `setLayout` (load inicial o `layout:external-change`) | `past = [], future = []`. |
+| `dddbml: Reset Layout` (spec 03) | `past = [], future = []` (sin undo hasta el memento v2). |
 | Entrar a un overlay git (time-travel / diff) | `past`/`future` se guardan aparte; undo/redo son no-op mientras dure (gate de solo lectura). |
 | Salir del overlay git | Se restauran `past`/`future` guardados, salvo que el set de tablas del schema de trabajo haya cambiado mientras tanto (misma regla que `setSchema`). Decisión 2026-10-01: mirar una revisión no es editar. |
 | `setSchema` con set de nombres de tabla **distinto** al anterior | `past = [], future = []`. Previene undo a tabla que ya no existe. |

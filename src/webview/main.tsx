@@ -5,6 +5,7 @@ import { store } from './state/store';
 import { postToHost } from './vscode';
 import { fitToContent, resetView, zoomAtCenter } from './render/viewport';
 import { runSmartLayout, runEdgeOrdering } from './layout/smartLayout';
+import { resetLayout } from './layout/resetLayout';
 import type { HostToWebview } from '../shared/types';
 
 {
@@ -66,6 +67,9 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
       return;
     case 'command:orderEdges':
       void runEdgeOrdering({ preserveManual: msg.payload.preserveManualEdges });
+      return;
+    case 'command:resetLayout':
+      resetLayout();
       return;
     case 'merge:begin':
       state.beginMerge(msg.payload.conflicts, msg.payload.error);

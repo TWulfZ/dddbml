@@ -192,12 +192,11 @@ export class DiagramPanel {
     this.post({ type: 'command:orderEdges', payload: {} });
   }
 
-  public async resetLayout(): Promise<void> {
+  /** Only the webview can lay tables out, so it runs the reset and persists the result (spec 03,
+   *  F24); the write then passes the same read-only gate as any edit. */
+  public resetLayout(): void {
     if (this.refuseWhileReadOnly('Reset Layout')) return;
-    this.currentLayout = { ...this.currentLayout, tables: {} };
-    await this.flushPersist(this.currentLayout);
-    this.post({ type: 'layout:loaded', payload: this.currentLayout });
-    void vscode.window.showInformationMessage('dddbml: layout reset — auto-layout will re-run.');
+    this.whenHydrated(() => this.post({ type: 'command:resetLayout' }));
   }
 
   public async pruneOrphans(): Promise<void> {
