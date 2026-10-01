@@ -4,9 +4,10 @@ vi.mock('./vscode', () => ({ postToHost: vi.fn() }));
 
 import { postToHost } from './vscode';
 import { store } from './state/store';
-import { flushPendingPersist, schedulePersist } from './persistence';
+import { schedulePersist } from './persistence';
 
 const posted = vi.mocked(postToHost);
+const persists = () => posted.mock.calls.filter(([m]) => m.type === 'layout:persist');
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -16,26 +17,25 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+describe('discrete edits reach the host at once (F22)', () => {
+  it('posts layout:persist synchronously, so closing or hiding the panel right after cannot drop it', () => {
+    schedulePersist();
+    expect(persists()).toHaveLength(1);
+  });
+});
+
 describe('webview persist gate (spec 16, two-layer gate)', () => {
-  it('a persist scheduled before time travel never posts the past revision (F27)', () => {
-    schedulePersist();
+  it('posts nothing while a past revision is on screen (F27)', () => {
     store.getState().enterTimeTravel('abc', 'abc');
+    schedulePersist();
     vi.advanceTimersByTime(1000);
-    expect(posted).not.toHaveBeenCalled();
+    expect(persists()).toHaveLength(0);
   });
 
-  it('a persist scheduled before merge:begin never posts the provisional merge (F27)', () => {
-    schedulePersist();
+  it('posts nothing while the provisional merge is on screen (F27)', () => {
     store.getState().beginMerge([]);
-    vi.advanceTimersByTime(1000);
-    expect(posted).not.toHaveBeenCalled();
-  });
-
-  it('flushPendingPersist posts the pending edit at once, and only once', () => {
     schedulePersist();
-    flushPendingPersist();
-    expect(posted).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(1000);
-    expect(posted).toHaveBeenCalledTimes(1);
+    expect(persists()).toHaveLength(0);
   });
 });

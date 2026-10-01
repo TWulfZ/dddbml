@@ -111,7 +111,7 @@ Round-trip:
 Usuario Ctrl+Z
   → app.tsx onKeyDown
   → store.undo()           (state update síncrono)
-  → schedulePersist()       (debounce 300ms)
+  → schedulePersist()       (post inmediato, F22)
   → postToHost('layout:persist', { tables, … })
   → host onLayoutPersist    (merge + debounce 200ms)
   → fsync atómico al sidecar JSON
@@ -152,7 +152,7 @@ El listener funciona aunque el panel esté colapsado (es global, no del DOM del 
 2. **Schema reload con tabla removida**: si una tabla en `past`/`future` ya no existe tras `setSchema`, el diff de table set dispara `clearHistory`. Sin esto, `undo` intentaría restaurar una posición de tabla que no se renderiza.
 3. **Drag durante undo en curso**: `active = true` en `dragController` previene drags concurrentes; `undo()` es síncrono y no toca `active`. Un drag iniciado inmediatamente tras undo es seguro.
 3b. **Undo/redo durante un drag en curso**: se **ignora** (`preventDefault` + no-op) mientras `isGestureActive()` (drag de tabla o gesto de arista). El gesto reescribe desde su snapshot del `pointerdown` y al soltar empuja un comando que limpia `future`, así que un undo a mitad de gesto se perdería en silencio.
-4. **Spam de Ctrl+Z**: cada undo schedule un persist debounced 300ms. Solo el último gana. Disco lag hasta 300ms tras último undo. Aceptable.
+4. **Spam de Ctrl+Z**: cada undo postea un persist al instante; el debounce de 200 ms del host coalesce la ráfaga y sólo escribe el último. Disco lag hasta 200 ms tras el último undo. Aceptable.
 5. **Selection no se restaura**: undo solo mueve posiciones; `selection`/`tooltip` quedan como estaban. Documentado como intencional v1.
 6. **Tabla hidden + undo**: undo aplica posición a `positions` Map independiente de `hiddenTables`. No requiere lógica especial.
 

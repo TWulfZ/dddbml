@@ -174,10 +174,9 @@ de entrar sigue vivo, y el host acepta cualquier escritura. Por eso:
 - **Conflictos resueltos fuera del diagrama.** El watcher del sidecar re-detecta: si ya no hay
   conflicto, el host postea `merge:end` y recarga el layout; si la detección falla, el panel
   queda en solo lectura con el error visible (nunca un layout vacío editable).
-- **Webview.** `schedulePersist` evalúa el gate **al disparar** el timer, no solo al
-  programarlo, y entrar en solo lectura (por cualquier camino: una suscripción al store en
-  `persistence.ts`) cancela el timer pendiente; antes de pedir un overlay el panel Git vuelca el
-  persist pendiente (`flushPendingPersist`) para no perder la última edición. Un write fallido al aplicar
+- **Webview.** `schedulePersist` postea **al instante** (F22: sin timer propio que pueda
+  dispararse ya dentro de un overlay o morir con el iframe) y evalúa el gate en ese momento; la
+  última edición de trabajo ya está en el host cuando se pide un overlay. Un write fallido al aplicar
   un merge conserva las decisiones del usuario (no re-postea `merge:begin` desde cero).
 - Salir de cualquier overlay (incluido "Diff against HEAD" abierto desde time-travel) vuelve
   siempre al estado de trabajo.
@@ -185,8 +184,8 @@ de entrar sigue vivo, y el host acepta cualquier escritura. Por eso:
 **Implementación.** `readOnly` del host es un getter derivado de su estado real
 (`pendingMerge` / `mergeUnreadable` → `'merge'`, si no `gitOverlay.kind`), así entrada y salida no
 pueden desincronizarse con una bandera aparte. Entrar en time-travel o diff vuelca antes el persist
-pendiente del host (la última edición de trabajo llega al disco); el webview vuelca el suyo antes de
-pedir el overlay. Diff desde time-travel: el host re-envía primero el schema+layout de trabajo y
+pendiente del host (la última edición de trabajo llega al disco); el webview no tiene persist
+pendiente (postea cada edición al instante). Diff desde time-travel: el host re-envía primero el schema+layout de trabajo y
 luego `git:diff:enter` (el diff siempre cubre el working tree). Un reload del watcher o de una
 operación git (stash/revert) durante un overlay se marca `reloadDeferred` y se aplica al salir;
 el host postea el `exit` **al final** (schema → layout → `merge:begin` si apareció → exit), así el

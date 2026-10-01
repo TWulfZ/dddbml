@@ -3,7 +3,6 @@ import { memo } from 'preact/compat';
 import { useEffect, useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
-import { flushPendingPersist } from '../persistence';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Search } from '../ui/Search';
@@ -285,7 +284,6 @@ function HistoryPane() {
   const enter = (sha: string, label: string) => {
     if (merging) return;
     store.getState().setGitPanelOpen(false);
-    flushPendingPersist(); // the host drops persists once the overlay is up
     postToHost({ type: 'git:timeTravel:enter', payload: { sha, label } });
   };
 
@@ -353,7 +351,6 @@ function DiffPane({ status }: { status: GitStatusSummary }) {
   const showDiff = () => {
     if (merging) return;
     store.getState().setGitPanelOpen(false);
-    flushPendingPersist();
     postToHost({ type: 'git:diff:enter' });
   };
 

@@ -3,49 +3,20 @@ import { postToHost } from './vscode';
 import type { EdgeLayout } from '../shared/types';
 
 /**
- * Debounced layout:persist post to the extension host.
+ * layout:persist post to the extension host.
  *
  * Owned here (not in dragController) so that any mutation source — table drag, waypoint
  * edits, undo/redo, future history actions — can trigger the same write pipeline without
  * creating import cycles through the store.
+ *
+ * Posted at once, not debounced (F22): a timer dies with the webview iframe when the panel is
+ * hidden or closed, and an unload-time post is relayed through a frame being torn down, so the
+ * edit was lost. The host's own debounce coalesces bursts and is flushed on hide/close.
  */
-
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
-const PERSIST_DEBOUNCE_MS = 300;
-
 export function schedulePersist(): void {
-  // Read-only canvas (spec 14/16): a merge shows a provisional layout that must NOT be written
-  // until applied; a git overlay (time-travel/diff) shows a past/other revision. Drop every persist.
-  if (isCanvasReadOnly(store.getState())) return;
-  if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    postPersist();
-  }, PERSIST_DEBOUNCE_MS);
-}
-
-/** Post a debounced edit now — before asking the host for an overlay, whose gate would drop it. */
-export function flushPendingPersist(): void {
-  if (!persistTimer) return;
-  clearTimeout(persistTimer);
-  persistTimer = null;
-  postPersist();
-}
-
-function cancelPendingPersist(): void {
-  if (persistTimer) clearTimeout(persistTimer);
-  persistTimer = null;
-}
-
-// Entering read-only by any path (merge:begin, overlay enter, a reload re-post) kills a pending
-// timer: by the time it fires the store holds the provisional or past layout (F27).
-store.subscribe((s, prev) => {
-  if (isCanvasReadOnly(s) && !isCanvasReadOnly(prev)) cancelPendingPersist();
-});
-
-function postPersist(): void {
   const state = store.getState();
-  // Re-checked when the timer fires: the gate may have closed since it was scheduled.
+  // Read-only canvas (spec 14/16): a merge shows a provisional layout that must NOT be written
+  // until applied; a git overlay (time-travel/diff) shows a past/other revision.
   if (isCanvasReadOnly(state)) return;
   const edges: Record<string, EdgeLayout> = {};
   for (const [id, v] of state.edgeLayouts) {

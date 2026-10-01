@@ -67,7 +67,7 @@ type HostToWebview =
 ```ts
 type WebviewToHost =
   | { type: 'ready' }
-  | { type: 'layout:persist'; payload: Partial<Layout> }  // deltas, debounced 300ms
+  | { type: 'layout:persist'; payload: Partial<Layout> }  // al instante en cada edición discreta
   | { type: 'command:reveal'; payload: { tableName: string } }  // click → go-to-definition
   | { type: 'command:pruneOrphans' }  // comando explícito
   | { type: 'error:log'; payload: { message: string; stack?: string } };
@@ -93,12 +93,14 @@ type WebviewToHost =
    sólo existían en la revisión anterior y el siguiente persist las escribía. Un sidecar borrado
    recarga un layout vacío; un persist pendiente del host se descarta al recargar. Los nombres
    de archivo se escapan como glob literal (`[`, `]`, `{`, `}`, `*`, `?` → clase de un carácter).
-10. Drag en webview → `layout:persist` debounced → host escribe sidecar (debounce de host
+10. Drag en webview → `layout:persist` **inmediato** → host escribe sidecar (debounce de host
     200 ms). Al **ocultar** el panel (el webview se destruye: `retainContextWhenHidden: false`)
     o al **cerrarlo**, el host vuela el persist pendiente en el acto en vez de descartarlo;
     `deactivate()` espera esas escrituras. Ocultar también marca el panel como no hidratado,
     así los prompts (`export:prompt`, `exportImage:prompt`) esperan al próximo `ready`.
-    Pendiente (webview, fuera del host): el debounce propio del webview muere con el iframe.
+    El webview **no** debouncea ediciones discretas (drag, waypoints, undo/redo, color, ocultar,
+    colapsar, auto-layout; F22): un timer muere con el iframe al ocultar/cerrar y un post en
+    `pagehide` se pierde al relevarse por un frame que también se destruye. El host coalesce.
 
 ## Dependencias externas
 

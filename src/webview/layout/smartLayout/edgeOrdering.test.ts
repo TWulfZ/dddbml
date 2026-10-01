@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../vscode', () => ({ postToHost: vi.fn() }));
 import { store } from '../../state/store';
 import { runEdgeOrdering } from './runner';
 import { computeEdgeOrdering } from './edgeOrdering';
