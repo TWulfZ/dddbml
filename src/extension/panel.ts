@@ -48,6 +48,14 @@ export class DiagramPanel {
     DiagramPanel.panels.clear();
   }
 
+  /** Persists started by a close/hide flush. deactivate() awaits them: on window reload the panels
+   *  may already be disposed (and their flushes in flight) before deactivate runs. */
+  private static readonly inFlightFlushes = new Set<Promise<void>>();
+
+  public static async settle(): Promise<void> {
+    while (DiagramPanel.inFlightFlushes.size > 0) await Promise.all([...DiagramPanel.inFlightFlushes]);
+  }
+
   private readonly webviewPanel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
@@ -75,6 +83,7 @@ export class DiagramPanel {
   private persistTimer: NodeJS.Timeout | null = null;
   private schemaTimer: NodeJS.Timeout | null = null;
   private sidecarEventPending = false;
+  private disposed = false;
   private gitStatusTimer: NodeJS.Timeout | null = null;
   /** Serialized form of the last `schema:update` posted — lets the watcher skip no-op reparses. */
   private lastPostedSchema: string | null = null;
@@ -110,6 +119,13 @@ export class DiagramPanel {
       this.disposables,
     );
     this.webviewPanel.onDidDispose(() => this.dispose(), null, this.disposables);
+    this.webviewPanel.onDidChangeViewState((e) => {
+      if (e.webviewPanel.visible) return;
+      // Hiding destroys the webview (retainContextWhenHidden: false): prompts must wait for the
+      // next `ready`, and a debounced persist must land before the re-shown webview reads disk.
+      this.hydrated = false;
+      return this.flushPendingPersistNow();
+    }, null, this.disposables);
 
     this.disposables.push(
       vscode.window.onDidChangeActiveColorTheme(() => {
@@ -139,6 +155,8 @@ export class DiagramPanel {
   }
 
   public reveal(): void {
+    // The hide event may not have reached the extension host yet; a hidden panel will reload.
+    if (!this.webviewPanel.visible) this.hydrated = false;
     this.webviewPanel.reveal(vscode.ViewColumn.Beside, true);
   }
 
@@ -207,11 +225,10 @@ export class DiagramPanel {
   }
 
   public dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     DiagramPanel.panels.delete(this.dbmlUri.toString());
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
+    void this.flushPendingPersistNow();
     if (this.schemaTimer) clearTimeout(this.schemaTimer);
     if (this.gitStatusTimer) clearTimeout(this.gitStatusTimer);
     while (this.disposables.length) {
@@ -222,7 +239,17 @@ export class DiagramPanel {
   }
 
   private post(msg: HostToWebview): void {
+    if (this.disposed) return; // the webview getter throws once disposed (e.g. a late flush)
     void this.webviewPanel.webview.postMessage(msg);
+  }
+
+  private flushPendingPersistNow(): Promise<void> | undefined {
+    const pending = this.pendingPersist;
+    this.cancelPendingPersist();
+    if (!pending) return undefined;
+    const flush: Promise<void> = this.flushPersist(pending).finally(() => DiagramPanel.inFlightFlushes.delete(flush));
+    DiagramPanel.inFlightFlushes.add(flush);
+    return flush;
   }
 
   private handleWebviewMessage(msg: WebviewToHost): void {
@@ -454,6 +481,7 @@ export class DiagramPanel {
   }
 
   private scheduleGitStatus(): void {
+    if (this.disposed) return;
     if (this.gitStatusTimer) clearTimeout(this.gitStatusTimer);
     this.gitStatusTimer = setTimeout(() => {
       this.gitStatusTimer = null;

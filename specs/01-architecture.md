@@ -90,7 +90,12 @@ type WebviewToHost =
    sólo existían en la revisión anterior y el siguiente persist las escribía. Un sidecar borrado
    recarga un layout vacío; un persist pendiente del host se descarta al recargar. Los nombres
    de archivo se escapan como glob literal (`[`, `]`, `{`, `}`, `*`, `?` → clase de un carácter).
-10. Drag en webview → `layout:persist` debounced → host escribe sidecar.
+10. Drag en webview → `layout:persist` debounced → host escribe sidecar (debounce de host
+    200 ms). Al **ocultar** el panel (el webview se destruye: `retainContextWhenHidden: false`)
+    o al **cerrarlo**, el host vuela el persist pendiente en el acto en vez de descartarlo;
+    `deactivate()` espera esas escrituras. Ocultar también marca el panel como no hidratado,
+    así los prompts (`export:prompt`, `exportImage:prompt`) esperan al próximo `ready`.
+    Pendiente (webview, fuera del host): el debounce propio del webview muere con el iframe.
 
 ## Dependencias externas
 

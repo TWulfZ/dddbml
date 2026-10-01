@@ -213,6 +213,43 @@ describe('git panel ops', () => {
   });
 });
 
+describe('panel lifecycle', () => {
+  const persistA = async (h: Harness, x: number) => {
+    const loaded = h.web.posted.find((m) => m.type === 'layout:loaded')!;
+    await h.web.receive({ type: 'layout:persist', payload: { ...(loaded.payload as Layout), tables: { 'public.a': { x, y: 0 }, 'public.b': { x: 400, y: 0 } } } });
+  };
+
+  it('flushes a debounced persist when the panel is closed (F22)', async () => {
+    const h = await open();
+    await persistA(h, 321);
+    DiagramPanel.disposeAll();
+    await DiagramPanel.settle();
+    expect(JSON.parse(h.readSidecar()).tables['public.a'].x).toBe(321);
+  });
+
+  it('flushes a debounced persist when the panel is hidden, so the re-shown webview reads it (F22)', async () => {
+    const h = await open();
+    await persistA(h, 654);
+    await h.web.setVisible(false);
+    h.mark();
+    await h.web.setVisible(true);
+    await h.web.receive({ type: 'ready' });
+    await vi.waitFor(() => expect(h.since('layout:loaded')).toHaveLength(1));
+    expect(tablesOf(h.since('layout:loaded')[0])['public.a']?.x).toBe(654);
+  });
+
+  it('queues an export prompt sent while hidden until the reloaded webview is ready (F62)', async () => {
+    const h = await open();
+    await h.web.setVisible(false);
+    h.mark();
+    h.panel.openExportModal();
+    expect(h.since('export:prompt')).toHaveLength(0);
+    await h.web.setVisible(true);
+    await h.web.receive({ type: 'ready' });
+    await vi.waitFor(() => expect(h.since('export:prompt')).toHaveLength(1));
+  });
+});
+
 describe('schema export', () => {
   const exportedText = () => (fake.shownDocuments.at(-1)!.doc as { getText(): string }).getText();
 

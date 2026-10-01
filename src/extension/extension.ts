@@ -84,8 +84,10 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-export function deactivate(): void {
+/** Returning the promise makes VS Code wait (briefly) for edits flushed on close to reach disk. */
+export function deactivate(): Promise<void> {
   DiagramPanel.disposeAll();
+  return DiagramPanel.settle();
 }
 
 function resolveActiveDbmlUri(): vscode.Uri | null {
