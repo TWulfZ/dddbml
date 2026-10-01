@@ -134,7 +134,12 @@ Sólo el host escribe el sidecar. Flujo:
      opacidad llena + ring `--ddd-accent`; el otro → atenuado + outline `--ddd-danger`
      (rojizo = "se descarta"). Revertible hasta *Apply*. Un lado que **borra** la
      posición (sin tabla que dibujar) muestra un chip compacto en vez de duplicar la
-     otra posición.
+     otra posición. Cada fantasma lleva el **color de su lado** (`color` del lado →
+     color del grupo, mismo header tintado que `TableNode`) y el tooltip muestra
+     posición + color. Si ambos lados tienen la **misma `(x,y)`** (p. ej. conflicto
+     sólo de color) el fantasma *incoming* se desplaza un alto de header abajo-derecha
+     (`ghostPos`) para que *current* siga visible y clickable; es sólo de dibujo (Apply
+     escribe el valor original) y el foco de cámara del stepper usa el mismo desplazamiento.
    - **Grupos / aristas** (sin posición): filas mía/suya en la barra de conflictos
      (swatch de color para grupos; "ruta mía/suya" para aristas).
    - **Barra persistente:** `N conflictos · M resueltos`, **Resolver todo como

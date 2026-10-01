@@ -2,6 +2,8 @@ import type { QualifiedName, SerializableMergeConflict, Table, TableLayout } fro
 import { estimateSize } from '../layout/autoLayout';
 import { store, useAppStore } from '../state/store';
 import { IconKey } from '../icons';
+import { densityMetrics } from '../layout/density';
+import { bcColorFor, withAlpha } from '../groups/bcPalette';
 
 /**
  * On-canvas conflict picker for tables whose position BOTH sides changed (spec 14 §Tier-3). Each side
@@ -48,6 +50,22 @@ export function MergeGhosts({ tablesByName }: { tablesByName: Map<QualifiedName,
   );
 }
 
+/**
+ * Where a side's ghost is drawn. Both sides at the same x/y (a color-only conflict) would stack the
+ * cards and hide 'current', so 'incoming' is nudged down-right by `nudge` (one header height keeps the
+ * current header exposed). Display-only: Apply still writes the original `theirs` value.
+ */
+export function ghostPos(c: SerializableMergeConflict, side: 'ours' | 'theirs', nudge: number): { x: number; y: number } | null {
+  const ours = c.ours as TableLayout | null;
+  const theirs = c.theirs as TableLayout | null;
+  const pos = side === 'ours' ? (ours ?? theirs) : (theirs ?? ours);
+  if (!pos) return null;
+  if (side === 'theirs' && ours && theirs && ours.x === theirs.x && ours.y === theirs.y) {
+    return { x: pos.x + nudge, y: pos.y + nudge };
+  }
+  return { x: pos.x, y: pos.y };
+}
+
 type Emphasis = 'keep' | 'discard' | 'neutral';
 
 function Ghost({
@@ -67,12 +85,15 @@ function Ghost({
   onHover: (entering: boolean) => void;
   onPick: () => void;
 }) {
-  const mine = side === 'ours';
-  const thisVal = (mine ? conflict.ours : conflict.theirs) as TableLayout | null;
-  const otherVal = (mine ? conflict.theirs : conflict.ours) as TableLayout | null;
-  const pos = thisVal ?? otherVal; // a null side (delete) shows where the other side sits
+  const nudge = densityMetrics(useAppStore((s) => s.settings.ui.density)).headerHeight;
+  const groupName = table?.groupName;
+  const groupColor = useAppStore((s) => (groupName ? s.groups[groupName]?.color : undefined));
+  const thisVal = (side === 'ours' ? conflict.ours : conflict.theirs) as TableLayout | null;
+  const pos = ghostPos(conflict, side, nudge); // a null side (delete) shows where the other side sits
   if (!pos) return null;
   const removed = thisVal === null;
+  // Same tint path as TableNode, so each card shows the color that side would apply.
+  const color = thisVal?.color ?? (groupName ? (groupColor ?? bcColorFor(groupName)) : undefined);
 
   // Emphasis: hover wins; else the committed decision; else both neutral.
   const emphasis: Emphasis =
@@ -107,12 +128,17 @@ function Ghost({
   return (
     <div
       class={`ddd-table ddd-merge-ghost is-${emphasis}`}
-      style={{ position: 'absolute', transform: `translate(${pos.x}px, ${pos.y}px)`, width: `${size.width}px` }}
-      title={`${table.name} (${pos.x}, ${pos.y})`}
+      style={{
+        position: 'absolute',
+        transform: `translate(${pos.x}px, ${pos.y}px)`,
+        width: `${size.width}px`,
+        borderTopColor: color,
+      }}
+      title={`${table.name} (${thisVal?.x ?? pos.x}, ${thisVal?.y ?? pos.y})${thisVal?.color ? ` · ${thisVal.color}` : ''}`}
       {...handlers}
     >
       {checked}
-      <div class="ddd-table__header">
+      <div class="ddd-table__header" style={color ? { background: withAlpha(color, 0.22), borderTopColor: color } : undefined}>
         <span class="ddd-table__title">
           {table.schemaName !== 'public' ? <span class="ddd-table__schema">{table.schemaName}.</span> : null}
           <span class="ddd-table__name">{table.tableName}</span>

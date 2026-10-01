@@ -12,6 +12,8 @@ import { IconChevronDown, IconChevronRight, IconChevronUp } from '../icons';
  *  collapsed rail scrolls and the expand toggle (full wrapped grid) appears. */
 const DOT_OVERFLOW_AT = 28;
 import { sideClass, SIDE_LABEL } from './mergePanel';
+import { ghostPos } from './mergeGhosts';
+import { densityMetrics } from '../layout/density';
 import type { Bbox } from './spatialIndex';
 
 /**
@@ -36,8 +38,10 @@ export function MergeStepper() {
     if (!c || c.section !== 'tables') return;
     const table = schema.tables.find((t) => t.name === c.key);
     const size = estimateSize(table?.columns.length ?? 0);
-    const a = bboxAt(c.ours, size);
-    const b = bboxAt(c.theirs, size);
+    // Frame the cards where MergeGhosts actually draws them (incoming may be nudged).
+    const nudge = densityMetrics(store.getState().settings.ui.density).headerHeight;
+    const a = c.ours ? bboxAt(ghostPos(c, 'ours', nudge), size) : null;
+    const b = c.theirs ? bboxAt(ghostPos(c, 'theirs', nudge), size) : null;
     if (a && b) focusDiff(a, b);
     else if (a) focusDiff(a, a);
     else if (b) focusDiff(b, b);
@@ -153,10 +157,9 @@ export function MergeStepper() {
   );
 }
 
-function bboxAt(v: SerializableMergeConflict['ours'], size: { width: number; height: number }): Bbox | null {
-  const t = v as TableLayout | null;
-  if (!t || typeof t.x !== 'number') return null;
-  return { x: t.x, y: t.y, w: size.width, h: size.height };
+function bboxAt(p: { x: number; y: number } | null, size: { width: number; height: number }): Bbox | null {
+  if (!p || typeof p.x !== 'number') return null;
+  return { x: p.x, y: p.y, w: size.width, h: size.height };
 }
 
 function posLine(v: SerializableMergeConflict['ours']): string {
