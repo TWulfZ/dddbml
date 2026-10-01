@@ -19,7 +19,9 @@ DBML de 5000 tablas abierto en una laptop decente (Chromium webview, sin WebGL),
 
 | Métrica | Budget | Cómo medir |
 |---|---|---|
-| Parse DBML 5000 tablas | < 2000ms | `performance.now()` alrededor de `Parser.parse()` en host |
+| Parse DBML 5000 tablas | < 2000ms **en el worker** (medido 10.2: ~2.1 s caliente, ~3 s en frío) — excedido ~5–10 %, aceptado porque el host ya no se bloquea | `performance.now()` alrededor del `postMessage` → reply de `parseWorker.js` (spec 18) |
+| Host bloqueado por parse | 0 ms (parse + go-to-source corren en `worker_threads`) | ticks de un `setInterval(10)` en el host durante el parse |
+| Bundle del host (`extension.js`) | sin `@dbml/core` (medido 64 KB; el parser vive en `parseWorker.js`, ~15 MB minificado) | salida de `pnpm build:extension` |
 | Auto-layout dagre 5000 tablas | < 3000ms | `performance.now()` alrededor de `autoLayout()` |
 | Postmessage payload 5000 tablas | < 10MB | `JSON.stringify(schema).length` |
 | Webview idle memory | < 200MB | Task Manager de VSC |

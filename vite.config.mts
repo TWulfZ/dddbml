@@ -55,5 +55,6 @@ export default defineConfig({
     // Tests live across src/{webview,extension,shared}; webview-only root would skip extension specs.
     dir: resolve(__dirname, 'src'),
     include: ['**/*.test.ts'],
+    setupFiles: [resolve(__dirname, 'src/extension/testing/parseSetup.ts')],
   },
 });

@@ -1,16 +1,12 @@
+import type { QualifiedName } from '../shared/types';
 import type { parseDbml } from './parser';
 
 export type ParseResult = ReturnType<typeof parseDbml>;
 
-export interface ParseJob {
-  id: number;
-  source: string;
-}
-
-export interface ParseReply {
-  id: number;
-  result: ParseResult;
-}
+/** `locate` finds a table's declaration line (go-to-source) with the same parser, off-thread too. */
+export type ParseRequest = { op: 'parse'; source: string } | { op: 'locate'; source: string; table: QualifiedName };
+export type ParseJob = ParseRequest & { id: number };
+export type ParseReply = { id: number; result: ParseResult } | { id: number; line: number | null };
 
 /** The subset of `node:worker_threads` Worker the client needs; injectable for tests. */
 export interface WorkerLike {
@@ -22,22 +18,24 @@ export interface WorkerLike {
 }
 
 /**
- * Independent latest-wins lanes: a time-travel parse of an old revision must not supersede the
- * live document parse (or vice versa).
+ * Independent latest-wins lanes, e.g. `live:<uri>` per open diagram: a time-travel parse of an old
+ * revision must not supersede the live document parse, nor one panel's parse another panel's.
  */
-export type ParseChannel = 'live' | 'revision' | 'base';
+export type ParseChannel = string;
 
 export interface ParseClient {
   /** Resolves `null` when a newer request on the same channel superseded this one. */
   parse(source: string, channel?: ParseChannel): Promise<ParseResult | null>;
+  /** 0-based declaration line, `null` if absent, `undefined` when superseded. */
+  locate(source: string, table: QualifiedName, channel: ParseChannel): Promise<number | null | undefined>;
   dispose(): void;
 }
 
 interface Job {
   id: number;
   channel: ParseChannel;
-  source: string;
-  resolve: (r: ParseResult | null) => void;
+  request: ParseRequest;
+  resolve: (r: ParseReply | null) => void;
 }
 
 /**
@@ -52,8 +50,8 @@ export function createParseClient(spawn: () => WorkerLike): ParseClient {
   let nextId = 1;
   let disposed = false;
 
-  const settle = (job: Job, result: ParseResult): void => {
-    job.resolve(latestId.get(job.channel) === job.id ? result : null);
+  const settle = (job: Job, reply: ParseReply): void => {
+    job.resolve(latestId.get(job.channel) === job.id ? reply : null);
   };
 
   const ensureWorker = (): WorkerLike => {
@@ -64,14 +62,16 @@ export function createParseClient(spawn: () => WorkerLike): ParseClient {
       worker = null;
       const job = inFlight;
       inFlight = null;
-      if (job) settle(job, { schema: null, error: { message } });
+      if (job) {
+        settle(job, job.request.op === 'parse' ? { id: job.id, result: { schema: null, error: { message } } } : { id: job.id, line: null });
+      }
       pump();
     };
     w.on('message', (reply) => {
       if (worker !== w || !inFlight || reply.id !== inFlight.id) return;
       const job = inFlight;
       inFlight = null;
-      settle(job, reply.result);
+      settle(job, reply);
       pump();
     });
     w.on('error', (err) => crash(`dddbml parser worker failed: ${err.message}`));
@@ -87,19 +87,28 @@ export function createParseClient(spawn: () => WorkerLike): ParseClient {
     const job = next.value;
     pending.delete(job.channel);
     inFlight = job;
-    ensureWorker().postMessage({ id: job.id, source: job.source });
+    ensureWorker().postMessage({ ...job.request, id: job.id });
+  };
+
+  const run = (request: ParseRequest, channel: ParseChannel): Promise<ParseReply | null> => {
+    if (disposed) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const id = nextId++;
+      latestId.set(channel, id);
+      pending.get(channel)?.resolve(null);
+      pending.set(channel, { id, channel, request, resolve });
+      pump();
+    });
   };
 
   return {
-    parse(source, channel = 'live') {
-      if (disposed) return Promise.resolve(null);
-      return new Promise((resolve) => {
-        const id = nextId++;
-        latestId.set(channel, id);
-        pending.get(channel)?.resolve(null);
-        pending.set(channel, { id, channel, source, resolve });
-        pump();
-      });
+    async parse(source, channel = 'live') {
+      const reply = await run({ op: 'parse', source }, channel);
+      return reply && 'result' in reply ? reply.result : null;
+    },
+    async locate(source, table, channel) {
+      const reply = await run({ op: 'locate', source, table }, channel);
+      return reply && 'line' in reply ? reply.line : undefined;
     },
     dispose() {
       disposed = true;

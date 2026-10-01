@@ -247,10 +247,10 @@
     "onCommand:dddbml.exportSchema"
   ],
   "scripts": {
-    "build:extension": "node -e \"require('fs').rmSync('dist/extension',{recursive:true,force:true})\" && esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --minify --sourcemap",
+    "build:extension": "node -e \"require('fs').rmSync('dist/extension',{recursive:true,force:true})\" && esbuild src/extension/extension.ts src/extension/parseWorker.ts --bundle --outdir=dist/extension/extension --external:vscode --platform=node --format=cjs --minify --sourcemap",
     "build:webview": "vite build",
     "build": "pnpm run build:extension && pnpm run build:webview",
-    "watch:extension": "esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --sourcemap --watch",
+    "watch:extension": "esbuild src/extension/extension.ts src/extension/parseWorker.ts --bundle --outdir=dist/extension/extension --external:vscode --platform=node --format=cjs --sourcemap --watch",
     "watch:webview": "vite build --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:gen": "mkdir -p test/fixtures && node scripts/gen-fixtures.mjs small > test/fixtures/small.dbml && node scripts/gen-fixtures.mjs huge > test/fixtures/huge.dbml && node scripts/gen-fixtures.mjs merge 3 && node scripts/gen-fixtures.mjs merge 20",

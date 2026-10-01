@@ -20,7 +20,9 @@ class FakeWorker implements WorkerLike {
   /** Answers the oldest unanswered job with an empty schema tagged by its source. */
   reply(): void {
     const job = this.jobs.shift()!;
-    const reply: ParseReply = { id: job.id, result: { schema: { tables: [], refs: [], groups: [] }, error: null } };
+    const reply: ParseReply = job.op === 'parse'
+      ? { id: job.id, result: { schema: { tables: [], refs: [], groups: [] }, error: null } }
+      : { id: job.id, line: 7 };
     (this.handlers.get('message') as (r: ParseReply) => void)(reply);
   }
   exit(code: number): void {
@@ -63,6 +65,14 @@ describe('createParseClient', () => {
     w.reply();
     expect(await live).not.toBeNull();
     expect(await rev).not.toBeNull();
+  });
+
+  it('serves locate requests through the same queue', async () => {
+    const { client, workers } = setup();
+    const line = client.locate('src', 'public.a', 'locate');
+    expect(workers[0]!.jobs[0]).toMatchObject({ op: 'locate', table: 'public.a' });
+    workers[0]!.reply();
+    expect(await line).toBe(7);
   });
 
   it('reports a crash as a parse error and respawns on the next request', async () => {

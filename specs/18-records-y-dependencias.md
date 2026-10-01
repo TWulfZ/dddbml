@@ -145,16 +145,24 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
 
 ### Parse en worker
 
-- `parser.ts` conserva `parseDbml` síncrono y puro; lo importan los tests de layout.
-- `parseWorker.ts` es la entry de `worker_threads` y `parseClient.ts` es el cliente:
-  - Un worker persistente.
-  - **latest-wins**: un contador de generación; los resultados viejos se descartan y la request
-    pendiente se reemplaza.
-  - Respawn si el worker muere.
-- `panel.ts` espera `parseAsync` en `sendSchema`, time travel y diff HEAD, y mantiene el orden
-  **schema → layout** al hidratar.
-- Una segunda entry de esbuild genera `dist/extension/extension/parseWorker.js`. `@dbml/core` deja
-  de estar en el bundle del host.
+- `parser.ts` conserva `parseDbml` síncrono y puro (lo importan los tests de layout y el worker).
+- `parseWorker.ts` es la entry de `worker_threads`; atiende dos operaciones con el mismo parser:
+  `parse` y `locate`. Esta última es el go-to-source por doble clic (`tableLocation.findTableLine`),
+  que antes hacía un parse síncrono completo en el host.
+- `parseClient.ts`:
+  - Un worker persistente para todo el extension host (`parseService.ts`).
+  - Carriles **latest-wins** por canal (`live:<uri>`, `revision:<uri>`, `diffBase:`, `diffHead:`,
+    `locate:`). Un pedido reemplazado resuelve `null`/`undefined` y su resultado se descarta.
+  - Respawn si el worker muere (el pedido en vuelo se reporta como error de parse).
+- `panel.ts`:
+  - `sendSchema` espera `parseAsync`. Si una versión más nueva la reemplaza, espera a ese envío
+    (`latestSchemaSend`), así hydrate y las salidas de overlay siguen viendo "schema publicado"
+    antes de su siguiente mensaje.
+  - Time travel y diff HEAD también usan el worker.
+- Build: segunda entry de esbuild (`--outdir`) → `dist/extension/extension/parseWorker.js`.
+  `extension.js` baja de 15.1 MB a 64 KB.
+- Tests: `vite.config.mts` registra `src/extension/testing/parseSetup.ts`, que inyecta un "worker"
+  en proceso, porque vitest no tiene el bundle de esbuild.
 
 ## Modelo de datos / tipos afectados
 

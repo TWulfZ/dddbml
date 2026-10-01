@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { disposeParseService } from './parseService';
 import { DiagramPanel } from './panel';
 import './exporters'; // side-effect: register built-in exporters
 
@@ -88,6 +89,7 @@ export function activate(context: vscode.ExtensionContext): void {
 /** Returning the promise makes VS Code wait (briefly) for edits flushed on close to reach disk. */
 export function deactivate(): Promise<void> {
   DiagramPanel.disposeAll();
+  disposeParseService();
   return DiagramPanel.settle();
 }
 

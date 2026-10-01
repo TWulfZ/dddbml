@@ -1,8 +1,7 @@
 import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, ViewportLayout, WebviewToHost } from '../shared/types';
-import { parseDbml } from './parser';
-import { findTableLine } from './tableLocation';
+import { locateTableAsync, parseAsync } from './parseService';
 import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
 import { applyViewState, emptyViewState, extractViewState, mergeViewStateChange, readViewState, sameViewState, writeViewState, type ViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
@@ -113,6 +112,8 @@ export class DiagramPanel {
   private gitStatusTimer: NodeJS.Timeout | null = null;
   /** Serialized form of the last `schema:update` posted — lets the watcher skip no-op reparses. */
   private lastPostedSchema: string | null = null;
+  /** The most recent sendSchema; a superseded parse waits on it so callers still see schema posted. */
+  private latestSchemaSend: Promise<void> = Promise.resolve();
   /** Set while a conflicted sidecar awaits in-webview resolution; null otherwise. Holds the
    *  retained host-side conflicts so the webview only has to return per-conflict decisions. */
   private pendingMerge: { conflicts: MergeConflict[]; merged: Layout; repoRoot: string; relpath: string } | null = null;
@@ -466,7 +467,8 @@ export class DiagramPanel {
       // The editor buffer, not the disk: line numbers must match what showTextDocument displays
       // even with unsaved edits.
       const source = (await vscode.workspace.openTextDocument(this.dbmlUri)).getText();
-      const lineIdx = findTableLine(source, qualifiedName);
+      const lineIdx = await locateTableAsync(source, qualifiedName, `locate:${this.dbmlUri.toString()}`);
+      if (lineIdx === undefined) return; // a newer double-click superseded this one
       if (lineIdx === null) {
         void vscode.window.showWarningMessage(`dddbml: could not find "${qualifiedName}" in source.`);
         return;
@@ -518,12 +520,26 @@ export class DiagramPanel {
    * hand the webview a fresh schema object and force every derived memo to recompute. Direct
    * callers (hydrate, time-travel exit) must always post, since the webview state differs.
    */
-  private async sendSchema(opts: { skipIfUnchanged?: boolean } = {}): Promise<void> {
+  private sendSchema(opts: { skipIfUnchanged?: boolean } = {}): Promise<void> {
+    const send = this.parseAndPostSchema(opts);
+    this.latestSchemaSend = send;
+    return send;
+  }
+
+  private async parseAndPostSchema(opts: { skipIfUnchanged?: boolean }): Promise<void> {
     let payload: { schema: Schema; parseError: ParseError | null };
     try {
       const bytes = await vscode.workspace.fs.readFile(this.dbmlUri);
       const source = new TextDecoder('utf-8').decode(bytes);
-      const result = parseDbml(source);
+      const result = await parseAsync(source, `live:${this.dbmlUri.toString()}`);
+      // A newer save superseded this parse; it posts the fresher schema, and callers that order
+      // messages after "schema posted" (hydrate, overlay exits) must still wait for it.
+      if (result === null) {
+        // Only sendSchema parses on the live channel, so latestSchemaSend is that newer call.
+        await this.latestSchemaSend;
+        return;
+      }
+      if (this.disposed) return;
       if (result.error) {
         this.lastParseOk = false;
         payload = { schema: this.lastValidSchema, parseError: result.error };
@@ -935,7 +951,8 @@ export class DiagramPanel {
       void vscode.window.showWarningMessage('dddbml: could not read that revision of the diagram.');
       return;
     }
-    const parsed = parseDbml(dbmlSrc);
+    const parsed = await parseAsync(dbmlSrc, `revision:${this.dbmlUri.toString()}`);
+    if (!parsed || this.disposed) return; // a newer peek superseded this one
     if (parsed.error) {
       // Substituting today's schema under the old label would silently show the wrong tables.
       void vscode.window.showWarningMessage(`dddbml: the diagram at ${label} does not parse — ${parsed.error.message}`);
@@ -1020,7 +1037,8 @@ export class DiagramPanel {
     if (!scope) { void vscode.window.showWarningMessage('dddbml: not a git repository.'); return null; }
     const baseDbml = await showBlob(scope.repoRoot, 'HEAD', scope.dbmlRel);
     if (baseDbml == null) { void vscode.window.showWarningMessage('dddbml: the diagram has no committed version at HEAD yet.'); return null; }
-    const parsedBase = parseDbml(baseDbml);
+    const parsedBase = await parseAsync(baseDbml, `diffBase:${this.dbmlUri.toString()}`);
+    if (!parsedBase) return null;
     if (parsedBase.error) {
       // An empty base would report every table as "added" — a false diff, not a degraded one.
       void vscode.window.showWarningMessage(`dddbml: the diagram at HEAD does not parse — ${parsedBase.error.message}`);
@@ -1036,7 +1054,8 @@ export class DiagramPanel {
       void vscode.window.showWarningMessage(`dddbml: could not read the working diagram — ${message}`);
       return null;
     }
-    const parsedHead = parseDbml(headSource);
+    const parsedHead = await parseAsync(headSource, `diffHead:${this.dbmlUri.toString()}`);
+    if (!parsedHead) return null;
     if (parsedHead.error) {
       void vscode.window.showWarningMessage(`dddbml: the working diagram does not parse — ${parsedHead.error.message}`);
       return null;
