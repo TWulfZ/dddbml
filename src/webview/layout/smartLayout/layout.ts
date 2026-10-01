@@ -380,22 +380,15 @@ function layoutMeta(
     });
   }
 
-  const pairWeight = new Map<string, number>();
+  // Weight accumulates on the unnamed (v,w) edge itself: cluster ids embed DBML names, which may
+  // contain any character, so no string key joining two ids is safe to split again (audit F54).
   for (const r of refs) {
-    const sc = memberToCluster.get(r.source.table);
-    const tc = memberToCluster.get(r.target.table);
-    if (!sc || !tc || sc === tc) continue;
     const { child, parent } = normalizeDirection(r);
     const from = memberToCluster.get(child);
     const to = memberToCluster.get(parent);
-    if (!from || !to || from === to) continue;
-    const key = `${from} ${to}`;
-    pairWeight.set(key, (pairWeight.get(key) ?? 0) + 1);
-  }
-  for (const [key, weight] of pairWeight) {
-    const [from, to] = key.split(' ');
-    if (!from || !to) continue;
-    g.setEdge(from, to, { weight });
+    if (!from || !to || from === to || !g.hasNode(from) || !g.hasNode(to)) continue;
+    const prev = g.edge(from, to) as { weight: number } | undefined;
+    g.setEdge(from, to, { weight: (prev?.weight ?? 0) + 1 });
   }
 
   dagre.layout(g);
