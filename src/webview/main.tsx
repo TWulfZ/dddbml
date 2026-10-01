@@ -22,7 +22,9 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
       return;
     case 'layout:loaded':
     case 'layout:external-change':
-      state.setLayout(msg.payload);
+      // The host only knows the camera saved before merge mode opened (pan/zoom never persists);
+      // the post-Apply layout must not snap the view back to it.
+      state.setLayout(state.mergeConflicts !== null ? { ...msg.payload, viewport: state.viewport } : msg.payload);
       return;
     case 'theme:change':
       state.setTheme(msg.payload.kind);

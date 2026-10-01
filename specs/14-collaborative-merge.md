@@ -148,7 +148,9 @@ Sólo el host escribe el sidecar. Flujo:
    side)`, **escribe limpio** (`writeSharedLayout`), `git add`, actualiza
    `diskSidecarText`/`diskSharedSerialized`, limpia `pendingMerge`, postea `layout:loaded` (final,
    con view-state re-aplicado) y `merge:done`. El webview sale del modo conflicto
-   en `merge:done`.
+   en `merge:done`. Un `layout:loaded`/`layout:external-change` que llega con el modo
+   conflicto activo **conserva la cámara actual** del webview: el viewport del host es el
+   view-state guardado antes del merge (pan/zoom no persiste) y Apply hacía saltar la vista.
 
 ### Foco: atenuar el fondo (compartido con el diff de spec 16)
 
