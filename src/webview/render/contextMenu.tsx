@@ -33,7 +33,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const onDocDown = (e: MouseEvent) => {
+    const onDocDown = (e: PointerEvent) => {
       const el = ref.current;
       if (!el) return;
       if (!el.contains(e.target as Node)) onClose();
@@ -43,12 +43,14 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     };
     // Defer attachment one tick so the click that opened the menu doesn't immediately close it.
     const t = setTimeout(() => {
-      document.addEventListener('mousedown', onDocDown);
+      // Capture phase: table/edge gestures stop propagation and preventDefault the pointerdown,
+      // which also suppresses mousedown, so a bubbling or mousedown listener would miss them.
+      document.addEventListener('pointerdown', onDocDown, true);
       document.addEventListener('keydown', onEsc);
     }, 0);
     return () => {
       clearTimeout(t);
-      document.removeEventListener('mousedown', onDocDown);
+      document.removeEventListener('pointerdown', onDocDown, true);
       document.removeEventListener('keydown', onEsc);
     };
   }, [onClose]);

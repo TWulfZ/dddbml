@@ -37,7 +37,7 @@ export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPop
   const popupRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const onDocDown = (e: MouseEvent) => {
+    const onDocDown = (e: PointerEvent) => {
       const el = popupRef.current;
       if (!el) return;
       if (!el.contains(e.target as Node)) onClose();
@@ -46,12 +46,13 @@ export function ColorPopup({ current, x, y, onPick, onClose, onReset }: ColorPop
       if (e.key === 'Escape') onClose();
     };
     const t = setTimeout(() => {
-      document.addEventListener('mousedown', onDocDown);
+      // Capture-phase pointerdown: see ContextMenu.
+      document.addEventListener('pointerdown', onDocDown, true);
       document.addEventListener('keydown', onEsc);
     }, 0);
     return () => {
       clearTimeout(t);
-      document.removeEventListener('mousedown', onDocDown);
+      document.removeEventListener('pointerdown', onDocDown, true);
       document.removeEventListener('keydown', onEsc);
     };
   }, [onClose]);
