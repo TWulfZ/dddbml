@@ -122,6 +122,35 @@ describe('runEdgeOrdering — edges-only arrange (spec 05 §9)', () => {
   });
 });
 
+describe('computeEdgeOrdering — sides persist only when they carry information (F20)', () => {
+  const ID = 'public.a(c0)->public.b(c0)';
+  const pairSchema: Schema = {
+    tables: [mkTable('public.a'), mkTable('public.b')],
+    refs: [mkRef(ID, 'public.a', 'public.b')],
+    groups: [],
+  };
+  const order = (positions: Array<[string, { x: number; y: number }]>, existing = new Map<string, EdgeLayout>()) =>
+    computeEdgeOrdering({ schema: pairSchema, positions: new Map(positions), existingLayouts: existing, preserveManual: true });
+
+  it('render-default left/right sides are not persisted, so the edge stays re-orderable', async () => {
+    const side: Array<[string, { x: number; y: number }]> = [['public.a', { x: 0, y: 0 }], ['public.b', { x: 600, y: 0 }]];
+    const first = await order(side);
+    const layout = first.resets.find(([id]) => id === ID)![1];
+    expect(layout.sourceSide).toBeUndefined();
+    expect(layout.targetSide).toBeUndefined();
+    const second = await order(side, new Map(first.resets));
+    expect(second.resets.some(([id]) => id === ID)).toBe(true);
+  });
+
+  it('a fallback (no route found) persists no provisional sides', async () => {
+    // Stacked so far apart that the routing window exceeds MAX_GRID_CELLS ⇒ ok:false.
+    const far: Array<[string, { x: number; y: number }]> = [['public.a', { x: 0, y: 0 }], ['public.b', { x: 9000, y: 30000 }]];
+    const { resets } = await order(far);
+    const layout = resets.find(([id]) => id === ID)![1];
+    expect(layout).toEqual({});
+  });
+});
+
 describe('computeEdgeOrdering — determinism', () => {
   it('produces byte-identical results across two runs', async () => {
     const { schema, positions } = obstacleSchema();

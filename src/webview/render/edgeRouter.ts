@@ -619,7 +619,7 @@ function orientationOfSide(side: Side): 'h' | 'v' {
   return side === 'left' || side === 'right' ? 'h' : 'v';
 }
 
-function chooseSides(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {
+export function chooseSides(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {
   // Always exit/enter horizontally. Column-aligned ports only make sense horizontally,
   // so forcing left/right for every edge keeps routing predictable and aligned with column rows.
   const srcC = centerOf(src);

@@ -126,6 +126,16 @@ segmentos completos.
 
 ### Preguntas abiertas restantes
 
+- **¿Cómo distinguir la salida de A* de una forma manual? (auditoría F20, bloqueante para el
+  resto del fix).** Hoy `hasManualShape` trata como manual cualquier waypoint o lado persistido, así
+  que una arista ruteada por A* con desvío o con lado `top`/`bottom` nunca se re-ordena con
+  "preservar manuales", y `computeEdgeResets` conserva sus lados aunque una tabla se mueva (quedan
+  apuntando a la geometría vieja). Opciones: (a) marcador `auto: true` en `EdgeLayout`, persistido
+  en el sidecar (cambio de schema del spec 03, aditivo) y borrado por toda edición de usuario;
+  (b) heurística sin cambio de schema: como el flip manual es sólo L/R (decisión 4), tratar
+  `top`/`bottom` como automáticos — no distingue waypoints de A* de waypoints del usuario;
+  (c) aceptar el comportamiento actual. Pendiente de decidir con el usuario.
+
 - **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
   forma en `WaypointCommand`. Un reset emite ambos comandos.
 - **Ruteo del flip "contra-natura"** (puerto forzado al lado opuesto del target)
@@ -388,6 +398,11 @@ top/bottom). Resolución acordada:
   `chooseSides4` en `astar.ts`) cuando reduce cruces/obstáculos, y persiste
   `sourceSide`/`targetSide ∈ 'left'|'right'|'top'|'bottom'` (E3 **se usa de verdad**). El render path
   luego dibuja fielmente ese lado persistido vía `portPoint` (que ya soporta los 4 lados).
+  **Sólo se persisten lados que aportan información** (auditoría F20): si el par coincide con lo que
+  `chooseSides` del render elegiría (todo L/R) no se escribe, y un fallback (`ok:false`) no escribe
+  lados provisionales — un lado persistido cuenta como forma manual (`hasManualShape`) y excluiría
+  la arista de toda corrida posterior con "preservar manuales". Los lados `top`/`bottom` sí se
+  persisten y hoy siguen contando como manuales (ver Preguntas abiertas).
 - **`columnY` ancla sólo en `left`/`right`**; un puerto `top`/`bottom` usa un x-ratio sin ancla de
   fila. Ambas reglas ya estaban gateadas a L/R en `routeRefs` (líneas ~153-162).
 - Sin contradicción: A* **rutea entre los stubs** (decisión 7 se mantiene) — pero el **adaptador**
