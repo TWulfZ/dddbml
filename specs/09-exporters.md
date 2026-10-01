@@ -217,7 +217,7 @@ DBML `Ref.source.relation` y `Ref.target.relation` ∈ `{ '1', '*' }`. Matriz:
 - En el lado `1` (que apunta a `*`): plural.
 - Colisión con otra propiedad de la misma clase → sufija `_<n>`.
 
-**Composite FKs**: si `columns.length > 1`, emite `@JoinColumn` con array de objetos `[{ name }]`. Warning si el dialect no soporta composite (postgres sí).
+**Columnas referenciadas**: cada entrada de `@JoinColumn` lleva `referencedColumnName` (la columna del otro lado, en el mismo orden). Sólo se omite cuando hay una única columna FK y apunta a la PK de una sola columna de la tabla referenciada, que es lo que TypeORM asume por defecto. **Composite FKs**: si `columns.length > 1`, emite `@JoinColumn([{ name, referencedColumnName }, ...])` — sin `referencedColumnName` TypeORM ataría todas las entradas a la primera PK. Warning si el dialect no soporta composite (postgres sí).
 
 **Scope='selected', endpoint fuera de selección**: preserva la columna FK (renderiza como propiedad regular con su tipo), omite el decorator de relación, agrega warning `"Relation <Source> ↔ <Target>: <Target> not in selection — emitted FK column only."`.
 
@@ -311,7 +311,7 @@ Defaults se sobre-escriben por `settings.export.typeorm.*` cuando hay setting co
 
 - `test/unit/exporters/typeorm/relations.test.ts`:
   - 4 cardinalidades emiten decorators y JoinColumn esperados.
-  - Composite FK → `@JoinColumn([{ name: 'a' }, { name: 'b' }])`.
+  - Composite FK → `@JoinColumn([{ name: 'a', referencedColumnName: 'x' }, { name: 'b', referencedColumnName: 'y' }])`; FK a columna no-PK → `referencedColumnName` explícito.
   - Colisión de property names → sufija.
 
 - `test/unit/exporters/typeorm/generate.test.ts`:

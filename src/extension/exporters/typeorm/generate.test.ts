@@ -95,6 +95,37 @@ describe('generateTypeOrm — one-to-one @JoinColumn sits on the FK holder', () 
   });
 });
 
+describe('generateTypeOrm — @JoinColumn names the referenced column when it is not the sole PK', () => {
+  const { content } = exportDbml(`
+    Table courses { id int [pk]
+      code varchar
+      term varchar }
+    Table sections { id int [pk]
+      course_code varchar
+      course_term varchar }
+    Table users { id int [pk]
+      email varchar [unique] }
+    Table orders { id int [pk]
+      user_id int
+      user_email varchar }
+    Ref: sections.(course_code, course_term) > courses.(code, term)
+    Ref: orders.user_email > users.email
+    Ref: orders.user_id > users.id
+  `);
+
+  it('pairs every composite FK column with its referenced column', () => {
+    expect(entityBlock(content, 'Section')).toContain(
+      '@JoinColumn([{ name: "course_code", referencedColumnName: "code" }, { name: "course_term", referencedColumnName: "term" }])',
+    );
+  });
+  it('targets a non-PK referenced column explicitly', () => {
+    expect(entityBlock(content, 'Order')).toContain('@JoinColumn({ name: "user_email", referencedColumnName: "email" })');
+  });
+  it('stays terse when the FK targets the single-column PK', () => {
+    expect(entityBlock(content, 'Order')).toContain('@JoinColumn({ name: "user_id" })');
+  });
+});
+
 describe('generateTypeOrm — entities without a primary column', () => {
   it('emits a composite pk index as one @PrimaryColumn per member', () => {
     const { content, warnings } = exportDbml(`

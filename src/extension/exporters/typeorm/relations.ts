@@ -18,6 +18,11 @@ export interface RelationSide {
   isOwning: boolean;
   /** Columns on the owner that form the FK (only meaningful when `isOwning`). */
   fkColumns: string[];
+  /**
+   * Target columns paired index-by-index with `fkColumns`. Empty when the FK targets the
+   * referenced table's single-column PK, which is what TypeORM assumes without `referencedColumnName`.
+   */
+  referencedColumns: string[];
   /** Inverse property name on the other entity, used for the `tgt => tgt.foo` callback. */
   inversePropertyName: string;
   /** Original ref id — for traceability + dedup. */
@@ -131,6 +136,8 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): Re
 
     const sourceProp = propNameFor(sourceDecorator, ref.target.table, opts);
     const targetProp = propNameFor(targetDecorator, ref.source.table, opts);
+    const referenced = (end: Ref['source']) =>
+      end.columns.length === 1 && keyRank(opts.tables.get(end.table), end.columns) === 2 ? [] : [...end.columns];
 
     out.push({
       cardinality: card,
@@ -142,6 +149,7 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): Re
         tsType: tsTypeFor(sourceDecorator, ref.target.table, opts),
         isOwning: sourceOwns,
         fkColumns: sourceOwns ? [...ref.source.columns] : [],
+        referencedColumns: sourceOwns ? referenced(ref.target) : [],
         inversePropertyName: targetProp,
         refId: ref.id,
       },
@@ -153,6 +161,7 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): Re
         tsType: tsTypeFor(targetDecorator, ref.source.table, opts),
         isOwning: !sourceOwns,
         fkColumns: !sourceOwns ? [...ref.target.columns] : [],
+        referencedColumns: !sourceOwns ? referenced(ref.source) : [],
         inversePropertyName: sourceProp,
         refId: ref.id,
       },

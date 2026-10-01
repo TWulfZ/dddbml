@@ -184,12 +184,14 @@ function emitRelation(
       lines.push('@JoinTable()');
     } else {
       decoratorsUsed.add('JoinColumn');
-      if (rel.fkColumns.length === 1) {
-        lines.push(`@JoinColumn({ name: ${JSON.stringify(rel.fkColumns[0])} })`);
-      } else if (rel.fkColumns.length > 1) {
-        const joins = rel.fkColumns.map((c) => `{ name: ${JSON.stringify(c)} }`).join(', ');
-        lines.push(`@JoinColumn([${joins}])`);
-      }
+      const joins = rel.fkColumns.map((c, i) => {
+        const referenced = rel.referencedColumns[i];
+        return referenced === undefined
+          ? `{ name: ${JSON.stringify(c)} }`
+          : `{ name: ${JSON.stringify(c)}, referencedColumnName: ${JSON.stringify(referenced)} }`;
+      });
+      if (joins.length === 1) lines.push(`@JoinColumn(${joins[0]})`);
+      else if (joins.length > 1) lines.push(`@JoinColumn([${joins.join(', ')}])`);
     }
   }
 
