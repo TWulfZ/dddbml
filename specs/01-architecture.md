@@ -76,7 +76,10 @@ type WebviewToHost =
 ## Ciclo de vida de una sesión
 
 1. Usuario abre un `.dbml` en VSC.
-2. Ejecuta `dddbml: Open Diagram` (palette o context menu).
+2. Ejecuta `dddbml: Open Diagram` (palette o context menu). Desde el explorer / editor
+   title se abre el archivo clickeado (el `Uri` que pasa VS Code), no el editor activo; desde
+   la palette, el editor activo. Sólo URIs `file:` (`git:`/read-only, p.ej. el lado HEAD de
+   un diff, se rechazan con un error).
 3. `extension.ts` instancia `DiagramPanel` (reutiliza si ya existe para ese archivo).
 4. `DiagramPanel` crea webview en `ViewColumn.Beside`, carga `media/webview.js`.
 5. Webview envía `ready`.

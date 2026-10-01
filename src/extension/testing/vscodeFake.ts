@@ -163,6 +163,17 @@ export const window = {
   showSaveDialog: () => Promise.resolve(undefined),
 };
 
+export const commands = {
+  registered: new Map<string, (...args: unknown[]) => unknown>(),
+  registerCommand(id: string, fn: (...args: unknown[]) => unknown) {
+    commands.registered.set(id, fn);
+    return { dispose: () => commands.registered.delete(id) };
+  },
+  executeCommand(id: string, ...args: unknown[]): Promise<unknown> {
+    return Promise.resolve(commands.registered.get(id)?.(...args));
+  },
+};
+
 export const workspace = {
   fs: {
     readFile: async (uri: Uri) => new Uint8Array(await fsp.readFile(uri.fsPath)),
