@@ -136,6 +136,7 @@ function runEdgeDrag(
   build: (dxWorld: number, dyWorld: number, ev: PointerEvent, startX: number, startY: number) => Waypoint[] | null,
 ): void {
   if (edgeDragActive || e.button !== 0) return;
+  if (isCanvasReadOnly(store.getState())) return;
   edgeDragActive = true;
   e.stopPropagation();
   e.preventDefault();
@@ -209,6 +210,7 @@ export function startNotchDrag(
 
 /** Double-click a notch's dip-run to delete the whole notch (restore the flat run). */
 export function deleteEdgeNotch(route: EdgeRoute, segIndex: number): void {
+  if (isCanvasReadOnly(store.getState())) return;
   const refId = route.id;
   const from = snapshotWaypoints(refId);
   const to = deleteNotch(route, segIndex);
@@ -220,6 +222,7 @@ export function deleteEdgeNotch(route: EdgeRoute, segIndex: number): void {
 
 /** Reset an edge's shape (waypoints + side overrides) and push history. Keeps color. */
 export function resetEdgeWaypoints(refId: string): void {
+  if (isCanvasReadOnly(store.getState())) return;
   const fromWps = snapshotWaypoints(refId);
   const fromStyle = readEdgeStyle(refId);
   store.getState().resetEdgeShape(refId);
@@ -243,6 +246,7 @@ export function readEdgeStyle(refId: string): EdgeStyle {
 
 /** Push an EdgeStyleCommand for the change since `before`, then persist. No-op if unchanged. */
 export function commitEdgeStyle(refId: string, before: EdgeStyle, label: string): void {
+  if (isCanvasReadOnly(store.getState())) return;
   const cmd = buildEdgeStyleCommand(refId, before, readEdgeStyle(refId), label);
   if (cmd) store.getState().pushEdgeStyleCommand(cmd);
   schedulePersist();
@@ -261,6 +265,7 @@ export function startEndpointDrag(
   toWorldX: (clientX: number) => number | null,
 ): void {
   if (edgeDragActive || e.button !== 0) return;
+  if (isCanvasReadOnly(store.getState())) return;
   edgeDragActive = true;
   e.stopPropagation();
   e.preventDefault();

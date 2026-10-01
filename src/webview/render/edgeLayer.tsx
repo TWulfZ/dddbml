@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createPortal, memo } from 'preact/compat';
 import type { QualifiedName, Ref, RefDiffStatus, Schema } from '../../shared/types';
 import { columnCenterY, estimateSize } from '../layout/autoLayout';
 import { routeRefs, isDipRun, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
 import type { LodLevel } from './lod';
-import { store, useAppStore } from '../state/store';
+import { store, useAppStore, isCanvasReadOnly } from '../state/store';
 import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch } from '../drag/dragController';
 import type { EdgeStyle } from '../state/history';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
@@ -68,6 +68,11 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, tablesByName, grou
   const selection = useAppStore((s) => s.selection);
   const svgRef = useRef<SVGSVGElement>(null);
   const [colorPopup, setColorPopup] = useState<ColorPopupState | null>(null);
+  // Merge / git overlay (spec 14/16): no edge selection, handles, toolbar or colour edits.
+  const readOnly = useAppStore(isCanvasReadOnly);
+  useEffect(() => {
+    if (readOnly) setColorPopup(null);
+  }, [readOnly]);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [clickPos, setClickPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -291,7 +296,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, tablesByName, grou
       {/* Overlay layer: interactive handles. z-index above tables so handles stay grabbable
           even where an edge crosses a table. SVG is pointer-transparent; only handles catch. */}
       <svg class="ddd-edges ddd-edges-overlay" {...svgSize} style={svgStyle}>
-        {lowZoom ? null : visibleRoutes.map((r) => {
+        {lowZoom || readOnly ? null : visibleRoutes.map((r) => {
           const selected = r.id === selectedEdgeId;
           const color = edgeLayouts.get(r.id)?.color;
           return (
@@ -415,7 +420,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, tablesByName, grou
         })}
       </svg>
 
-      {selectedRoute && toolbarPos
+      {selectedRoute && toolbarPos && !readOnly
         ? createPortal(
             <div
               class="ddd-edge-toolbar"
@@ -448,7 +453,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, tablesByName, grou
             document.body,
           )
         : null}
-      {colorPopup ? (
+      {colorPopup && !readOnly ? (
         <ColorPopup
           current={edgeLayouts.get(colorPopup.refId)?.color ?? '#888888'}
           x={colorPopup.x}
