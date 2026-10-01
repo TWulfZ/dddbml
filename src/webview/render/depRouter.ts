@@ -1,4 +1,5 @@
-import type { Waypoint } from '../../shared/types';
+import type { EdgeLayout, QualifiedName, Waypoint } from '../../shared/types';
+import type { KeyedDepEdge } from './edgeKey';
 import type { Bbox } from './spatialIndex';
 
 /** Matches the ref stub length (edgeRouter MIN_STUB) so dep and FK edges leave tables identically. */
@@ -29,6 +30,34 @@ export interface DepRoute {
   waypoints: Waypoint[];
   /** One per curve span (stub end → waypoint → … → stub end), at the span's t=0.5 point. */
   inserts: DepInsertHandle[];
+}
+
+/** Resolves the absolute port Y of a dep endpoint (column row center, else header center). */
+export type DepPortY = (table: QualifiedName, columns: readonly string[], bbox: Bbox) => number;
+
+export function routeDeps(
+  deps: readonly KeyedDepEdge[],
+  bboxOf: (name: QualifiedName) => Bbox | undefined,
+  portY: DepPortY,
+  layoutOf: (id: string) => EdgeLayout | undefined,
+): DepRoute[] {
+  const out: DepRoute[] = [];
+  for (const d of deps) {
+    const a = bboxOf(d.upstream.table);
+    const b = bboxOf(d.downstream.table);
+    if (!a || !b) continue;
+    out.push(routeDep(
+      d.id,
+      { bbox: a, portY: portY(d.upstream.table, d.upstream.columns, a) },
+      { bbox: b, portY: portY(d.downstream.table, d.downstream.columns, b) },
+      layoutOf(d.id)?.waypoints ?? [],
+    ));
+  }
+  return out;
+}
+
+export function depColor(dep: KeyedDepEdge | undefined, layout: EdgeLayout | undefined): string | undefined {
+  return layout?.color ?? dep?.color;
 }
 
 /**

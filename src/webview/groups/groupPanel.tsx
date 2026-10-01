@@ -9,6 +9,7 @@ import { Search } from '../ui/Search';
 import { Tooltip } from '../ui/Tooltip';
 import { bcColorFor } from './bcPalette';
 import {
+  Icon,
   IconChevronDown,
   IconChevronRight,
   IconClose,
@@ -31,6 +32,8 @@ function GroupPanelImpl() {
   // Hide/collapse/colour are layout edits: during a merge or git overlay they would be reverted on
   // Apply or never saved, so they are locked like the canvas.
   const readOnly = useAppStore(isCanvasReadOnly);
+  const showDeps = useAppStore((s) => s.showDeps);
+  const hasDeps = useAppStore((s) => (s.schema.deps?.length ?? 0) > 0);
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const setOpen = (v: boolean) => store.getState().setViewsPanelOpen(v);
@@ -126,6 +129,18 @@ function GroupPanelImpl() {
           <IconFilter size={12} />
           <span>PK/FK columns only</span>
         </Button>
+        {hasDeps ? (
+          <Button
+            variant="action"
+            size="sm"
+            active={showDeps}
+            onClick={() => store.getState().toggleShowDeps()}
+            title="Show logical dependencies declared with DBML Dep"
+          >
+            <Icon name="references" size={12} />
+            <span>Dependencies</span>
+          </Button>
+        ) : null}
       </div>
       <Search value={query} onInput={setQuery} placeholder="Search table or group" inputRef={searchRef} />
       <ul class="ddd-group-list">

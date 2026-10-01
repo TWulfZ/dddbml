@@ -93,6 +93,10 @@ Los edges se dibujan a opacidad completa (sin el fade de hover del canvas).
   recorta el resto.
 - **Selección**: solo las tablas en `selection`; edges con **ambos** extremos dentro.
 
+### Dependencias (spec 18)
+
+`ExportDerived.effectiveDeps` (vacío si el toggle "Dependencies" está apagado) se rutea con el mismo `routeDeps` puro del canvas y se emite como path punteado (`6 4`) con marker `ddd-mk-dep` en `ThemeTokens.dep`. Mismas reglas de alcance que las refs (`selection` exige ambos extremos; `view` uno). El hull de la curva (puertos, stubs, waypoints, handles medios) entra en el cálculo de bounds.
+
 ## Modelo de datos / tipos afectados
 
 - `src/webview/state/store.ts`: nuevo `exportImagePromptOpen: boolean` +

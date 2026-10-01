@@ -115,7 +115,8 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
 - La capa es el mismo SVG de `edgeLayer.tsx` (`<g class="ddd-dep-group">`), con trazo punteado
   `--ddd-dep` y marker de flecha al final. El culling es el mismo que el de las refs.
 - Color: `EdgeLayout.color` (sidecar) > `Dep.color` (DBML) > token.
-- Toggle efímero "Show dependencies" en View options (`groupPanel`), activado por defecto.
+- Toggle efímero "Dependencies" en View options (`groupPanel`), activado por defecto y visible sólo
+  si el schema tiene deps. Apagado también las saca del export de imagen.
 
 ### Dependencias — edición
 
@@ -199,8 +200,9 @@ El sidecar no cambia de schema: las deps sólo agregan claves `dep:*` en `edges`
 
 - Una dep entre tablas que se solapan en X recorta los stubs a la mitad del gap, igual que las
   refs, y la curva puede quedar casi recta.
-- Una dep cuyo endpoint quedó colapsado dentro de un grupo se dibuja hacia el nodo del grupo; sus
-  waypoints se conservan pero pueden quedar lejos hasta que se expanda.
+- Una dep cuyo endpoint quedó colapsado dentro de un grupo se dibuja hacia el header del nodo del
+  grupo. Su clave cambia mientras está colapsada (igual que las refs), así que los waypoints
+  editados en ese estado son independientes de los de la dep expandida.
 - Las filas por encima de 200 no se ven en el preview (se indica el total).
 
 ## Plan de pruebas

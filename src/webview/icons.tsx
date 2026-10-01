@@ -43,7 +43,8 @@ export type IconName =
   | 'history'
   | 'diff'
   | 'archive'
-  | 'table';
+  | 'table'
+  | 'references';
 
 interface IconProps {
   size?: number;

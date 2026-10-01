@@ -47,7 +47,7 @@ function source(selection: Iterable<string> = []): ExportSource {
 const theme: ThemeTokens = {
   canvas: '#101010', surface: '#202020', border: '#404040',
   fg: '#e0e0e0', fgMuted: '#909090', accent: '#4a9eff',
-  headerBg: '#181818', edge: '#4a9eff',
+  headerBg: '#181818', edge: '#4a9eff', dep: '#b180d7',
 };
 
 describe('buildExportModel — scope', () => {
@@ -122,5 +122,34 @@ describe('renderSvg', () => {
     const noBg = renderSvg(buildExportModel(source(), { scope: 'all', background: false, filename: 'd' })!, theme, stub).svg;
     expect(withBg).toContain(`fill="${theme.canvas}"`);
     expect(noBg).not.toContain(`fill="${theme.canvas}"`);
+  });
+});
+
+describe('buildExportModel — deps (spec 18)', () => {
+  const withDep = (scope: 'all' | 'selection', selection: string[] = []) => {
+    const src = source(selection);
+    src.derived = {
+      ...derived,
+      effectiveDeps: [{
+        id: 'dep:public.a::|public.b::',
+        upstream: { table: 'public.a', columns: [] },
+        downstream: { table: 'public.b', columns: [] },
+        name: null,
+        note: null,
+      }],
+    };
+    return buildExportModel(src, { scope, background: true, filename: 'd' })!;
+  };
+
+  it('exports a shown dep as a dashed arrowed curve in the theme dep color', () => {
+    const m = withDep('all');
+    expect(m.deps).toHaveLength(1);
+    const { svg } = renderSvg(m, theme, (c) => c);
+    expect(svg).toContain('stroke="#b180d7" stroke-width="1.6" stroke-dasharray="6 4"');
+    expect(svg).toContain('marker-end="url(#ddd-mk-dep)"');
+  });
+
+  it('drops a dep whose downstream table is outside the selection', () => {
+    expect(withDep('selection', ['public.a']).deps).toEqual([]);
   });
 });

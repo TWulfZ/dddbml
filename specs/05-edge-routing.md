@@ -503,6 +503,10 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
   más débil que un layer-sweep global. Aceptable: el usuario priorizó un router único +
   obstacle-avoidance en tablas fijas sobre el óptimo global de cruces. Determinista pese a ser greedy.
 
+### 10. Aristas `Dep` (spec 18)
+
+Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traza una **curva** entre dos stubs horizontales rígidos de 24 px (mismo `MIN_STUB`, mismo recorte a la mitad del gap). Sin waypoints es una Bézier con handles horizontales; con waypoints, Catmull-Rom → Béziers que pasan por cada punto, tangente a los stubs en los extremos. Lados izquierda/derecha por centros (misma regla que `chooseSides`); puerto Y = centro de la primera columna (`rows.indexOf`) o `headerCenterY()` para deps a nivel tabla. Edición: sólo la dep seleccionada muestra handles de inserción (t=0.5 de cada tramo) y de waypoint (mover / doble clic = borrar); reutiliza `runEdgeDrag` + `WaypointCommand`. Se pintan en el **mismo SVG** (`DepPaths` en la capa base, `DepOverlay` en la de overlay) y se cullean con el mismo `visibleRefIds`. No participan en auto-layout, A* ni puertos compartidos con refs.
+
 ## Limitaciones conocidas
 
 1. **Obstacle avoidance** llega vía el comando on-demand de edge-ordering (§9, router A* propio,

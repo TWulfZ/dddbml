@@ -155,6 +155,15 @@ Bajo `@media (prefers-reduced-motion: reduce)`, las tres `duration-{fast,medium,
 
 ---
 
+### Dependencias (spec 18)
+
+| Token | Valor | Uso |
+|---|---|---|
+| `--ddd-dep` | `var(--vscode-charts-purple, #b180d7)` | Trazo + flecha de aristas `Dep` (tono distinto a `--ddd-edge` para que el lineage nunca se lea como FK) |
+| `--ddd-dep-dash` | `6 4` | `stroke-dasharray` de las deps; la marcha animada sólo corre en la dep seleccionada/hover y se apaga con `prefers-reduced-motion` |
+
+Records preview: clases `.ddd-records*` (grilla con header sticky dentro de `ui/Modal`), sólo tokens.
+
 ## Density system
 
 Atributo: `data-density='compact' | 'cozy' | 'comfortable'` en el contenedor raíz (`.ddd-viewport`'s parent o `body`). Cozy es default.

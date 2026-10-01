@@ -125,6 +125,9 @@
     --ddd-edge-hover: var(--vscode-charts-foreground, #e8e8e8);
     --ddd-edge-selected: var(--ddd-accent);
     --ddd-edge-handle: var(--ddd-fg-muted); /* subtle border of the segment-midpoint drag handle */
+    /* DBML `Dep` edges (spec 18): a distinct hue + dash so lineage never reads as an FK. */
+    --ddd-dep: var(--vscode-charts-purple, #b180d7);
+    --ddd-dep-dash: 6 4;
     /* Ghost (¼/¾) knob radius — grows on hover (no colour change). Tune both freely. */
     --ddd-edge-ghost-r: 4;
     --ddd-edge-ghost-r-hover: 5;
@@ -531,6 +534,27 @@
     stroke: var(--ddd-edge-selected);
     stroke-width: 1.6; /* same thickness — the selection cue is the subtle bloom, not a thicker line */
     filter: var(--ddd-edge-bloom-selected);
+  }
+  .ddd-edges .ddd-dep-group {
+    color: var(--ddd-dep);
+    opacity: 0.55;
+    transition: opacity var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+  .ddd-edges .ddd-dep-group.is-focused { opacity: 1; }
+  .ddd-edges path.ddd-dep {
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-dasharray: var(--ddd-dep-dash);
+    stroke-linecap: round;
+    fill: none;
+  }
+  .ddd-edges path.ddd-dep.is-selected {
+    filter: var(--ddd-edge-bloom-selected);
+    animation: ddd-dep-march 0.8s linear infinite;
+  }
+  @keyframes ddd-dep-march { to { stroke-dashoffset: -10; } }
+  @media (prefers-reduced-motion: reduce) {
+    .ddd-edges path.ddd-dep.is-selected { animation: none; }
   }
   .ddd-edges line.ddd-edge-segment-handle {
     stroke: transparent;

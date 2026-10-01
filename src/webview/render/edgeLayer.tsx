@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createPortal, memo } from 'preact/compat';
 import type { QualifiedName, Ref, RefDiffStatus } from '../../shared/types';
-import { columnCenterY, estimateSize } from '../layout/autoLayout';
+import { columnCenterY, estimateSize, headerCenterY } from '../layout/autoLayout';
+import type { KeyedDepEdge } from './edgeKey';
+import { DepMarkerDef, DepOverlay, DepPaths } from './depEdges';
+import { depColor, routeDeps } from './depRouter';
 import type { RowGeometry } from '../layout/tableRows';
 import { routeRefs, isDipRun, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
@@ -36,6 +39,8 @@ interface EdgeLayerProps {
   worldBbox: { x: number; y: number; w: number; h: number };
   /** Diff overlay (spec 16): composite edge key → status. Tints added refs. Null = not diffing. */
   refDiff?: Map<string, RefDiffStatus> | null;
+  /** DBML `Dep` edges (spec 18), already remapped/keyed; culled by the same `visibleRefIds`. */
+  deps: KeyedDepEdge[];
 }
 
 const GROUP_PREFIX = '__group__:';
@@ -62,7 +67,8 @@ interface HoverState {
   near: number;
 }
 
-function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, worldBbox, refDiff }: EdgeLayerProps) {
+function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, worldBbox, refDiff, deps }: EdgeLayerProps) {
+  const density = useAppStore((s) => s.settings.ui.density);
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
   // Edges are faded by default; they reveal (full opacity) when their table or the edge is focused.
@@ -112,6 +118,28 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
     () => routeRefs(refs, bboxOf, columnY, (id) => edgeLayouts.get(id)),
     [refs, positions, rows, groupSizes, edgeLayouts],
   );
+
+  const depRoutes = useMemo(() => {
+    const headerCenter = headerCenterY();
+    return routeDeps(
+      deps,
+      bboxOf,
+      (table, columns, b) => {
+        const y = columns[0] ? columnY(table, columns[0]) : undefined;
+        return b.y + (y ?? headerCenter);
+      },
+      (id) => edgeLayouts.get(id),
+    );
+  }, [deps, positions, rows, groupSizes, edgeLayouts, density]);
+  const visibleDepRoutes = useMemo(
+    () => (visibleRefIds ? depRoutes.filter((r) => visibleRefIds.has(r.id)) : depRoutes),
+    [depRoutes, visibleRefIds],
+  );
+  const depById = useMemo(() => {
+    const m = new Map<string, KeyedDepEdge>();
+    for (const d of deps) m.set(d.id, d);
+    return m;
+  }, [deps]);
 
   // route-all-then-cull: render only the routes whose ref has a visible endpoint. `null` ⇒ all.
   const visibleRoutes = useMemo(
@@ -218,7 +246,9 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
     );
   };
 
-  const selectedRoute = selectedEdgeId ? routes.find((r) => r.id === selectedEdgeId) ?? null : null;
+  const selectedRoute = selectedEdgeId
+    ? routes.find((r) => r.id === selectedEdgeId) ?? depRoutes.find((r) => r.id === selectedEdgeId) ?? null
+    : null;
   // Screen anchor: click position + constant offset. Adjust TOOLBAR_OFFSET_X/Y at top of file.
   const toolbarPos = selectedRoute && clickPos
     ? { x: clickPos.x + TOOLBAR_OFFSET_X, y: clickPos.y + TOOLBAR_OFFSET_Y }
@@ -252,6 +282,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
           <marker id="ddd-mk-one-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
             <path d="M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.4" />
           </marker>
+          <DepMarkerDef />
         </defs>
         {visibleRoutes.map((r) => {
           const color = edgeLayouts.get(r.id)?.color;
@@ -290,6 +321,17 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
             </g>
           );
         })}
+        <DepPaths
+          routes={visibleDepRoutes}
+          depById={depById}
+          edgeLayouts={edgeLayouts}
+          lowZoom={lowZoom}
+          isFocused={(d, id) =>
+            id === selectedEdgeId ||
+            (hoveredTable != null && (d.upstream.table === hoveredTable || d.downstream.table === hoveredTable)) ||
+            selection.has(d.upstream.table) ||
+            selection.has(d.downstream.table)}
+        />
       </svg>
 
       {/* Overlay layer: interactive handles. z-index above tables so handles stay grabbable
@@ -417,6 +459,18 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
             </g>
           );
         })}
+        {lowZoom || readOnly ? null : (
+          <DepOverlay
+            routes={visibleDepRoutes}
+            depById={depById}
+            edgeLayouts={edgeLayouts}
+            selectedId={selectedEdgeId}
+            onSelect={(id, x, y) => {
+              setClickPos({ x, y });
+              store.getState().setSelectedEdge(id);
+            }}
+          />
+        )}
       </svg>
 
       {selectedRoute && toolbarPos && !readOnly
@@ -454,7 +508,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
         : null}
       {colorPopup && !readOnly ? (
         <ColorPopup
-          current={edgeLayouts.get(colorPopup.refId)?.color ?? '#888888'}
+          current={depColor(depById.get(colorPopup.refId), edgeLayouts.get(colorPopup.refId)) ?? '#888888'}
           x={colorPopup.x}
           y={colorPopup.y}
           onPick={(c) => store.getState().setEdgeColor(colorPopup.refId, c)}

@@ -1,4 +1,4 @@
-import type { QualifiedName, Ref } from '../../shared/types';
+import type { Dep, DepEndpoint, QualifiedName, Ref } from '../../shared/types';
 
 /**
  * Key of an edge's persisted EdgeLayout (spec 03 `edges`). Built from the endpoints AFTER the
@@ -41,4 +41,53 @@ export function edgeKeyedRefs(
     out.push({ ...r, id: key, source: { ...r.source, table: src }, target: { ...r.target, table: tgt } });
   }
   return { refs: out, keyByStableId };
+}
+
+/** A `Dep` edge after the hide/collapse remap, keyed for `edgeLayouts` (spec 18). */
+export interface KeyedDepEdge {
+  id: string;
+  upstream: DepEndpoint;
+  downstream: DepEndpoint;
+  color?: string;
+  note?: string | null;
+  name: string | null;
+}
+
+/**
+ * Deps get their own `dep:` namespace so a dep and an FK between the same columns keep separate
+ * waypoints/colors, and are never deduped against each other.
+ */
+export function depKey(up: QualifiedName, upCols: readonly string[], down: QualifiedName, downCols: readonly string[]): string {
+  return `dep:${edgeKey(up, upCols, down, downCols)}`;
+}
+
+export function edgeKeyedDeps(
+  deps: readonly Dep[],
+  mapEndpoint: (table: QualifiedName) => QualifiedName | null,
+): KeyedDepEdge[] {
+  const out: KeyedDepEdge[] = [];
+  const seen = new Set<string>();
+  for (const d of deps) {
+    for (const e of d.edges) {
+      const up = mapEndpoint(e.upstream.table);
+      const down = mapEndpoint(e.downstream.table);
+      if (up == null || down == null || up === down) continue;
+      // A collapsed group endpoint has no column rows, so its port falls back to the header.
+      const upCols = up === e.upstream.table ? e.upstream.columns : [];
+      const downCols = down === e.downstream.table ? e.downstream.columns : [];
+      const id = depKey(up, upCols, down, downCols);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const edge: KeyedDepEdge = {
+        id,
+        upstream: { table: up, columns: upCols },
+        downstream: { table: down, columns: downCols },
+        note: d.note ?? null,
+        name: d.name,
+      };
+      if (d.color) edge.color = d.color;
+      out.push(edge);
+    }
+  }
+  return out;
 }

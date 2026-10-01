@@ -347,3 +347,45 @@ export function startEndpointDrag(
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
 }
+
+/**
+ * Dep edges (spec 18) use FREE waypoints the curve passes through, not orthogonal corners. Dragging a
+ * span's insert handle adds a waypoint at `index` (behind the same 8px anti-graze threshold as notches).
+ */
+export function startDepWaypointInsert(
+  depKey: string,
+  index: number,
+  at: Point,
+  e: PointerEvent,
+  target: SVGElement | HTMLElement,
+): void {
+  const from = snapshotWaypoints(depKey);
+  runEdgeDrag(depKey, e, target, (dxWorld, dyWorld, ev, startX, startY) => {
+    if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < CREATE_THRESHOLD_PX) return null;
+    const snap = gridSnapper();
+    const out = from.map((w) => ({ x: w.x, y: w.y }));
+    out.splice(index, 0, { x: snap(at.x + dxWorld), y: snap(at.y + dyWorld) });
+    return out;
+  });
+}
+
+export function startDepWaypointMove(depKey: string, index: number, e: PointerEvent, target: SVGElement | HTMLElement): void {
+  const from = snapshotWaypoints(depKey);
+  const origin = from[index];
+  if (!origin) return;
+  runEdgeDrag(depKey, e, target, (dxWorld, dyWorld) => {
+    const snap = gridSnapper();
+    return from.map((w, i) => (i === index ? { x: snap(origin.x + dxWorld), y: snap(origin.y + dyWorld) } : { x: w.x, y: w.y }));
+  });
+}
+
+export function deleteDepWaypoint(depKey: string, index: number): void {
+  if (isCanvasReadOnly(store.getState())) return;
+  const from = snapshotWaypoints(depKey);
+  if (index < 0 || index >= from.length) return;
+  const to = from.filter((_, i) => i !== index);
+  store.getState().setEdgeWaypoints(depKey, to);
+  const cmd = buildWaypointCommand(depKey, from, to, 'remove');
+  if (cmd) store.getState().pushWaypointCommand(cmd);
+  schedulePersist();
+}

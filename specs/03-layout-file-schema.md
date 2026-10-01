@@ -94,6 +94,10 @@ Reglas:
 - Entrada `edges[id]` se omite por completo si no tiene ningún campo con datos: ni `waypoints`, `color`, `sourceSide`, `targetSide`, `dx`, ni `dy`.
 - La clave es siempre la compuesta (`render/edgeKey.ts`), nunca el `Ref.id` estable del parser. Versiones ≤0.2.8 del ordenamiento A* / reset de relaciones escribían entradas bajo `Ref.id` (`a(cols)->b(cols)`) que ninguna arista resolvía; al cargar se descartan las claves sin `::`, y el siguiente persist las elimina del sidecar.
 
+### Claves `dep:` (spec 18)
+
+Las aristas DBML `Dep` comparten `edges` con las refs bajo el namespace `dep:` + la misma clave compuesta (`dep:public.a::x|public.b::y`). Sus `waypoints` son puntos **libres** por los que pasa la curva (no esquinas ortogonales) y usan la misma serialización (enteros, claves ordenadas). `color` sólo se escribe si el usuario lo cambia desde la UI; el `color` del bloque `Dep` y el `headercolor` de tablas del `.dbml` son fallback de display y **nunca** se escriben aquí (precedencia: sidecar > DBML > token).
+
 ## Reglas de serialización Git-friendly
 
 Objetivo: `git diff` después de mover 3 tablas muestra sólo 3 líneas cambiadas (más delimitadores), no reescribe el archivo entero.

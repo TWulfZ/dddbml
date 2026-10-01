@@ -13,8 +13,10 @@
  */
 import type { EdgeLayout, QualifiedName, Ref, Schema, Table, UiDensity } from '../../shared/types';
 import { densityMetrics } from '../layout/density';
-import { columnCenterY, estimateSize } from '../layout/autoLayout';
+import { columnCenterY, estimateSize, headerCenterY } from '../layout/autoLayout';
 import { routeRefs } from '../render/edgeRouter';
+import { depColor, routeDeps } from '../render/depRouter';
+import type { KeyedDepEdge } from '../render/edgeKey';
 import type { Bbox } from '../render/spatialIndex';
 
 const GROUP_PREFIX = '__group__:';
@@ -36,6 +38,8 @@ export interface ExportDerived {
   collapsedNodes: Array<{ name: string; x: number; y: number; w: number; h: number; color: string; count: number }>;
   containers: Array<{ name: string; x: number; y: number; w: number; h: number; color: string }>;
   effectiveRefs: Ref[];
+  /** Shown DBML `Dep` edges (empty when the Dependencies toggle is off). */
+  effectiveDeps?: KeyedDepEdge[];
 }
 
 /** A consistent snapshot of store state taken at export time. */
@@ -70,6 +74,13 @@ interface ExportEdge {
   corners: Array<{ x: number; y: number }>;
 }
 
+interface ExportDep {
+  d: string;
+  color: string | null;
+  /** Ports, stub ends and waypoints: the curve's control hull for bounds. */
+  hull: Array<{ x: number; y: number }>;
+}
+
 export interface ExportModel {
   bounds: { x: number; y: number; w: number; h: number };
   background: boolean;
@@ -78,6 +89,7 @@ export interface ExportModel {
   containers: ExportContainer[];
   collapsed: ExportCollapsed[];
   edges: ExportEdge[];
+  deps: ExportDep[];
 }
 
 /** Resolved literal colors for the chosen theme. Every field is a concrete color string. */
@@ -90,6 +102,7 @@ export interface ThemeTokens {
   accent: string;
   headerBg: string;
   edge: string;
+  dep: string;
 }
 
 const PADDING = 28;
@@ -222,6 +235,27 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     });
   }
 
+  const deps: ExportDep[] = [];
+  const depRoutes = routeDeps(
+    derived.effectiveDeps ?? [],
+    bboxOf,
+    (table, columns, b) => b.y + ((columns[0] ? columnY(table, columns[0]) : undefined) ?? headerCenterY()),
+    (id) => edgeLayouts.get(id),
+  );
+  const depById = new Map((derived.effectiveDeps ?? []).map((d) => [d.id, d]));
+  for (const route of depRoutes) {
+    const dep = depById.get(route.id);
+    if (!dep) continue;
+    const upIn = present(dep.upstream.table);
+    const downIn = present(dep.downstream.table);
+    if (!(opts.scope === 'view' ? upIn || downIn : upIn && downIn)) continue;
+    deps.push({
+      d: route.d,
+      color: depColor(dep, edgeLayouts.get(route.id)) ?? null,
+      hull: [route.source, route.sourceStub, ...route.inserts, ...route.waypoints, route.targetStub, route.target],
+    });
+  }
+
   // Bounds.
   let bounds: { x: number; y: number; w: number; h: number };
   if (opts.scope === 'view' && view) {
@@ -242,6 +276,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
       grow(e.target.x, e.target.y);
       for (const c of e.corners) grow(c.x, c.y);
     }
+    for (const dp of deps) for (const p of dp.hull) grow(p.x, p.y);
     if (!Number.isFinite(minX)) return null; // nothing to export
     bounds = {
       x: Math.round(minX - PADDING),
@@ -252,7 +287,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
   }
 
   if (bounds.w <= 0 || bounds.h <= 0) return null;
-  return { bounds, background: opts.background, density, tables, containers, collapsed, edges };
+  return { bounds, background: opts.background, density, tables, containers, collapsed, edges, deps };
 }
 
 function groupColorMap(derived: ExportDerived): Map<string, string> {
@@ -268,6 +303,7 @@ const MARKERS = `<defs>` +
   `<marker id="ddd-mk-many" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M2,2 L10,6 L2,10 M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.2"/></marker>` +
   `<marker id="ddd-mk-one" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.4"/></marker>` +
   `<marker id="ddd-mk-many-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,2 L2,6 L10,10 M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.2"/></marker>` +
+  `<marker id="ddd-mk-dep" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M1,1 L9,5 L1,9 Z" fill="currentColor"/></marker>` +
   `<marker id="ddd-mk-one-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.4"/></marker>` +
   `</defs>`;
 
@@ -304,6 +340,11 @@ export function renderSvg(model: ExportModel, theme: ThemeTokens, resolve: (colo
     out.push(`<circle cx="${e.source.x}" cy="${e.source.y}" r="3" fill="${col}"/>`);
     out.push(`<circle cx="${e.target.x}" cy="${e.target.y}" r="3" fill="${theme.surface}" stroke="${col}" stroke-width="1.5"/>`);
     out.push(`</g>`);
+  }
+
+  for (const dp of model.deps) {
+    const col = dp.color ? resolve(dp.color) : theme.dep;
+    out.push(`<g style="color:${col}"><path d="${dp.d}" fill="none" stroke="${col}" stroke-width="1.6" stroke-dasharray="6 4" stroke-linecap="round" marker-end="url(#ddd-mk-dep)"/></g>`);
   }
 
   // Tables.
@@ -479,6 +520,7 @@ export function buildImageSvg(source: ExportSource, opts: ExportOptions): { svg:
       accent: resolve('var(--ddd-accent)'),
       headerBg: resolve('var(--vscode-titleBar-activeBackground, var(--ddd-surface-raised))'),
       edge: resolve('var(--ddd-edge)'),
+      dep: resolve('var(--ddd-dep)'),
     };
     return renderSvg(model, theme, resolve);
   } finally {

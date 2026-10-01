@@ -70,6 +70,12 @@ export function estimateSize(columnCount: number): NodeSize {
   };
 }
 
+/** Y offset (from table top) of the header's vertical center: the port of table-level dep edges. */
+export function headerCenterY(): number {
+  const m = activeMetrics();
+  return m.borderTop + m.headerHeight / 2;
+}
+
 /** Y offset (from table top) for the vertical center of a column row at `index`. */
 export function columnCenterY(index: number): number {
   const m = activeMetrics();

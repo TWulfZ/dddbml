@@ -19,7 +19,7 @@ import { SpatialIndex, type Bbox } from './render/spatialIndex';
 import { deriveSceneGeometry, sceneBounds } from './render/sceneGeometry';
 import { lodForZoom } from './render/lod';
 import { useVisibleEdgeIds, useVisibleNames, type EdgeBox } from './render/useVisibleNames';
-import { edgeKeyedRefs } from './render/edgeKey';
+import { edgeKeyedDeps, edgeKeyedRefs, type KeyedDepEdge } from './render/edgeKey';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
 import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
@@ -32,6 +32,8 @@ import { GitBanner, buildDiffTargets } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import type { QualifiedName, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
+
+const NO_DEPS: KeyedDepEdge[] = [];
 
 interface AppProps {
   post: (msg: WebviewToHost) => void;
@@ -80,6 +82,7 @@ export function App(_props: AppProps) {
   const diffRemovedRefs = useAppStore((s) => s.diffRemovedRefs);
   const focusDimming = useAppStore((s) => s.focusDimming);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const showDeps = useAppStore((s) => s.showDeps);
   const diffActive = gitView?.kind === 'diff';
   // `viewport` itself is deliberately NOT selected here: it changes on every pan/zoom frame and
   // would re-render the whole tree (spec 04). Only its LOD projection (a stable string) is.
@@ -169,11 +172,15 @@ export function App(_props: AppProps) {
 
     // refKeyByStableId lets the diff overlay tint a newly-added ref by its stable id (spec 16).
     const { refs: effectiveRefs, keyByStableId: refKeyByStableId } = edgeKeyedRefs(schema.refs, mapEndpoint);
+    const effectiveDeps = edgeKeyedDeps(schema.deps ?? [], mapEndpoint);
 
-    return { hiddenTables, collapsedTables, collapsedNodes, containers, exportContainers, effectiveRefs, refKeyByStableId };
+    return { hiddenTables, collapsedTables, collapsedNodes, containers, exportContainers, effectiveRefs, refKeyByStableId, effectiveDeps };
   }, [schema, tablesByName, positions, groupState, individuallyHidden, density, rowGeometry]);
 
-  const exportDerived = useMemo(() => ({ ...derived, containers: derived.exportContainers }), [derived]);
+  const exportDerived = useMemo(
+    () => ({ ...derived, containers: derived.exportContainers, effectiveDeps: showDeps ? derived.effectiveDeps : [] }),
+    [derived, showDeps],
+  );
 
   const spatialIndex = useMemo(() => {
     const idx = new SpatialIndex();
@@ -441,6 +448,8 @@ export function App(_props: AppProps) {
     };
   }, [ready]);
 
+  const shownDeps = showDeps ? derived.effectiveDeps : NO_DEPS;
+
   // Culled set; same Set instance while membership is unchanged (see useVisibleNames).
   const visibleNames = useVisibleNames(spatialIndex, viewportRect, ready);
 
@@ -458,9 +467,11 @@ export function App(_props: AppProps) {
       return { x: p.x, y: p.y, w: size.width, h: size.height };
     };
     const out: EdgeBox[] = [];
-    for (const r of derived.effectiveRefs) {
-      const a = rectOf(r.source.table);
-      const b = rectOf(r.target.table);
+    const ends = derived.effectiveRefs.map((r) => ({ id: r.id, from: r.source.table, to: r.target.table }));
+    for (const d of shownDeps) ends.push({ id: d.id, from: d.upstream.table, to: d.downstream.table });
+    for (const r of ends) {
+      const a = rectOf(r.from);
+      const b = rectOf(r.to);
       if (!a || !b) continue;
       let minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
       let maxX = Math.max(a.x + a.w, b.x + b.w), maxY = Math.max(a.y + a.h, b.y + b.h);
@@ -473,7 +484,7 @@ export function App(_props: AppProps) {
       out.push({ id: r.id, bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY } });
     }
     return out;
-  }, [derived, positions, tablesByName, edgeLayouts, density]);
+  }, [derived, shownDeps, positions, tablesByName, edgeLayouts, density]);
 
   // EdgeLayer routes ALL refs once (route-all-then-cull, spec 05 §8) and filters routes by this set.
   const visibleRefIds = useVisibleEdgeIds(edgeBoxes, viewportRect, ready);
@@ -573,6 +584,7 @@ export function App(_props: AppProps) {
               groupSizes={derived.collapsedNodes}
               worldBbox={worldBbox}
               refDiff={edgeRefDiff}
+              deps={shownDeps}
             />
             {renderedTables.map((t) => {
               if (visibleNames && !visibleNames.has(t.name)) return null;
