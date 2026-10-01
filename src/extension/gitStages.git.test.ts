@@ -89,6 +89,23 @@ suite('git harness (real repo)', () => {
     expect(readFileSync(join(repo, DBML), 'utf8')).toBe('Table a { id int }\n');
   });
 
+  it('returns raw, unquoted relpaths for names with spaces and non-ASCII characters', async () => {
+    const { repo, git } = newRepo();
+    repos.push(repo);
+    const spaced = 'my schema.dbml';
+    const accented = 'esquema_añadido.dbml';
+    writeFileSync(join(repo, spaced), 'Table a { id int }\n');
+    writeFileSync(join(repo, accented), 'Table b { id int }\n');
+    git('add', spaced); git('commit', '-q', '-m', 'v1');
+    writeFileSync(join(repo, spaced), 'Table a { id int\n x int }\n');
+
+    const status = await gitStatusPorcelain(repo, [spaced, accented]);
+    expect(status.map((s) => s.relpath).sort()).toEqual([accented, spaced].sort());
+    // The relpaths must be usable as pathspecs as-is.
+    await gitCommit(repo, status.map((s) => s.relpath), 'both');
+    expect(await gitStatusPorcelain(repo, [spaced, accented])).toHaveLength(0);
+  });
+
   it('stashes scoped changes and pops them back', async () => {
     const { repo, git } = newRepo();
     repos.push(repo);

@@ -106,13 +106,17 @@ export async function getCurrentBranch(repoRoot: string): Promise<string | null>
 export async function gitStatusPorcelain(repoRoot: string, relpaths: string[]): Promise<GitPathStatus[]> {
   if (relpaths.length === 0) return [];
   try {
-    const out = await runGit(['status', '--porcelain=v1', '--', ...relpaths], repoRoot);
+    // -z: paths come back unquoted (spaces / non-ASCII), so they are reusable as pathspecs.
+    const out = await runGit(['status', '--porcelain=v1', '-z', '--', ...relpaths], repoRoot);
     const result: GitPathStatus[] = [];
-    for (const line of out.split('\n')) {
-      if (line.length < 4) continue;
-      const code = line.slice(0, 2);
-      const relpath = line.slice(3).trim();
-      result.push({ relpath, status: classifyPorcelain(code) });
+    const fields = out.split('\0');
+    for (let i = 0; i < fields.length; i++) {
+      const entry = fields[i]!;
+      if (entry.length < 4) continue;
+      const code = entry.slice(0, 2);
+      result.push({ relpath: entry.slice(3), status: classifyPorcelain(code) });
+      // A rename/copy entry is followed by its original path as a separate field.
+      if (code.includes('R') || code.includes('C')) i++;
     }
     return result;
   } catch {
