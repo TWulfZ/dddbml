@@ -68,6 +68,7 @@ type HostToWebview =
 type WebviewToHost =
   | { type: 'ready' }
   | { type: 'layout:persist'; payload: Partial<Layout> }  // al instante en cada edición discreta
+  | { type: 'viewport:persist'; payload: ViewportLayout }  // cámara, 300 ms tras pan/zoom; sólo view-state
   | { type: 'command:reveal'; payload: { tableName: string } }  // click → go-to-definition
   | { type: 'command:pruneOrphans' }  // comando explícito
   | { type: 'error:log'; payload: { message: string; stack?: string } };

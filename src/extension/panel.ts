@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ExportCommandPayload } from '../shared/exporters/types';
-import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
+import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, ViewportLayout, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
 import { findTableLine } from './tableLocation';
 import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
@@ -90,6 +90,7 @@ export class DiagramPanel {
   /** View-state as last loaded into / persisted from this panel; flushes write only the delta
    *  against it (see mergeViewStateChange). null = no view-state file existed at load. */
   private viewStateBaseline: ViewState | null = null;
+  private viewStateWrites: Promise<void> = Promise.resolve();
   /** Set while the sidecar on disk is unparseable; shared writes are refused until a clean read. */
   private sidecarCorrupt = false;
   /** True once the webview has sent `ready` and received schema/layout; prompts wait for this. */
@@ -283,7 +284,11 @@ export class DiagramPanel {
     const pending = this.pendingPersist;
     this.cancelPendingPersist();
     if (!pending) return undefined;
-    const flush: Promise<void> = this.flushPersist(pending).finally(() => DiagramPanel.inFlightFlushes.delete(flush));
+    return this.trackFlush(this.flushPersist(pending));
+  }
+
+  private trackFlush(work: Promise<void>): Promise<void> {
+    const flush: Promise<void> = work.finally(() => DiagramPanel.inFlightFlushes.delete(flush));
     DiagramPanel.inFlightFlushes.add(flush);
     return flush;
   }
@@ -295,6 +300,9 @@ export class DiagramPanel {
         return;
       case 'layout:persist':
         this.onLayoutPersist(msg.payload);
+        return;
+      case 'viewport:persist':
+        this.onViewportPersist(msg.payload);
         return;
       case 'command:pruneOrphans':
         void this.pruneOrphans();
@@ -1036,6 +1044,14 @@ export class DiagramPanel {
     }, PERSIST_DEBOUNCE_MS);
   }
 
+  /** The camera is personal view-state (spec 03, F26): it never reaches the sidecar, so the
+   *  read-only gate does not apply — panning a past revision or a merge still saves it. */
+  private onViewportPersist(viewport: ViewportLayout): void {
+    this.currentLayout = { ...this.currentLayout, viewport };
+    if (this.pendingPersist) this.pendingPersist = { ...this.pendingPersist, viewport };
+    void this.trackFlush(this.writeViewStateDelta(this.currentLayout));
+  }
+
   /** Every shared write goes through here: what we just wrote is valid, so a stale corrupt flag
    *  must not keep blocking later saves (F30). */
   private async writeShared(layout: Layout): Promise<void> {
@@ -1061,21 +1077,30 @@ export class DiagramPanel {
       const message = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`dddbml: failed to write layout file — ${message}`);
     }
-    // Local view-state: never tracked by git, so failures here are non-fatal.
-    try {
-      const next = extractViewState(layout);
-      const base = this.viewStateBaseline;
-      if (base === null || !sameViewState(base, next)) {
-        const disk = (await readViewState(this.context, this.dbmlUri)) ?? emptyViewState();
-        await writeViewState(this.context, this.dbmlUri, mergeViewStateChange(disk, base ?? emptyViewState(), next));
-        this.viewStateBaseline = next;
-      }
-    } catch (err) {
-      console.error('[dddbml] failed to write view-state', err);
-    }
+    await this.writeViewStateDelta(layout);
     // Only a real shared-layout write flips the sidecar dirty/clean — refresh the Git panel's status
     // then (NOT on pure pan/zoom, which would spawn `git status` on every frame's debounced flush).
     if (sharedChanged) this.scheduleGitStatus();
+  }
+
+  /** Local view-state: never tracked by git, so failures here are non-fatal. Writes are chained:
+   *  a camera write and a layout flush in flight together could land out of order. */
+  private writeViewStateDelta(layout: Layout): Promise<void> {
+    const write = this.viewStateWrites.then(async () => {
+      try {
+        const next = extractViewState(layout);
+        const base = this.viewStateBaseline;
+        if (base === null || !sameViewState(base, next)) {
+          const disk = (await readViewState(this.context, this.dbmlUri)) ?? emptyViewState();
+          await writeViewState(this.context, this.dbmlUri, mergeViewStateChange(disk, base ?? emptyViewState(), next));
+          this.viewStateBaseline = next;
+        }
+      } catch (err) {
+        console.error('[dddbml] failed to write view-state', err);
+      }
+    });
+    this.viewStateWrites = write;
+    return write;
   }
 
   private setupWatchers(): void {

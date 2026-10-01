@@ -42,6 +42,9 @@ export interface AppState {
   selectedEdgeId: string | null;
   groups: Record<string, GroupLayout>;
   viewport: ViewportLayout;
+  /** Set by the first `setLayout`. Only that one adopts the saved camera; later host pushes
+   *  (watcher, merge apply, overlay exit, reset) keep the live one (spec 03, F26). */
+  cameraAdopted: boolean;
   theme: 'light' | 'dark';
   ready: boolean;
   selection: Set<QualifiedName>;
@@ -208,6 +211,7 @@ const initial: AppState = {
   selectedEdgeId: null,
   groups: {},
   viewport: { x: 0, y: 0, zoom: 1 },
+  cameraAdopted: false,
   theme: 'light',
   ready: false,
   selection: new Set(),
@@ -312,16 +316,17 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
         edgeLayouts.set(id, e);
       }
     }
-    set({
+    set((s) => ({
       positions,
       hiddenTables,
       tableColors,
       edgeLayouts,
       groups: { ...layout.groups },
-      viewport: { ...layout.viewport },
+      viewport: s.cameraAdopted ? s.viewport : { ...layout.viewport },
+      cameraAdopted: true,
       past: [],
       future: [],
-    });
+    }));
   },
   setTablePos(name, x, y) {
     set((s) => {

@@ -40,9 +40,23 @@ export function schedulePersist(): void {
     payload: {
       tables: toTableLayoutRecord(state.positions, state.hiddenTables, state.tableColors),
       groups: state.groups,
-      viewport: state.viewport,
       edges,
       version: 1,
     },
   });
 }
+
+const VIEWPORT_PERSIST_DEBOUNCE_MS = 300;
+let viewportTimer: ReturnType<typeof setTimeout> | null = null;
+
+// The camera is personal view-state (spec 03, F26): saved once a pan/zoom burst settles, in its own
+// message so a camera never rides a layout write, and not gated by read-only (panning a past
+// revision or a merge is still this user's camera).
+store.subscribe((s, prev) => {
+  if (s.viewport === prev.viewport) return;
+  if (viewportTimer) clearTimeout(viewportTimer);
+  viewportTimer = setTimeout(() => {
+    viewportTimer = null;
+    postToHost({ type: 'viewport:persist', payload: { ...store.getState().viewport } });
+  }, VIEWPORT_PERSIST_DEBOUNCE_MS);
+});

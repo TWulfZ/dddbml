@@ -39,3 +39,24 @@ describe('webview persist gate (spec 16, two-layer gate)', () => {
     expect(persists()).toHaveLength(0);
   });
 });
+
+describe('camera persistence (F26)', () => {
+  const viewportPosts = () => posted.mock.calls.filter(([m]) => m.type === 'viewport:persist');
+
+  it('posts the camera once a pan/zoom burst settles, and never inside layout:persist', () => {
+    for (let i = 1; i <= 5; i++) store.getState().setViewport({ x: i * 10 });
+    expect(viewportPosts()).toHaveLength(0);
+    vi.advanceTimersByTime(1000);
+    expect(viewportPosts().map(([m]) => m)).toEqual([{ type: 'viewport:persist', payload: { x: 50, y: 0, zoom: 1 } }]);
+    schedulePersist();
+    const [persist] = persists().at(-1)!;
+    expect(persist.type === 'layout:persist' && 'viewport' in persist.payload).toBe(false);
+  });
+
+  it('still saves the camera while the canvas is read-only (it is personal state)', () => {
+    store.getState().enterTimeTravel('abc', 'abc');
+    store.getState().setViewport({ zoom: 2 });
+    vi.advanceTimersByTime(1000);
+    expect(viewportPosts()).toHaveLength(1);
+  });
+});

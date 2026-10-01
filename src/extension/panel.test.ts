@@ -325,6 +325,24 @@ describe('view-state writes are per-key changes, not whole-file replacement', ()
   });
 });
 
+describe('camera persistence (F26)', () => {
+  const viewStatePath = (h: Harness) =>
+    join(h.dir, 'global', 'view-state', `${createHash('sha256').update(h.dbml.toString()).digest('hex')}.json`);
+
+  it('saves the camera to local view-state only, and the reopened panel loads it', async () => {
+    const h = await open();
+    const sidecarBefore = h.readSidecar();
+    await h.web.receive({ type: 'viewport:persist', payload: { x: -300, y: -120, zoom: 0.5 } });
+    await DiagramPanel.settle();
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(viewStatePath(h), 'utf8')).viewport).toEqual({ x: -300, y: -120, zoom: 0.5 }));
+    expect(h.readSidecar()).toBe(sidecarBefore);
+    DiagramPanel.disposeAll();
+    const again = await open({ reuseDir: h.dir });
+    const loaded = again.web.posted.find((m) => m.type === 'layout:loaded')!;
+    expect((loaded.payload as Layout).viewport).toEqual({ x: -300, y: -120, zoom: 0.5 });
+  });
+});
+
 describe('go to definition (F25)', () => {
   const SRC = `Table "auth"."users"\n{\n  id int\n}\n\nTable usuários as U {\n  id int\n}\n\nTable "plain" {\n  id int\n}\n`;
 

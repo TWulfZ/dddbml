@@ -347,6 +347,8 @@ export type HostToWebview =
 export type WebviewToHost =
   | { type: 'ready' }
   | { type: 'layout:persist'; payload: Partial<Layout> }
+  /** Personal camera, posted when pan/zoom settles; written to local view-state only (spec 03). */
+  | { type: 'viewport:persist'; payload: ViewportLayout }
   | { type: 'command:reveal'; payload: { tableName: QualifiedName } }
   | { type: 'command:pruneOrphans' }
   | { type: 'command:export'; payload: ExportCommandPayload }
