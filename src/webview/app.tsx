@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, useAppStore, isCanvasReadOnly } from './state/store';
 import { autoLayout, estimateSize } from './layout/autoLayout';
 import { GROUP_CONTAINER_HEADER, GROUP_CONTAINER_PADDING } from './layout/density';
+import { smartLayout } from './layout/smartLayout/layout';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
 import { MergeGhosts } from './render/mergeGhosts';
@@ -97,10 +98,25 @@ export function App(_props: AppProps) {
     const missing = schema.tables.filter((t) => !positions.has(t.name));
     if (missing.length === 0) return;
     const sizeOf = (name: QualifiedName) => estimateSize(tablesByName.get(name)?.columns.length ?? 0);
-    const layoutTargets = positions.size === 0 ? schema.tables : missing;
-    const laidOut = autoLayout(layoutTargets, schema.refs, sizeOf);
+    // With tables already on the canvas, flat dagre would stack the new ones at its margin on top
+    // of them (audit F19); smart 'new' mode places them by their group/FK neighbours, clear of others.
+    const laidOut =
+      positions.size === 0
+        ? autoLayout(schema.tables, schema.refs, sizeOf)
+        : smartLayout({
+            tables: schema.tables,
+            refs: schema.refs,
+            groups: schema.groups,
+            sizeOf,
+            mode: 'new',
+            existing: positions,
+            spacing: store.getState().settings.ui.layoutSpacing,
+          });
     const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
-    for (const [name, pos] of laidOut) entries.push([name, pos]);
+    for (const t of missing) {
+      const pos = laidOut.get(t.name);
+      if (pos) entries.push([t.name, pos]);
+    }
     if (entries.length > 0) store.getState().setPositionsBatch(entries);
   }, [schema, tablesByName, positions, ready]);
 

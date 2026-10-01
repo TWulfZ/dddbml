@@ -194,7 +194,13 @@ Constantes afinables: `INTRA_NODESEP=32`, `INTRA_RANKSEP=64`, `INTER_NODESEP=96`
 ejecuta `smartLayout`; calcula el conjunto movido; resetea waypoints (+ `dx/dy`) de aristas con ambos
 extremos en el conjunto movido (conservando `color`/sides); aplica posiciones + reseteos; arma un
 `ArrangeCommand` compuesto y lo empuja al historial; agenda persistencia. `selection` con selección
-vacía cae a `all` por el atajo.
+vacía cae a `all` por el atajo. `new` sin ninguna tabla que colocar es un **no-op** (sin comando y
+sin re-rutear aristas con A\*).
+
+**Colocación automática de tablas nuevas (`app.tsx`).** Tablas sin posición: si el canvas está
+vacío se usa el `autoLayout` plano; si ya hay tablas colocadas, las faltantes se colocan con
+`smartLayout({ mode: 'new', existing })` (junto a su grupo / vecinos FK, sin solapar), en vez de
+dagre plano que las apilaba en su margen `(32,32)` encima de las existentes. (auditoría F19)
 
 **Concurrencia del `await` (A\*).** Si tras el `await` cambió `positions`, `edgeLayouts` o `schema`
 (referencia distinta: edición del usuario, undo, push del host) o el canvas pasó a solo-lectura

@@ -139,6 +139,8 @@ export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions
   if (result.size === 0) return;
 
   const moved = movedNames(before, result);
+  // Nothing new to place: the user asked for placement only, so do not re-route every edge.
+  if (mode === 'new' && moved.size === 0) return;
   const strandedResets = computeEdgeResets(layoutRefs(s), moved, edgesBefore);
 
   if (!orderEdges) {
