@@ -82,7 +82,11 @@ checkout hacía fallar el revert entero). Stash = `git stash push -- <paths>`
 sobre los trackeados; la sección **Stash** lista los stashes (`git stash list`) con
 *Aplicar* (`apply`) y *Pop* (`pop`). Tras restaurar/stash/pop el host re-lee el
 diagrama del disco (`reloadFromDisk`) y un `pop` con conflicto cae en el resolver de
-merge existente (marcadores → `loadSharedLayout`).
+merge existente (marcadores → `loadSharedLayout`). git sale con código ≠ 0 en ese caso
+aunque el stash sí se aplicó: si algún archivo del diagrama queda unmerged
+(`ls-files -u`), el host lo trata como **aplicado con conflictos** (recarga, refresca la
+lista de stashes, `git:opResult ok:true` + aviso informativo de que el stash se conserva
+hasta resolver), nunca como "falló".
 
 ### Explorar versiones (time-travel virtual, solo lectura)
 La sección **Historial** lista los commits que tocan el diagrama (`git log --

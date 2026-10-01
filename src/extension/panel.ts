@@ -7,7 +7,7 @@ import { applyViewState, extractViewState, readViewState, writeViewState } from 
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
 import type { MergeConflict } from './mergeThreeWay';
-import { getCurrentBranch, getRepoRoot, gitAdd, gitCommit, gitLog, gitRestore, gitStashApply, gitStashList, gitUnstageNew, gitStashPop, gitStashPush, gitStatusPorcelain, showBlob, toRepoRelative } from './gitStages';
+import { getCurrentBranch, getRepoRoot, getUnmergedStages, gitAdd, gitCommit, gitLog, gitRestore, gitStashApply, gitStashList, gitUnstageNew, gitStashPop, gitStashPush, gitStatusPorcelain, showBlob, toRepoRelative } from './gitStages';
 import type { GitOp } from '../shared/types';
 import { getExporter, listExporters } from './exporters';
 import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
@@ -695,10 +695,28 @@ export class DiagramPanel {
       await this.sendStashes();
       this.postOpResult(op, true);
     } catch (err) {
+      // git exits non-zero when the stash applied but conflicted: the working tree DID change, so
+      // reporting "failed" invites a retry or a Revert that discards the half-applied stash.
+      if (await this.hasUnmergedDiagramFiles(scope)) {
+        await this.reloadFromDisk();
+        await this.sendStashes();
+        this.postOpResult(op, true, 'Applied with conflicts');
+        void vscode.window.showInformationMessage('dddbml: the stash was applied with conflicts — resolve them; the stash is kept until then.');
+        return;
+      }
       const m = err instanceof Error ? err.message : String(err);
       this.postOpResult(op, false, m);
       void vscode.window.showErrorMessage(`dddbml: stash ${op === 'stashPop' ? 'pop' : 'apply'} failed — ${m}`);
     }
+  }
+
+  private async hasUnmergedDiagramFiles(scope: { repoRoot: string; relpaths: string[] }): Promise<boolean> {
+    for (const relpath of scope.relpaths) {
+      try {
+        if ((await getUnmergedStages(scope.repoRoot, relpath)).size > 0) return true;
+      } catch { /* treat as not unmerged */ }
+    }
+    return false;
   }
 
   /** List commits touching the diagram files and push them to the webview (History pane). */

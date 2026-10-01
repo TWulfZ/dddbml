@@ -171,4 +171,20 @@ describe('git panel ops', () => {
     expect(readFileSync(join(h.dir, 'd.dbml'), 'utf8')).toBe(DBML);
     expect(git('status', '--porcelain', '--', 'd.dbml.layout.json')).toBe('?? d.dbml.layout.json\n');
   });
+
+  it('treats a stash pop that stops on a layout conflict as applied, and opens the merge', async () => {
+    const h = await open();
+    const git = gitIn(h.dir);
+    git('add', '-A'); git('commit', '-q', '-m', 'v1');
+    h.writeSidecar(sidecarText({ 'public.a': { x: 100, y: 0 }, 'public.b': { x: 400, y: 0 } }));
+    git('stash', 'push', '-q', '--', 'd.dbml.layout.json');
+    h.writeSidecar(sidecarText({ 'public.a': { x: 500, y: 0 }, 'public.b': { x: 400, y: 0 } }));
+    git('commit', '-q', '-am', 'teammate moved a');
+    h.mark();
+    await h.web.receive({ type: 'git:stashPop', payload: { ref: 'stash@{0}' } });
+    await vi.waitFor(() => expect(h.since('git:opResult')).toHaveLength(1));
+    expect((h.since('git:opResult')[0]!.payload as { ok: boolean }).ok).toBe(true);
+    expect(h.since('merge:begin')).toHaveLength(1);
+    expect(fake.messages.filter((m) => m.level === 'error')).toEqual([]);
+  });
 });
