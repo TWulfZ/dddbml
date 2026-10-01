@@ -2,6 +2,8 @@ export interface TsTypeMapping {
   tsType: string;
   columnOptions: Record<string, unknown>;
   unknown?: boolean;
+  /** The SQL type auto-increments by itself (Postgres serial family). */
+  generated?: 'increment';
 }
 
 export interface Dialect {

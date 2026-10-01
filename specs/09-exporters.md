@@ -181,8 +181,11 @@ Match case-insensitive, ignorando paréntesis para length/precision:
 
 ### Column decorators (`template.ts`)
 
-- `pk && increment` + tipo int* → `@PrimaryGeneratedColumn()`.
+- "Generado" = `increment` en el DBML, o un tipo de la familia serial (`serial`, `serial4`, `smallserial`, `serial2`, `bigserial`, `serial8`; el dialect lo marca con `generated: 'increment'`).
+- `pk` + generado + tipo `int` → `@PrimaryGeneratedColumn()`.
+- `pk` + generado + otro tipo entero → `@PrimaryGeneratedColumn({ type: 'bigint' | 'smallint' })` (la forma objeto mantiene strategy `increment` y TypeORM emite BIGSERIAL/SMALLSERIAL; sin `type` sería SERIAL int4 y desbordaría en 2^31).
 - `pk && increment` + tipo uuid → `@PrimaryGeneratedColumn('uuid')` (DBML raro pero valido).
+- No-pk generado → `@Column({ type, nullable: false })` + `@Generated('increment')`; sin `default` (serial ya define el suyo) y siempre NOT NULL, como serial en Postgres.
 - `pk` solo → `@PrimaryColumn(<opts>)` con tipo explícito y su `default` si lo tiene (p.ej. `uuid [pk, default: `gen_random_uuid()`]` → `{ type: 'uuid', default: () => 'gen_random_uuid()' }`). No se convierte a `@PrimaryGeneratedColumn('uuid')`: eso cambiaría la expresión por la que elija `uuidExtension`.
 - PK compuesta (`indexes { (a, b) [pk] }`): el parser marca `pk` en cada miembro, así que se emite un `@PrimaryColumn` por miembro (TypeORM los trata como clave compuesta).
 - Tabla sin ninguna columna `pk` → warning: TypeORM rechaza entities sin primary column al inicializar el DataSource.

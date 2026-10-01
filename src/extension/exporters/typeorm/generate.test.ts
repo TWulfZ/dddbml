@@ -201,6 +201,31 @@ describe('generateTypeOrm — class name collisions', () => {
   });
 });
 
+describe('generateTypeOrm — auto-increment keeps the column width', () => {
+  const { content } = exportDbml(`
+    Table a { id bigint [pk, increment] }
+    Table b { id serial [pk] }
+    Table c { id smallserial [pk] }
+    Table d { id int [pk, increment] }
+    Table e { id int [pk]
+      seq bigserial
+      counter int [increment] }
+  `);
+  const decoratorOf = (cls: string, prop: string) => propertyLine(entityBlock(content, cls), prop);
+
+  it('emits PrimaryGeneratedColumn with the mapped type for bigint/smallint and serial types', () => {
+    expect(decoratorOf('A', 'id')).toBe('@PrimaryGeneratedColumn({ type: "bigint" })');
+    expect(decoratorOf('B', 'id')).toBe('@PrimaryGeneratedColumn()');
+    expect(decoratorOf('C', 'id')).toBe('@PrimaryGeneratedColumn({ type: "smallint" })');
+    expect(decoratorOf('D', 'id')).toBe('@PrimaryGeneratedColumn()');
+  });
+  it('marks non-pk serial and increment columns as generated', () => {
+    expect(decoratorOf('E', 'seq')).toBe('@Generated("increment")');
+    expect(decoratorOf('E', 'counter')).toBe('@Generated("increment")');
+    expect(content).toMatch(/import \{[^}]*\bGenerated\b/);
+  });
+});
+
 describe('generateTypeOrm — entities without a primary column', () => {
   it('emits a composite pk index as one @PrimaryColumn per member', () => {
     const { content, warnings } = exportDbml(`

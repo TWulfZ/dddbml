@@ -80,11 +80,13 @@ function emitColumn(
 
   const colOpts: Record<string, unknown> = { ...mapping.columnOptions };
 
-  // Primary keys
-  if (col.pk && col.increment) {
-    const isUuid = mapping.columnOptions.type === 'uuid';
+  const generated = col.increment || mapping.generated === 'increment';
+
+  if (col.pk && generated) {
+    const type = mapping.columnOptions.type;
     decoratorsUsed.add('PrimaryGeneratedColumn');
-    const arg = isUuid ? `'uuid'` : '';
+    // The object form keeps strategy 'increment' and makes TypeORM emit BIGSERIAL/SMALLSERIAL.
+    const arg = type === 'uuid' ? `'uuid'` : type === 'int' ? '' : formatOptions({ type });
     const lines: string[] = [];
     if (col.note) lines.push(`/** ${escapeBlockComment(col.note)} */`);
     lines.push(`@PrimaryGeneratedColumn(${arg})`);
@@ -103,17 +105,21 @@ function emitColumn(
     return lines.join('\n');
   }
 
-  // Regular column
   if (col.unique) colOpts.unique = true;
-  const nullable = !col.notNull;
+  // Postgres serial columns are NOT NULL by definition.
+  const nullable = !col.notNull && !generated;
   if (opts.emitNullableExplicit) colOpts.nullable = nullable;
-  const defaultExpr = emitDefault(col);
+  const defaultExpr = generated ? undefined : emitDefault(col);
   if (defaultExpr !== undefined) colOpts.default = defaultExpr;
 
   decoratorsUsed.add('Column');
   const lines: string[] = [];
   if (col.note) lines.push(`/** ${escapeBlockComment(col.note)} */`);
   lines.push(`@Column(${formatOptions(colOpts)})`);
+  if (generated) {
+    decoratorsUsed.add('Generated');
+    lines.push(`@Generated("increment")`);
+  }
   const optMark = nullable ? '?' : '!';
   const tsType = nullable ? `${mapping.tsType} | null` : mapping.tsType;
   lines.push(`${propertyKey(col.name)}${optMark}: ${tsType};`);

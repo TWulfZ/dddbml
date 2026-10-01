@@ -29,21 +29,27 @@ export const postgresDialect: Dialect = {
       case 'int':
       case 'integer':
       case 'int4':
+        return { tsType: 'number', columnOptions: { type: 'int' } };
+
       case 'serial':
       case 'serial4':
-        return { tsType: 'number', columnOptions: { type: 'int' } };
+        return { tsType: 'number', columnOptions: { type: 'int' }, generated: 'increment' };
 
       case 'smallint':
       case 'int2':
+        return { tsType: 'number', columnOptions: { type: 'smallint' } };
+
       case 'smallserial':
       case 'serial2':
-        return { tsType: 'number', columnOptions: { type: 'smallint' } };
+        return { tsType: 'number', columnOptions: { type: 'smallint' }, generated: 'increment' };
 
       case 'bigint':
       case 'int8':
+        return { tsType: 'string', columnOptions: { type: 'bigint' } };
+
       case 'bigserial':
       case 'serial8':
-        return { tsType: 'string', columnOptions: { type: 'bigint' } };
+        return { tsType: 'string', columnOptions: { type: 'bigint' }, generated: 'increment' };
 
       case 'varchar':
       case 'character varying': {
