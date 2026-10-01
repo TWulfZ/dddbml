@@ -12,7 +12,30 @@ const IRREGULAR_SINGULAR: Record<string, string> = {
   geese: 'goose',
   mice: 'mouse',
   teeth: 'tooth',
+  quizzes: 'quiz',
+  // Plurals of -u words, which the -us guard below would otherwise keep as-is.
+  menus: 'menu',
+  skus: 'sku',
+  gurus: 'guru',
 };
+
+/** -ie nouns whose plural would otherwise fall into the `ies → y` rule. */
+const IE_NOUNS = new Set([
+  'movie',
+  'cookie',
+  'zombie',
+  'calorie',
+  'rookie',
+  'selfie',
+  'hoodie',
+  'genie',
+  'prairie',
+  'smoothie',
+  'brownie',
+  'goalie',
+  'newbie',
+  'sortie',
+]);
 
 const SINGULAR_INVARIANT = new Set([
   'series',
@@ -54,14 +77,18 @@ export function singularizeEnglish(word: string): string {
   if (IRREGULAR_SINGULAR[lower]) {
     return matchCase(IRREGULAR_SINGULAR[lower]!, word);
   }
-  // (.+)ies → $1y
-  const ies = /(.+)ies$/i.exec(word);
-  if (ies) return ies[1] + 'y';
-  // (.+s|ch|sh|x|z)es → $1
-  const xes = /(.+(?:s|ch|sh|x|z))es$/i.exec(word);
-  if (xes) return xes[1]!;
-  // (.+)s → $1 (not "ss")
-  if (/[^s]s$/.test(word)) return word.slice(0, -1);
+  if (/ies$/i.test(word)) {
+    // ties, pies, lies: a single letter before `ies` means the singular ends in -ie.
+    if (word.length <= 4 || IE_NOUNS.has(lower.slice(0, -1))) return word.slice(0, -1);
+    return word.slice(0, -3) + 'y';
+  }
+  // Sibilant plurals take -es: addresses, boxes, matches, quizzes, statuses.
+  const sibilant = /(.+(?:ss|sh|ch|x|zz|us))es$/i.exec(word);
+  if (sibilant) return sibilant[1]!;
+  // status, campus, analysis, class are already singular.
+  if (/(?:us|is|ss)$/i.test(word)) return word;
+  // courses, purchases, sizes: the singular ends in -e, so only the s goes.
+  if (/s$/i.test(word)) return word.slice(0, -1);
   return word;
 }
 

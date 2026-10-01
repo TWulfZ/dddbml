@@ -234,12 +234,15 @@ toPascalCase('billing.invoices') // 'BillingInvoices' (schema preserved for non-
 **Singularize (English heuristic)**, sólo si `options.singularize === true`:
 
 Regla de orden:
-1. Tabla irregular conocida → mapeo directo (`children→child`, `people→person`, `men→man`, `women→woman`, `feet→foot`, `geese→goose`, `mice→mouse`, `teeth→tooth`).
-2. `(.+)ies$` → `$1y` excepto `series`, `species`.
-3. `(.+)ses$` → `$1s` (e.g. `addresses→address`).
-4. `(.+s|ch|sh|x|z)es$` → `$1` (e.g. `boxes→box`).
-5. `(.+)s$` (no `ss`) → `$1`.
+0. Invariantes (`series`, `species`, `news`, `data`, `metadata`, `media`, `sheep`, `fish`, `deer`) → unchanged.
+1. Tabla irregular conocida → mapeo directo (`children→child`, `people→person`, `men→man`, `women→woman`, `feet→foot`, `geese→goose`, `mice→mouse`, `teeth→tooth`, `quizzes→quiz`, y plurales de palabras en -u: `menus→menu`, `skus→sku`, `gurus→guru`).
+2. `ies$`: si queda una sola letra antes (`ties`, `pies`) o el singular es un sustantivo -ie conocido (`movies`, `cookies`, `zombies`, ...) → quita sólo la `s`; si no → `y` (`categories→category`).
+3. `(ss|sh|ch|x|zz|us)es$` → quita `es` (`addresses→address`, `boxes→box`, `matches→match`, `statuses→status`).
+4. Termina en `us`, `is` o `ss` → unchanged (ya es singular: `status`, `campus`, `analysis`, `class`).
+5. `s$` → quita la `s` (`users→user`, y también `courses→course`, `purchases→purchase`, `sizes→size`, cuyo singular termina en -e).
 6. Otro caso → unchanged.
+
+Limitaciones aceptadas: `caches→cach` (regla 3), `heroes→heroe`, `analyses→analyse`.
 
 Aplicado **después** del PascalCase, sobre el último segmento.
 
