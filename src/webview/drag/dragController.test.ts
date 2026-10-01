@@ -135,6 +135,37 @@ describe('startDrag', () => {
     expect(store.getState().past).toHaveLength(0);
   });
 
+  it('a lock that lands after a committed frame puts the tables back on release, with no history', () => {
+    const node = fakeNode();
+    store.setState({ selection: new Set(['a', 'b']) });
+    startDrag(ptr(100, 100), 'a', node);
+    move(150, 130);
+    runFrame();
+    expect(store.getState().positions.get('a')).toEqual({ x: 50, y: 30 });
+    store.setState({ gitView: { kind: 'diff', baseLabel: 'HEAD', headLabel: 'Working tree' } });
+    up(150, 130);
+    expect(store.getState().positions.get('a')).toEqual({ x: 0, y: 0 });
+    expect(store.getState().positions.get('b')).toEqual({ x: 500, y: 0 });
+    expect(node.style.transform).toBe('translate(0px, 0px)');
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('a lock that swapped in its own layout (time travel) keeps that layout on release', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(150, 130);
+    runFrame();
+    store.getState().enterTimeTravel('abc', 'abc');
+    store.getState().setLayout({
+      version: 1,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      tables: { a: { x: 70, y: 80 }, b: { x: 500, y: 0 } },
+      groups: {},
+    });
+    up(150, 130);
+    expect(store.getState().positions.get('a')).toEqual({ x: 70, y: 80 });
+    expect(store.getState().past).toHaveLength(0);
+  });
+
   it('a release before the pending frame still lands on the last pointer position', () => {
     startDrag(ptr(100, 100), 'a', fakeNode());
     move(150, 130);

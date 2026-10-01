@@ -98,6 +98,8 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
   document.body.classList.add('ddd-is-dragging');
 
   let frame: number | null = null;
+  /** The positions map this drag last wrote; identity per entry tells a drag frame from an overlay reload. */
+  let committed: Map<string, { x: number; y: number }> | null = null;
   const apply = () => {
     frame = null;
     // A merge / git overlay can lock the canvas while a deferred frame is still pending.
@@ -116,6 +118,7 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
       }
     }
     store.getState().setPositionsBatch(entries);
+    committed = store.getState().positions;
   };
 
   const schedule = () => {
@@ -164,8 +167,19 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
       return;
     }
 
-    if (isCanvasReadOnly(store.getState())) return;
-    const cmd = buildMoveCommand(origins, store.getState().positions);
+    const s = store.getState();
+    if (isCanvasReadOnly(s)) {
+      // A lock mid-gesture pushes no command and persists nothing, so committed frames would linger
+      // with no undo; put back only entries this drag still owns (time travel swaps in its own layout).
+      const owned = committed;
+      if (owned === null) return;
+      const back = [...origins].filter(([n]) => s.positions.get(n) === owned.get(n));
+      if (back.length > 0) s.setPositionsBatch(back);
+      const home = origins.get(tableName);
+      if (home && back.some(([n]) => n === tableName)) node.style.transform = `translate(${home.x}px, ${home.y}px)`;
+      return;
+    }
+    const cmd = buildMoveCommand(origins, s.positions);
     if (cmd) commitMove(cmd);
     schedulePersist();
   };

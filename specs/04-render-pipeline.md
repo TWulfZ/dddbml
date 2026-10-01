@@ -212,7 +212,11 @@ mueve la cámara.
   evento, no por frame (una excursión deshecha dentro del mismo frame sigue siendo drag). El
   `pointerup` cancela el frame pendiente y aplica la última posición antes de empujar el
   `MoveCommand`. Un frame que llega con el canvas ya en solo lectura (overlay merge/git) no
-  escribe, y el `pointerup` no empuja comando.
+  escribe, y el `pointerup` no empuja comando ni persiste; si algún frame ya se había commiteado
+  antes del bloqueo, el `pointerup` devuelve esas tablas a su origen (sin entrada de undo: sin esto
+  el movimiento quedaba en el store sin poder deshacerse y se colaba al sidecar con la siguiente
+  edición). Sólo revierte las entradas que siguen siendo las que escribió el drag (identidad del
+  objeto): un time-travel que cargó su propio layout entretanto se respeta.
 - **Delta de posiciones.** `setPositionsBatch`/`setTablePos` registran en
   `state/positionsDelta.ts` qué nombres cambiaron entre el `Map` previo y el nuevo (versiones en
   un `WeakMap` + log acotado de 16 entradas: no retiene mapas viejos). `positionsMovedSince(prev,
