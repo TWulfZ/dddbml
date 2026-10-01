@@ -10,7 +10,7 @@ const fk = (id: string, column: string): Ref => ({
 
 describe('relationsByOwner — collision suffix reaches the sibling inverse callback', () => {
   it('points each ManyToOne at the OneToMany name that was actually emitted', () => {
-    const pairs = buildRelationPairs([fk('r1', 'created_by'), fk('r2', 'updated_by')], { singularize: true });
+    const pairs = buildRelationPairs([fk('r1', 'created_by'), fk('r2', 'updated_by')], { singularize: true, tables: new Map() });
     const { byOwner } = relationsByOwner(pairs, new Set(['orders', 'users']));
 
     const userSides = byOwner.get('users')!;

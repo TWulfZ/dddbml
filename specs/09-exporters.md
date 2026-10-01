@@ -207,7 +207,10 @@ DBML `Ref.source.relation` y `Ref.target.relation` ∈ `{ '1', '*' }`. Matriz:
 | `*` | `1` | `@ManyToOne(() => Target)` + `@JoinColumn({ name: <fk_col> })` | `@OneToMany(() => Source, src => src.<prop>)` |
 | `*` | `*` | `@ManyToMany(() => Target)` + `@JoinTable()` | `@ManyToMany(() => Source, src => src.<prop>)` |
 
-**Lado dueño (JoinColumn)**: convención DBML — el endpoint que aparece como `source` es el lado que escribió la cláusula `Ref:`. Tratamos `source` como dueño en 1:1 y *:*.
+**Lado dueño (JoinColumn)**:
+- *:1 / 1:* → el lado `*` (el que tiene la FK).
+- *:* → `source`.
+- 1:1 → regla estructural, porque el orden de endpoints no sirve: en un ref inline (`user_id int [ref: - users.id]`) @dbml/core emite primero el endpoint referenciado, y en un `Ref:` standalone, el orden escrito. Dueño = el lado menos "clave": rango 2 si sus columnas son exactamente la PK de su tabla, 1 si es una sola columna `unique`, 0 si no. Gana el de menor rango; si empatan (p.ej. PK compartida `profiles.id - users.id`), el dueño es `target` (endpoint 2), igual que el SQL que genera @dbml/core. La fila 1:1 de la matriz de arriba asume `source` dueño; si el dueño es `target`, los decorators se intercambian.
 
 **Property name**:
 - En el lado `*` (que apunta a `1` o `*`): `camelCase(otherTableName)` o pluralizado si toggle. Default singular para `ManyToOne`, plural para `OneToMany`/`ManyToMany`.

@@ -61,6 +61,40 @@ describe('generateTypeOrm — primary keys keep their DEFAULT', () => {
   });
 });
 
+function entityBlock(content: string, className: string): string {
+  const start = content.indexOf(`export class ${className} {`);
+  if (start < 0) throw new Error(`class ${className} not found`);
+  return content.slice(start, content.indexOf('\n}', start));
+}
+
+describe('generateTypeOrm — one-to-one @JoinColumn sits on the FK holder', () => {
+  const tables = `
+    Table users { id int [pk] }
+    Table profiles { id uuid [pk]
+      user_id int`;
+
+  it.each([
+    ['inline ref', `${tables} [ref: - users.id] }`],
+    ['standalone ref, FK side first', `${tables} }\nRef: profiles.user_id - users.id`],
+    ['standalone ref, PK side first', `${tables} }\nRef: users.id - profiles.user_id`],
+    ['unique FK column', `${tables} [unique] }\nRef: profiles.user_id - users.id`],
+  ])('%s', (_label, src) => {
+    const { content } = exportDbml(src);
+    expect(entityBlock(content, 'Profile')).toContain('@JoinColumn({ name: "user_id" })');
+    expect(entityBlock(content, 'User')).not.toContain('@JoinColumn');
+  });
+
+  it('falls back to the second endpoint for a shared-PK one-to-one', () => {
+    const { content } = exportDbml(`
+      Table users { id int [pk] }
+      Table profiles { id int [pk] }
+      Ref: profiles.id - users.id
+    `);
+    expect(entityBlock(content, 'User')).toContain('@JoinColumn({ name: "id" })');
+    expect(entityBlock(content, 'Profile')).not.toContain('@JoinColumn');
+  });
+});
+
 describe('generateTypeOrm — entities without a primary column', () => {
   it('emits a composite pk index as one @PrimaryColumn per member', () => {
     const { content, warnings } = exportDbml(`

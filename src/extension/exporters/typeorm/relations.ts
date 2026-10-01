@@ -1,4 +1,4 @@
-import type { QualifiedName, Ref } from '../../../shared/types';
+import type { QualifiedName, Ref, Table } from '../../../shared/types';
 import { pluralize, toCamelCase, toClassName } from './naming';
 
 export type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many';
@@ -32,6 +32,30 @@ export interface RelationPair {
 
 interface NamingOpts {
   singularize: boolean;
+}
+
+interface PairOpts extends NamingOpts {
+  tables: ReadonlyMap<QualifiedName, Table>;
+}
+
+/** 2 = exactly the table's PK, 1 = a single unique column, 0 = neither. */
+function keyRank(table: Table | undefined, columns: ReadonlyArray<string>): number {
+  if (!table) return 0;
+  const pk = table.columns.filter((c) => c.pk).map((c) => c.name);
+  if (pk.length > 0 && pk.length === columns.length && pk.every((c) => columns.includes(c))) return 2;
+  if (columns.length === 1 && table.columns.some((c) => c.name === columns[0] && c.unique)) return 1;
+  return 0;
+}
+
+/**
+ * Endpoint order cannot decide 1:1 ownership: @dbml/core emits an inline `[ref: - users.id]`
+ * with the referenced side first but a standalone `Ref:` in written order. The FK holder is the
+ * less key-like side; on a tie, the second endpoint owns, matching @dbml/core's own SQL export.
+ */
+function sourceOwnsOneToOne(ref: Ref, tables: PairOpts['tables']): boolean {
+  const s = keyRank(tables.get(ref.source.table), ref.source.columns);
+  const t = keyRank(tables.get(ref.target.table), ref.target.columns);
+  return s < t;
 }
 
 function cardinalityOf(ref: Ref): Cardinality {
@@ -81,7 +105,7 @@ function tsTypeFor(
  * Convert refs into relation pairs. Each Ref produces two RelationSides — one per endpoint.
  * Ownership rules: see specs/09-exporters.md § Relations.
  */
-export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: NamingOpts): RelationPair[] {
+export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): RelationPair[] {
   const out: RelationPair[] = [];
   for (const ref of refs) {
     const card = cardinalityOf(ref);
@@ -89,12 +113,10 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: NamingOpts): 
     const sourceDecorator = decoratorFor(card, 'source');
     const targetDecorator = decoratorFor(card, 'target');
 
-    // Ownership: source side owns JoinColumn for 1:1, *:1, *:*; target side owns JoinColumn for 1:*.
-    // i.e. the side whose decorator is ManyToOne / (the picked owner for OneToOne / ManyToMany).
     let sourceOwns: boolean;
     switch (card) {
       case 'one-to-one':
-        sourceOwns = true; // DBML inline `ref:` writer convention
+        sourceOwns = sourceOwnsOneToOne(ref, opts.tables);
         break;
       case 'many-to-many':
         sourceOwns = true;
