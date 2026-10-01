@@ -196,7 +196,7 @@ export class DiagramPanel {
       return;
     }
     const answer = await vscode.window.showWarningMessage(
-      `dddbml: remove ${preview.removedTables} orphan table and ${preview.removedGroups} orphan group entr(ies) from the layout file? This cannot be undone.`,
+      `dddbml: remove ${preview.removedTables} orphan table(s) and ${preview.removedGroups} orphan group(s) from the layout file? This cannot be undone.`,
       { modal: true },
       'Prune',
     );
