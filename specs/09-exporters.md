@@ -183,7 +183,7 @@ Match case-insensitive, ignorando paréntesis para length/precision:
 
 - `pk && increment` + tipo int* → `@PrimaryGeneratedColumn()`.
 - `pk && increment` + tipo uuid → `@PrimaryGeneratedColumn('uuid')` (DBML raro pero valido).
-- `pk` solo → `@PrimaryColumn(<opts>)` con tipo explícito.
+- `pk` solo → `@PrimaryColumn(<opts>)` con tipo explícito y su `default` si lo tiene (p.ej. `uuid [pk, default: `gen_random_uuid()`]` → `{ type: 'uuid', default: () => 'gen_random_uuid()' }`). No se convierte a `@PrimaryGeneratedColumn('uuid')`: eso cambiaría la expresión por la que elija `uuidExtension`.
 - `unique` (no pk) → opción `{ unique: true }`.
 - `notNull` → `{ nullable: false }`. Default TypeORM es `nullable: false` para columnas regulares; emitimos explícito siempre que el DBML diga `notNull`, **y** explícito `nullable: true` cuando no diga `notNull` ni `pk`. (Reduce sorpresas.)
 - `default`: se decide por `Column.defaultKind` (el tipo que @dbml/core reporta en `dbdefault.type`), no por el texto:

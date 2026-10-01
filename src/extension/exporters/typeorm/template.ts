@@ -97,6 +97,8 @@ function emitColumn(
   }
 
   if (col.pk) {
+    const pkDefault = emitDefault(col);
+    if (pkDefault !== undefined) colOpts.default = pkDefault;
     decoratorsUsed.add('PrimaryColumn');
     const lines: string[] = [];
     if (col.note) lines.push(`/** ${escapeBlockComment(col.note)} */`);

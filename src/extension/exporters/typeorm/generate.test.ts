@@ -49,3 +49,14 @@ describe('generateTypeOrm — column defaults follow the DBML default kind', () 
     expect(propertyLine(content, 'quote')).toContain(`default: () => "'it''s'"`);
   });
 });
+
+describe('generateTypeOrm — primary keys keep their DEFAULT', () => {
+  it('emits the default on a non-increment primary column', () => {
+    const { content } = exportDbml(`
+      Table a { id uuid [pk, default: \`gen_random_uuid()\`] }
+      Table b { code varchar [pk, default: 'x'] }
+    `);
+    expect(propertyLine(content, 'id')).toBe('@PrimaryColumn({ type: "uuid", default: () => "gen_random_uuid()" })');
+    expect(propertyLine(content, 'code')).toBe('@PrimaryColumn({ type: "varchar", default: "x" })');
+  });
+});
