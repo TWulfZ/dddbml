@@ -219,6 +219,8 @@ DBML `Ref.source.relation` y `Ref.target.relation` ∈ `{ '1', '*' }`. Matriz:
 
 **Columnas referenciadas**: cada entrada de `@JoinColumn` lleva `referencedColumnName` (la columna del otro lado, en el mismo orden). Sólo se omite cuando hay una única columna FK y apunta a la PK de una sola columna de la tabla referenciada, que es lo que TypeORM asume por defecto. **Composite FKs**: si `columns.length > 1`, emite `@JoinColumn([{ name, referencedColumnName }, ...])` — sin `referencedColumnName` TypeORM ataría todas las entradas a la primera PK. Warning si el dialect no soporta composite (postgres sí).
 
+**Parámetro del callback inverso**: `(user) => user.orders` usa el nombre de clase con la primera letra en minúscula; si eso es palabra reservada en un módulo ES (`class`, `return`, `package`, `interface`, ...) se sufija `_` (`(class_) => class_.refunds`).
+
 **Acciones referenciales** (`[delete: cascade, update: set null]`): `Ref.onDelete/onUpdate` se emiten como tercer argumento del decorator del lado dueño, normalizadas a la unión de TypeORM (`cascade→'CASCADE'`, `restrict→'RESTRICT'`, `set null→'SET NULL'`, `set default→'SET DEFAULT'`, `no action→'NO ACTION'`): `@ManyToOne(() => Team, (team) => team.enrollments, { onDelete: 'CASCADE' })`. En `*:*` o con un valor desconocido se omiten con warning (TypeORM las aplicaría a la join table, no a las columnas del DBML).
 
 **Scope='selected', endpoint fuera de selección**: preserva la columna FK (renderiza como propiedad regular con su tipo), omite el decorator de relación, agrega warning `"Relation <Source> ↔ <Target>: <Target> not in selection — emitted FK column only."`.

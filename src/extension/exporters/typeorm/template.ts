@@ -243,9 +243,19 @@ function propertyKey(name: string): string {
   return isIdentifier(name) ? name : JSON.stringify(name);
 }
 
+// Names that cannot be a binding in an ES module (strict mode), where the generated file lives.
+const RESERVED_BINDINGS = new Set([
+  'arguments', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default',
+  'delete', 'do', 'else', 'enum', 'eval', 'export', 'extends', 'false', 'finally', 'for', 'function',
+  'if', 'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'null', 'package',
+  'private', 'protected', 'public', 'return', 'static', 'super', 'switch', 'this', 'throw', 'true',
+  'try', 'typeof', 'var', 'void', 'while', 'with', 'yield',
+]);
+
 function shortVar(className: string): string {
   if (className.length === 0) return 'x';
-  return className.charAt(0).toLowerCase() + className.slice(1);
+  const v = className.charAt(0).toLowerCase() + className.slice(1);
+  return RESERVED_BINDINGS.has(v) ? `${v}_` : v;
 }
 
 function escapeBlockComment(s: string): string {

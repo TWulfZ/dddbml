@@ -165,6 +165,21 @@ describe('generateTypeOrm — identifiers that are not valid TypeScript', () => 
   });
 });
 
+describe('generateTypeOrm — relation callback parameters', () => {
+  it('never uses a reserved word as the parameter name', () => {
+    const { content } = exportDbml(`
+      Table returns { id int [pk] }
+      Table classes { id int [pk] }
+      Table packages { id int [pk] }
+      Table refunds { id int [pk]
+        return_id int [ref: > returns.id]
+        class_id int [ref: > classes.id]
+        package_id int [ref: > packages.id] }
+    `);
+    expect(syntaxErrors(content)).toEqual([]);
+  });
+});
+
 describe('generateTypeOrm — entities without a primary column', () => {
   it('emits a composite pk index as one @PrimaryColumn per member', () => {
     const { content, warnings } = exportDbml(`
