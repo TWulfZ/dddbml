@@ -3,6 +3,10 @@ import { postToHost } from '../vscode';
 import { Button } from '../ui/Button';
 import { IconHistory, IconDiff, IconClose, IconChevronRight } from '../icons';
 import { fitToBbox } from './viewport';
+import type { QualifiedName, Table, TableDiffStatus } from '../../shared/types';
+import type { DiffGhost } from '../state/store';
+import { estimateSize } from '../layout/autoLayout';
+import { liveViewBox, type DiffViewFilters } from './diffGhosts';
 
 /** A change location (table or removed-ghost bbox) the banner's prev/next nav flies the camera to. */
 export interface DiffTarget {
@@ -11,6 +15,32 @@ export interface DiffTarget {
   y: number;
   w: number;
   h: number;
+}
+
+export function buildDiffTargets(
+  diffByTable: Map<QualifiedName, TableDiffStatus> | null,
+  diffGhosts: DiffGhost[] | null,
+  positions: Map<QualifiedName, { x: number; y: number }>,
+  tablesByName: Map<QualifiedName, Table>,
+  filters: DiffViewFilters,
+): DiffTarget[] {
+  const targets: DiffTarget[] = [];
+  const seen = new Set<string>();
+  if (diffByTable) {
+    for (const [name] of diffByTable) {
+      const v = liveViewBox(name, positions, tablesByName, filters);
+      if (!v || seen.has(v.node)) continue;
+      seen.add(v.node);
+      targets.push({ name, ...v.box });
+    }
+  }
+  if (diffGhosts) {
+    for (const g of diffGhosts) {
+      const s = estimateSize(g.table.columns.length);
+      targets.push({ name: g.table.name, x: g.pos.x, y: g.pos.y, w: s.width, h: s.height });
+    }
+  }
+  return targets.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Next/prev change index. A cursor outside [0, n) means "nothing focused yet" (fresh diff, or the

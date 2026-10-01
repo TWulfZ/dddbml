@@ -112,7 +112,10 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
 - **Navegación:** la barra (`GitBanner`) trae botones prev/next + contador que enfocan la
   cámara en cada cambio (`fitToBbox`, store `diffCursor`). Al abrir el diff la cámara **no**
   se mueve: `diffCursor = -1` y el contador muestra `– / N`; el primer *next* enfoca el
-  cambio 1 y el primer *prev* el último (`diffNavIndex`).
+  cambio 1 y el primer *prev* el último (`diffNavIndex`). Los objetivos (`buildDiffTargets`) y
+  los extremos de las refs eliminadas pasan por los filtros de vista (`liveViewBox`): una tabla
+  **oculta** no es objetivo y su línea no se dibuja; una tabla dentro de un grupo **colapsado**
+  apunta al nodo del grupo (un objetivo por grupo), nunca a su posición cruda.
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
   layer); eliminadas → conector punteado en `DiffGhosts`. Los edges con cambio quedan a
   opacidad llena (auto-focus) mientras los demás siguen el fade global (ver abajo).
