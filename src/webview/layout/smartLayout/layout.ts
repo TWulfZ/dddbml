@@ -115,8 +115,9 @@ interface Analysis {
  * Synchronous — dagre is sync.
  */
 export function smartLayout(
-  input: SmartLayoutInput,
+  rawInput: SmartLayoutInput,
 ): Map<QualifiedName, { x: number; y: number }> {
+  const input = canonicalOrder(rawInput);
   const mode: SmartLayoutMode = input.mode ?? 'all';
   const existing = input.existing ?? new Map<QualifiedName, { x: number; y: number }>();
   const selection = input.selection ?? new Set<QualifiedName>();
@@ -135,6 +136,26 @@ export function smartLayout(
     return layoutAll(analysis, input, orientation, seps);
   }
   return layoutIncremental(analysis, input, orientation, movable, existing, seps);
+}
+
+/** Code-unit order: unlike `localeCompare`, identical on every machine regardless of ICU locale. */
+function cmpCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Table/group order feeds classify, cluster membership and dagre node insertion, so it shapes the
+ * result. The host sorts with locale collation, which differs between teammates' locales; re-sort
+ * here so a committed sidecar does not churn per machine (audit F88).
+ */
+function canonicalOrder(input: SmartLayoutInput): SmartLayoutInput {
+  return {
+    ...input,
+    tables: [...input.tables].sort((a, b) => cmpCodeUnit(a.name, b.name)),
+    groups: [...input.groups]
+      .sort((a, b) => cmpCodeUnit(a.name, b.name))
+      .map((g) => ({ ...g, tables: [...g.tables].sort(cmpCodeUnit) })),
+  };
 }
 
 function computeFixed(
@@ -504,7 +525,7 @@ function radialPlace(
     const da = meta.get(a)?.inDeg ?? 0;
     const db = meta.get(b)?.inDeg ?? 0;
     if (da !== db) return da - db;
-    return a.localeCompare(b);
+    return cmpCodeUnit(a, b);
   });
 
   let maxSat = 0;

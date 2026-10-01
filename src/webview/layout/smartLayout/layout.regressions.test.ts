@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { parseDbml } from '../../../extension/parser';
 import { smartLayout } from './layout';
 import type { NodeSize } from '../autoLayout';
@@ -45,5 +47,43 @@ describe('smartLayout — cluster ids with spaces (audit F54)', () => {
     const spaced = layoutOf(parse(dbml('"Sales Context"', '"Billing Area"')));
     const plain = layoutOf(parse(dbml('Sales_Context', 'Billing_Area')));
     expect([...spaced].sort()).toEqual([...plain].sort());
+  });
+});
+
+describe('smartLayout — locale-independent determinism (audit F88)', () => {
+  const codeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  // Mixed case: ICU locale collation interleaves cases, code-unit order puts uppercase first.
+  const sats = ['alpha', 'Beta', 'gamma', 'Delta', 'epsilon', 'Zeta'];
+  const src = [
+    'Table hub { id int [pk] }',
+    ...sats.map((n) => `Table ${n} { id int [pk]\n  hub_id int [ref: > hub.id] }`),
+  ].join('\n');
+
+  it('orders the radial ring by code unit, not by locale collation', () => {
+    const schema = parse(src);
+    const sizeOf = sizeOfFor(schema);
+    const pos = layoutOf(schema);
+    const center = (n: string) => {
+      const p = pos.get(`public.${n}`)!;
+      const s = sizeOf(`public.${n}`);
+      return { x: p.x + s.width / 2, y: p.y + s.height / 2 };
+    };
+    const hub = center('hub');
+    // The ring starts at 12 o'clock and runs clockwise in screen coordinates; the half-step slack
+    // absorbs the column-align nudge applied after radial placement.
+    const halfStep = Math.PI / sats.length;
+    const angle = (n: string) => {
+      const c = center(n);
+      const a = Math.atan2(c.y - hub.y, c.x - hub.x) + Math.PI / 2;
+      return a < -halfStep ? a + 2 * Math.PI : a;
+    };
+    const ring = [...sats].sort((a, b) => angle(a) - angle(b));
+    expect(ring).toEqual([...sats].sort(codeUnit));
+  });
+
+  it('does not depend on the order the host sorted tables and groups in', () => {
+    const schema = parse(readFileSync(resolve(process.cwd(), 'test/fixtures/small.dbml'), 'utf8'));
+    const reversed: Schema = { ...schema, tables: [...schema.tables].reverse(), groups: [...schema.groups].reverse() };
+    expect([...layoutOf(reversed)].sort()).toEqual([...layoutOf(schema)].sort());
   });
 });

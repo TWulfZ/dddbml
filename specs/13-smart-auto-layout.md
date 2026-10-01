@@ -49,6 +49,10 @@ context. ~80% de "buen orden de BD" son las heurísticas propias; ~20% es el mot
 - [x] **Determinismo.** → **Decisión: sin `Math.random()`.** El desempate del paso de alineación mueve
   el extremo de menor `totalDeg`; si empatan, el de nombre lexicográficamente menor. Requisito del
   layout git-friendly. (2026-05-29)
+  - Todo desempate por nombre usa **orden de code unit** (`a < b`), nunca `localeCompare` (depende
+    del locale ICU de cada máquina). `smartLayout` además re-ordena por code unit las tablas y grupos
+    de entrada, porque el host los ordena con `localeCompare` y ese orden alimenta classify/cluster y
+    la inserción de nodos de dagre. (auditoría F88)
 
 ## Diseño
 
