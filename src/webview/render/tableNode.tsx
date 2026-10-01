@@ -218,6 +218,7 @@ function TableHeader({ table, configurable, headerStyle }: { table: Table; confi
           x={popup.x}
           y={popup.y}
           onPick={applyColor}
+          onPreview={(c) => store.getState().setTableColor(table.name, c)}
           onReset={resetColor}
           onClose={() => setPopup(null)}
         />

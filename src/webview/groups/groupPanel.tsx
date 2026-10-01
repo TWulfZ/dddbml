@@ -256,6 +256,7 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter, readOnl
           x={popup.x}
           y={popup.y}
           onPick={applyColor}
+          onPreview={(c) => store.getState().setGroup(group.name, { color: c })}
           onReset={resetColor}
           onClose={() => setPopup(null)}
         />

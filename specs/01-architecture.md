@@ -102,6 +102,9 @@ type WebviewToHost =
     El webview **no** debouncea ediciones discretas (drag, waypoints, undo/redo, color, ocultar,
     colapsar, auto-layout; F22): un timer muere con el iframe al ocultar/cerrar y un post en
     `pagehide` se pierde al relevarse por un frame que también se destruye. El host coalesce.
+    Arrastrar dentro del selector de color nativo **no** es una edición discreta: cada `input`
+    sólo actualiza el store (preview) y el color de tabla/grupo se persiste una vez, en el
+    `change` del selector o al cerrar el popup (mismo criterio que el color de arista).
 
 ## Dependencias externas
 
