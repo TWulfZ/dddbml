@@ -132,7 +132,11 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
   cambio 1 y el primer *prev* el último (`diffNavIndex`). Los objetivos (`buildDiffTargets`) y
   los extremos de las refs eliminadas pasan por los filtros de vista (`liveViewBox`): una tabla
   **oculta** no es objetivo y su línea no se dibuja, pero el contador las suma aparte
-  (`– / N · +k hidden`) para que el usuario sepa que existen (decisión 2026-10-01); una tabla dentro de un grupo **colapsado**
+  (`– / N · +k hidden`) para que el usuario sepa que existen (decisión 2026-10-01). Cuenta las
+  tablas con cambios que el filtro de vista oculta (`countHiddenChanges`, ocultas sueltas o por
+  grupo oculto); el texto lo arma `diffCounterLabel`. Si **todos** los cambios están ocultos, la
+  barra muestra sólo `+k hidden`, sin prev/next; el tooltip del contador avisa que prev/next las
+  salta. Una tabla dentro de un grupo **colapsado**
   apunta al nodo del grupo (un objetivo por grupo), nunca a su posición cruda.
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
   layer); **cambiadas** (`'changed'`: mismo id pero otra cardinalidad, dirección o

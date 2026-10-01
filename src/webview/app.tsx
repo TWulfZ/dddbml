@@ -27,7 +27,7 @@ import { ExportImageModal } from './render/exportImageModal';
 import { SettingsPanel } from './render/settingsPanel';
 import { GitPanel } from './render/gitPanel';
 import { EdgeOrderProgress } from './render/edgeOrderProgress';
-import { GitBanner, buildDiffTargets } from './render/gitBanner';
+import { GitBanner, buildDiffTargets, countHiddenChanges } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import type { QualifiedName, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
@@ -520,6 +520,10 @@ export function App(_props: AppProps) {
     () => (diffActive ? buildDiffTargets(diffByTable, diffGhosts, positions, tablesByName, derived) : []),
     [diffActive, diffByTable, diffGhosts, positions, tablesByName, derived],
   );
+  const hiddenChanges = useMemo(
+    () => (diffActive ? countHiddenChanges(diffByTable, derived) : 0),
+    [diffActive, diffByTable, derived],
+  );
 
   const renderedTables = schema.tables.filter(
     (t) => !derived.hiddenTables.has(t.name) && !derived.collapsedTables.has(t.name),
@@ -641,7 +645,7 @@ export function App(_props: AppProps) {
           {ready ? <ZoomButtons /> : null}
           {ready && !readOnly ? <ActionsPanel /> : null}
           {ready && mergeConflicts ? <MergePanel /> : null}
-          {ready && gitView ? <GitBanner diffTargets={diffTargets} /> : null}
+          {ready && gitView ? <GitBanner diffTargets={diffTargets} hiddenChanges={hiddenChanges} /> : null}
         </ErrorBoundary>
       </div>
       {parseError ? (
