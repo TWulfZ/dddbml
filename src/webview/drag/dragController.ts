@@ -2,6 +2,7 @@ import { store, isCanvasReadOnly } from '../state/store';
 import { buildEdgeStyleCommand, buildEdgesResetCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle } from '../state/history';
 import { schedulePersist } from '../persistence';
 import { slideSegment, notchAtQuarter, deleteNotch, type EdgeRoute } from '../render/edgeRouter';
+import { screenToWorld, type Point } from '../render/viewport';
 import { gridSnapper } from '../layout/grid';
 import { hasManualShape } from '../layout/smartLayout/edgeReset';
 import type { Waypoint } from '../../shared/types';
@@ -24,8 +25,20 @@ let active = false;
 /** One edge gesture at a time: a second pointerdown mid-drag would stack a second listener set. */
 let edgeDragActive = false;
 
-/** Min screen-px the pointer must travel between down and up to count as a drag (not a click). */
+/** Min screen-px the pointer must travel from the press before a press becomes a drag (not a click). */
 const CLICK_THRESHOLD_PX = 4;
+
+interface ClientOrigin { left: number; top: number }
+
+/** Client-space origin of the viewport element, which `viewport.x/y` are relative to. */
+function viewportOrigin(el: Element): ClientOrigin {
+  const rect = el.closest('.ddd-viewport')?.getBoundingClientRect();
+  return { left: rect?.left ?? 0, top: rect?.top ?? 0 };
+}
+
+function clientToWorld(clientX: number, clientY: number, origin: ClientOrigin): Point {
+  return screenToWorld({ x: clientX - origin.left, y: clientY - origin.top });
+}
 
 export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement): void {
   if (active || e.button !== 0) return;
@@ -64,16 +77,29 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
 
   const pointerStartX = e.clientX;
   const pointerStartY = e.clientY;
+  // Deltas are measured in world space from the grabbed point, so a wheel zoom/pan mid-drag keeps
+  // the table under the cursor instead of rescaling the screen delta by the new zoom.
+  const origin = viewportOrigin(node);
+  const grab = clientToWorld(pointerStartX, pointerStartY, origin);
+  let lastX = pointerStartX;
+  let lastY = pointerStartY;
+  // Latched: nothing moves until the threshold is crossed once, so a jittery click never shifts
+  // tables without an undo entry, and a drag that comes back near its start stays a drag.
+  let dragging = false;
 
   node.style.willChange = 'transform';
   try { node.setPointerCapture(e.pointerId); } catch { /* noop */ }
   document.body.classList.add('ddd-is-dragging');
 
-  const onMove = (ev: PointerEvent) => {
-    const currentZoom = store.getState().viewport.zoom;
+  const apply = () => {
+    if (!dragging) {
+      if (Math.hypot(lastX - pointerStartX, lastY - pointerStartY) < CLICK_THRESHOLD_PX) return;
+      dragging = true;
+    }
     const snap = gridSnapper();
-    const dx = (ev.clientX - pointerStartX) / currentZoom;
-    const dy = (ev.clientY - pointerStartY) / currentZoom;
+    const cur = clientToWorld(lastX, lastY, origin);
+    const dx = cur.x - grab.x;
+    const dy = cur.y - grab.y;
     const entries: Array<[string, { x: number; y: number }]> = [];
     for (const [n, o] of origins) {
       const nx = snap(o.x + dx);
@@ -86,8 +112,18 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
     store.getState().setPositionsBatch(entries);
   };
 
+  const onMove = (ev: PointerEvent) => {
+    lastX = ev.clientX;
+    lastY = ev.clientY;
+    apply();
+  };
+  const unsubViewport = store.subscribe((s, prev) => {
+    if (s.viewport !== prev.viewport) apply();
+  });
+
   const onUp = (ev: PointerEvent) => {
     active = false;
+    unsubViewport();
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
@@ -95,8 +131,7 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
     try { node.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
     document.body.classList.remove('ddd-is-dragging');
 
-    const moved = Math.hypot(ev.clientX - pointerStartX, ev.clientY - pointerStartY);
-    if (moved < CLICK_THRESHOLD_PX) {
+    if (!dragging) {
       // A click, not a drag: resolve selection (no move command — zero displacement).
       const sel = store.getState().selection;
       if (additive) {
@@ -144,19 +179,29 @@ function runEdgeDrag(
   const from = snapshotWaypoints(refId);
   const startX = e.clientX;
   const startY = e.clientY;
+  const origin = viewportOrigin(target);
+  const grab = clientToWorld(startX, startY, origin);
+  let lastEv: PointerEvent | null = null;
   try { target.setPointerCapture(e.pointerId); } catch { /* noop */ }
   document.body.classList.add('ddd-is-edge-dragging');
 
-  const onMove = (ev: PointerEvent) => {
-    const zoom = store.getState().viewport.zoom;
-    const dxWorld = (ev.clientX - startX) / zoom;
-    const dyWorld = (ev.clientY - startY) / zoom;
-    const wps = build(dxWorld, dyWorld, ev, startX, startY);
+  const apply = () => {
+    if (!lastEv) return;
+    const cur = clientToWorld(lastEv.clientX, lastEv.clientY, origin);
+    const wps = build(cur.x - grab.x, cur.y - grab.y, lastEv, startX, startY);
     store.getState().setEdgeWaypoints(refId, wps ?? from);
   };
+  const onMove = (ev: PointerEvent) => {
+    lastEv = ev;
+    apply();
+  };
+  const unsubViewport = store.subscribe((s, prev) => {
+    if (s.viewport !== prev.viewport) apply();
+  });
 
   const onUp = (ev: PointerEvent) => {
     edgeDragActive = false;
+    unsubViewport();
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
