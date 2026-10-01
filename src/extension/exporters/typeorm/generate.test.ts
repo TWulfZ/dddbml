@@ -1,6 +1,12 @@
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { parseDbml } from '../../parser';
 import { typeormExporter } from './index';
+
+function syntaxErrors(content: string): string[] {
+  const out = ts.transpileModule(content, { reportDiagnostics: true, compilerOptions: { experimentalDecorators: true } });
+  return (out.diagnostics ?? []).map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n'));
+}
 
 function exportDbml(src: string, options: Record<string, unknown> = {}) {
   const r = parseDbml(src);
@@ -141,6 +147,21 @@ describe('generateTypeOrm — referential actions reach the owning relation', ()
     expect(enrollment).toContain(`{ onDelete: "CASCADE", onUpdate: "SET NULL" })`);
     expect(enrollment).toContain(`{ onDelete: "RESTRICT" })`);
     expect(entityBlock(content, 'Team')).not.toContain('onDelete');
+  });
+});
+
+describe('generateTypeOrm — identifiers that are not valid TypeScript', () => {
+  it('quotes column keys and prefixes class names that start with a digit', () => {
+    const { content } = exportDbml(`
+      Table "2fa_codes" { id int [pk]
+        "first name" varchar
+        "user-id" int }
+      Table users { id int [pk] }
+      Ref: "2fa_codes"."user-id" > users.id
+    `);
+    expect(content).toContain('export class _2faCode {');
+    expect(content).toContain('"first name"?: string | null;');
+    expect(syntaxErrors(content)).toEqual([]);
   });
 });
 

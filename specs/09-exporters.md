@@ -246,6 +246,8 @@ Limitaciones aceptadas: `caches→cach` (regla 3), `heroes→heroe`, `analyses�
 
 Aplicado **después** del PascalCase, sobre el último segmento.
 
+**Identificadores válidos**: tras PascalCase + singularize, el nombre de clase pierde los caracteres que no son de identificador y recibe prefijo `_` si no empieza con letra/`$`/`_` (`"2fa_codes"` → `_2faCode`); los nombres de propiedad de relación derivan de él (`_2faCode`). Las columnas cuyo nombre no es identificador se emiten con key entre comillas (`"first name"?: string | null;`): TypeORM toma el nombre de columna de la key, así que no hace falta `name:`.
+
 ### Imports
 
 Encabezado de archivo (cuando `options.includeImports === true`):

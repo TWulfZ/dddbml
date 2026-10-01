@@ -1,5 +1,5 @@
 import type { QualifiedName, Ref, Table } from '../../../shared/types';
-import { pluralize, toCamelCase, toClassName } from './naming';
+import { lowerFirst, pluralize, toClassName } from './naming';
 
 export type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many';
 
@@ -93,8 +93,7 @@ function propNameFor(
   targetTable: QualifiedName,
   opts: NamingOpts,
 ): string {
-  const className = toClassName(targetTable, opts);
-  const camel = toCamelCase(className);
+  const camel = lowerFirst(toClassName(targetTable, opts));
   if (decorator === 'OneToMany' || decorator === 'ManyToMany') return pluralize(camel);
   return camel;
 }

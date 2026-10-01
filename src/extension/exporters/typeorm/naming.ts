@@ -60,11 +60,6 @@ export function toPascalCase(input: string): string {
   return parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join('');
 }
 
-export function toCamelCase(input: string): string {
-  const pascal = toPascalCase(input);
-  if (pascal.length === 0) return pascal;
-  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
-}
 
 /**
  * Best-effort English singularization. Applied to the last word of a PascalCase token.
@@ -124,11 +119,27 @@ function splitPascalWords(pascal: string): string[] {
 
 export function toClassName(qualifiedName: string, opts: { singularize: boolean }): string {
   const pascal = toPascalCase(qualifiedName);
-  if (!opts.singularize) return pascal;
+  if (!opts.singularize) return toIdentifier(pascal);
   const words = splitPascalWords(pascal);
-  if (words.length === 0) return pascal;
+  if (words.length === 0) return toIdentifier(pascal);
   words[words.length - 1] = singularizeEnglish(words[words.length - 1]!);
-  return words.join('');
+  return toIdentifier(words.join(''));
+}
+
+const IDENT = /^[\p{ID_Start}$_][\p{ID_Continue}$‌‍]*$/u;
+
+export function isIdentifier(s: string): boolean {
+  return IDENT.test(s);
+}
+
+function toIdentifier(s: string): string {
+  const cleaned = s.replace(/[^\p{ID_Continue}$‌‍]/gu, '');
+  return /^[\p{ID_Start}$_]/u.test(cleaned) ? cleaned : `_${cleaned}`;
+}
+
+/** Not toPascalCase-based: re-splitting on `_` would drop the prefix that keeps `_2faCode` valid. */
+export function lowerFirst(identifier: string): string {
+  return identifier.charAt(0).toLowerCase() + identifier.slice(1);
 }
 
 export function pluralize(word: string): string {

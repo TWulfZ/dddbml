@@ -1,6 +1,6 @@
 import type { Column, QualifiedName, Table } from '../../../shared/types';
 import type { Dialect } from './dialect';
-import { toClassName } from './naming';
+import { isIdentifier, toClassName } from './naming';
 import type { RelationSide } from './relations';
 
 interface EmitOptions {
@@ -95,7 +95,7 @@ function emitColumn(
     const lines: string[] = [];
     if (col.note) lines.push(`/** ${escapeBlockComment(col.note)} */`);
     lines.push(`@PrimaryGeneratedColumn(${arg})`);
-    lines.push(`${col.name}!: ${mapping.tsType};`);
+    lines.push(`${propertyKey(col.name)}!: ${mapping.tsType};`);
     return lines.join('\n');
   }
 
@@ -106,7 +106,7 @@ function emitColumn(
     const lines: string[] = [];
     if (col.note) lines.push(`/** ${escapeBlockComment(col.note)} */`);
     lines.push(`@PrimaryColumn(${formatOptions(colOpts)})`);
-    lines.push(`${col.name}!: ${mapping.tsType};`);
+    lines.push(`${propertyKey(col.name)}!: ${mapping.tsType};`);
     return lines.join('\n');
   }
 
@@ -123,7 +123,7 @@ function emitColumn(
   lines.push(`@Column(${formatOptions(colOpts)})`);
   const optMark = nullable ? '?' : '!';
   const tsType = nullable ? `${mapping.tsType} | null` : mapping.tsType;
-  lines.push(`${col.name}${optMark}: ${tsType};`);
+  lines.push(`${propertyKey(col.name)}${optMark}: ${tsType};`);
   return lines.join('\n');
 }
 
@@ -236,6 +236,11 @@ function emitRelation(
   const marker = isArray ? '!' : '?';
   lines.push(`${rel.propertyName}${marker}: ${rel.tsType};`);
   return lines.join('\n');
+}
+
+/** TypeORM derives the DB column name from the property key, so a quoted key keeps the raw name intact. */
+function propertyKey(name: string): string {
+  return isIdentifier(name) ? name : JSON.stringify(name);
 }
 
 function shortVar(className: string): string {
