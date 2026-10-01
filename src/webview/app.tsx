@@ -45,6 +45,9 @@ const containerId = (name: string) => CONTAINER_PREFIX + name;
 /** Synthetic index entries (collapsed groups, containers) — never selectable, never counted. */
 const isSynthetic = (name: string) => name.startsWith('__');
 
+/** Open overlays that consume Escape themselves; dismissing one must not also clear the selection. */
+const ESCAPE_OWNING_OVERLAYS = 'dialog[open], .ddd-context-menu, .ddd-color-popup, .ddd-app-menu__popover';
+
 /** Fields that consume Space/typing themselves (zoom %, group search, color popup hex input). */
 const isTextField = (t: HTMLElement | null): boolean =>
   t != null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
@@ -385,12 +388,19 @@ export function App(_props: AppProps) {
       }
     };
 
+    // Capture phase on purpose: the overlays close on Escape from their own document/dialog
+    // handlers, and Preact unmounts them in a microtask before a bubbling window listener would
+    // run — by then the DOM no longer shows that this Escape belonged to a menu or modal.
+    const onEscapeCapture = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (isTextField(e.target as HTMLElement | null)) return;
+      if (document.querySelector(ESCAPE_OWNING_OVERLAYS)) return;
+      store.getState().clearSelection();
+      store.getState().setSelectedEdge(null);
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        store.getState().clearSelection();
-        store.getState().setSelectedEdge(null);
-        return;
-      }
+      if (e.key === 'Escape') return;
       const t = e.target as HTMLElement | null;
       if (isTextField(t)) return;
       // Hold Space → temporary pan (a navigation gesture, so allowed even in read-only overlays).
@@ -440,6 +450,7 @@ export function App(_props: AppProps) {
     el.addEventListener('pointerup', onPointerUp);
     el.addEventListener('pointercancel', onPointerUp);
     el.addEventListener('pointerenter', onPointerEnter);
+    window.addEventListener('keydown', onEscapeCapture, true);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
@@ -451,6 +462,7 @@ export function App(_props: AppProps) {
       el.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('pointercancel', onPointerUp);
       el.removeEventListener('pointerenter', onPointerEnter);
+      window.removeEventListener('keydown', onEscapeCapture, true);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);

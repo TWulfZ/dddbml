@@ -155,6 +155,11 @@ foco), de modo que mantener Space sobre el canvas arma el paneo de inmediato.
 - **Shift-click** → alterna (toggle) la tabla en/fuera del set. Sólo `Shift`
   (consistente con el marquee, que usa `Shift` para sumar).
 - **Marquee** (arrastre sobre área vacía) → sin cambios; `Shift` suma al set.
+- **Escape** limpia selección y arista seleccionada, **salvo** que cierre un overlay
+  (modal `<dialog>`, menú contextual, color popup, menú de app) o venga de un campo de
+  texto (p. ej. el `%` de zoom). Se evalúa en fase de *captura* en `window`: los overlays
+  se cierran desde sus propios handlers y Preact los desmonta en un microtask antes de
+  que un listener en *bubbling* pudiera verlos.
 - Click vs drag se decide en `pointerup` por distancia recorrida
   (`CLICK_THRESHOLD_PX = 4`, screen-px): `< 4` = click (resuelve selección, sin
   `MoveCommand`); `>= 4` = drag (mueve, empuja `MoveCommand`).
