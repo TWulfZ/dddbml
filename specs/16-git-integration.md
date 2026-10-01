@@ -49,6 +49,11 @@ pesada que se construye **por fases**, cada una desplegable por separado.
   on por defecto), y la barra trae botones **prev/next** que enfocan la cámara en cada cambio.
   El mismo toggle de blur se aplica al **merge resolver** para enfocar los conflictos.
   (Acordado con el owner, 2026-05-31.)
+- [x] **Dónde se aplica el gate de solo lectura.** — **Decisión:** en dos capas, host
+  autoritativo + webview (ver "Gate en dos capas"). Solo-webview se descartó: cualquier fuga
+  futura vuelve a escribir el sidecar. (Acordado con el owner, 2026-10-01.)
+- [x] **Historial de undo/redo al entrar/salir de time-travel o diff.** — **Decisión:** se
+  conserva; undo/redo quedan inactivos durante el overlay (spec 11). (Acordado, 2026-10-01.)
 - [ ] **Descubrimiento de `!include`.** Hoy el host parsea un solo archivo
   (`parser.ts`) y `resolveDiagram` (en `panel.ts`) solo incluye `.dbml` + sidecar.
   Cuando el parse multi-archivo aterrice, ampliar el alcance con un escaneo regex de
@@ -119,9 +124,33 @@ El hover de tabla se comparte vía store `hoveredTable` (lo setea `TableNode`); 
 marca `is-focused` los routes cuyo endpoint coincide. Aplica en vista normal, diff y merge.
 
 El gate de solo lectura es único: `isCanvasReadOnly(s) = mergeConflicts != null ||
-gitView != null`, consultado por drag/persist/undo/redo/marquee/teclado/smart-layout
-y el cinturón CSS `.is-merge-locked`. Merge y git-overlay son mutuamente excluyentes
-(un merge del host limpia `gitView`).
+gitView != null`, consultado por drag/persist/undo/redo/marquee/teclado/smart-layout,
+edición de edges y el cinturón CSS `.is-merge-locked`. Merge y git-overlay son
+mutuamente excluyentes (un merge del host limpia `gitView`).
+
+### Gate en dos capas: host autoritativo + webview (decisión 2026-10-01)
+
+La auditoría 2026-09-22 (F02–F05, F21, F27, F30, F31, F71, F73) mostró que un gate solo en
+el webview se fuga: una recarga del webview lo pierde, un timer de persist programado antes
+de entrar sigue vivo, y el host acepta cualquier escritura. Por eso:
+
+- **Host (autoridad).** Cada `DiagramPanel` mantiene `readOnly: 'merge' | 'timeTravel' | 'diff' | null`.
+  Mientras no sea `null`:
+  - descarta `layout:persist` y los comandos que escriben el sidecar (Reset Layout, Prune
+    Orphans) con un aviso, y no deja hacer Commit/Stash/Revert de los archivos del diagrama
+    durante un merge (staging del sidecar con marcadores borraría los stages de git);
+  - en `webview:ready` (recarga/re-show del webview) re-postea el estado vigente
+    (`merge:begin` con los conflictos actuales, o el overlay git) en vez del layout editable;
+  - los pushes del watcher (`schema:update`, `layout:*`) durante un overlay git se difieren
+    hasta salir; no reemplazan la revisión que se está mirando.
+- **Conflictos resueltos fuera del diagrama.** El watcher del sidecar re-detecta: si ya no hay
+  conflicto, el host postea `merge:end` y recarga el layout; si la detección falla, el panel
+  queda en solo lectura con el error visible (nunca un layout vacío editable).
+- **Webview.** `schedulePersist` evalúa el gate **al disparar** el timer, no solo al
+  programarlo, y entrar en solo lectura cancela el timer pendiente. Un write fallido al aplicar
+  un merge conserva las decisiones del usuario (no re-postea `merge:begin` desde cero).
+- Salir de cualquier overlay (incluido "Diff against HEAD" abierto desde time-travel) vuelve
+  siempre al estado de trabajo.
 
 ## Modelo de datos / tipos afectados
 

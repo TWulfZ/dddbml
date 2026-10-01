@@ -140,6 +140,10 @@ Flujo host (`panel.ts`):
 - **Persist** (`flushPersist`): parte el `Layout` entrante en dos destinos —
   `writeSharedLayout` (git, con churn-guard) y `writeViewState`
   (`extractViewState` → archivo local).
+- **Cámara (decisión 2026-10-01, F26).** El webview persiste el `viewport` al terminar un
+  pan/zoom (debounced) y solo va al view-state local, nunca al sidecar. Un push de layout del
+  host (watcher, merge aplicado, salida de overlay) no reemplaza la cámara actual; el viewport
+  guardado solo se aplica en la carga inicial del panel.
 - Keyed por `sha256(dbmlUri.toString())`. Archivos huérfanos (al renombrar/borrar el
   `.dbml`) se acumulan; GC diferido (ver Preguntas abiertas).
 
@@ -189,6 +193,13 @@ Matriz de casos:
 | Group existe en DBML | Entrada existe | Usar config del layout. |
 | Group existe en DBML | Sin entrada | Defaults: `collapsed: false`, `hidden: false`, color hash. |
 | Group no existe en DBML | Entrada huérfana | Igual que tabla: persiste, `Prune orphans` limpia. |
+
+**`dddbml: Reset Layout` (decisión 2026-10-01, F24).** Recalcula todas las posiciones y limpia
+la forma de cada edge (`waypoints`, `sourceSide`/`targetSide`, `dx`/`dy`), porque los waypoints
+absolutos quedarían sueltos al mover las tablas. **Conserva** colores (de tablas, grupos y
+edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados). `Prune orphans`
+solo corre si el `.dbml` parseó al menos una vez desde que se abrió el panel; con un schema
+vacío por error de parse borraría todas las entradas (F23).
 
 ## Migración de versiones
 
