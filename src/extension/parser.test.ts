@@ -79,3 +79,17 @@ describe('parseDbml — index-level primary keys', () => {
     expect(pkCols).toEqual(['student_id', 'course_id']);
   });
 });
+
+describe('parseDbml — locale-independent order (audit F88)', () => {
+  it('sorts tables and groups by code unit, so every teammate feeds layout the same order', () => {
+    const s = parse(`
+      Table alpha { id int [pk] }
+      Table Zeta { id int [pk] }
+      TableGroup beta { alpha }
+      TableGroup Omega { Zeta }
+    `);
+    // localeCompare puts lowercase "alpha" before "Zeta" under every ICU locale; code-unit order does not.
+    expect(s.tables.map((t) => t.name)).toEqual(['public.Zeta', 'public.alpha']);
+    expect(s.groups.map((g) => g.name)).toEqual(['Omega', 'beta']);
+  });
+});

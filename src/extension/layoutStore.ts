@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { EdgeLayout, Layout, GroupLayout, TableLayout, Waypoint } from '../shared/types';
 import { isEdgeSide } from '../shared/types';
+import { cmpCodeUnit } from '../shared/compare';
 
 export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
   return dbmlUri.with({ path: dbmlUri.path + '.layout.json' });
@@ -259,8 +260,7 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
   } else {
     lines.push('  },');
     lines.push('  "edges": {');
-    // Code-unit order, not localeCompare: collaborators on different locales must emit identical files.
-    edgeEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    edgeEntries.sort(([a], [b]) => cmpCodeUnit(a, b));
     edgeEntries.forEach(([k, v], i) => {
       const comma = i < edgeEntries.length - 1 ? ',' : '';
       const hasWaypoints = !!(v.waypoints && v.waypoints.length > 0);
