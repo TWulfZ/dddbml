@@ -63,6 +63,49 @@ export function applyViewState(shared: Layout, vs: ViewState): Layout {
   return { ...shared, viewport: vs.viewport, tables, groups };
 }
 
+type GroupFlags = { hidden?: boolean; collapsed?: boolean };
+
+/**
+ * Applies only what changed between `base` (what this panel loaded) and `next` (what it now holds)
+ * onto the file's current content. The file is shared by every window on the machine, and a panel
+ * only knows the flags of entries it was shown: replacing the whole file erased another window's
+ * hide/collapse/camera, and the hidden flags of tables that had no shared sidecar entry.
+ */
+export function mergeViewStateChange(disk: ViewState, base: ViewState, next: ViewState): ViewState {
+  const sameViewport = base.viewport.x === next.viewport.x && base.viewport.y === next.viewport.y && base.viewport.zoom === next.viewport.zoom;
+  const tables: ViewState['tables'] = { ...disk.tables };
+  for (const k of new Set([...Object.keys(base.tables), ...Object.keys(next.tables)])) {
+    const now = !!next.tables[k]?.hidden;
+    if (!!base.tables[k]?.hidden === now) continue;
+    if (now) tables[k] = { hidden: true };
+    else delete tables[k];
+  }
+  const groups: ViewState['groups'] = {};
+  for (const [k, v] of Object.entries(disk.groups)) groups[k] = { ...v };
+  for (const k of new Set([...Object.keys(base.groups), ...Object.keys(next.groups)])) {
+    const g: GroupFlags = groups[k] ?? {};
+    for (const flag of ['hidden', 'collapsed'] as const) {
+      const now = !!next.groups[k]?.[flag];
+      if (!!base.groups[k]?.[flag] === now) continue;
+      if (now) g[flag] = true;
+      else delete g[flag];
+    }
+    if (g.hidden || g.collapsed) groups[k] = g;
+    else delete groups[k];
+  }
+  return { viewport: sameViewport ? disk.viewport : next.viewport, tables, groups };
+}
+
+export function sameViewState(a: ViewState, b: ViewState): boolean {
+  return canonical(a) === canonical(b);
+}
+
+function canonical(vs: ViewState): string {
+  const tables = Object.keys(vs.tables).filter((k) => vs.tables[k]?.hidden).sort();
+  const groups = Object.keys(vs.groups).sort().map((k) => [k, !!vs.groups[k]?.hidden, !!vs.groups[k]?.collapsed]);
+  return JSON.stringify([vs.viewport.x, vs.viewport.y, vs.viewport.zoom, tables, groups]);
+}
+
 function viewStateDir(context: vscode.ExtensionContext): vscode.Uri {
   return vscode.Uri.joinPath(context.globalStorageUri, 'view-state');
 }

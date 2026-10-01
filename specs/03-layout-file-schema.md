@@ -152,7 +152,13 @@ Flujo host (`panel.ts`):
   El webview **no cambia**: sigue recibiendo y enviando un `Layout` completo.
 - **Persist** (`flushPersist`): parte el `Layout` entrante en dos destinos —
   `writeSharedLayout` (git, con churn-guard) y `writeViewState`
-  (`extractViewState` → archivo local).
+  (`extractViewState` → archivo local). El view-state **no se reemplaza entero**: el host
+  guarda el view-state que le dio al webview en la última carga/escritura
+  (`viewStateBaseline`) y escribe sólo el delta (`mergeViewStateChange`) sobre una lectura
+  fresca del archivo; sin delta no escribe. El archivo lo comparten todas las ventanas de la
+  máquina (`globalStorage`) y un panel sólo conoce los flags de las entradas que se le
+  mostraron: reemplazarlo borraba hide/collapse/cámara de otra ventana y el `hidden` de
+  tablas sin entrada en el sidecar (p.ej. sidecar corrupto al abrir).
 - Keyed por `sha256(dbmlUri.toString())`. Archivos huérfanos (al renombrar/borrar el
   `.dbml`) se acumulan; GC diferido (ver Preguntas abiertas).
 

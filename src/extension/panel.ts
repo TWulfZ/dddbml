@@ -3,7 +3,7 @@ import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
 import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
-import { applyViewState, emptyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
+import { applyViewState, emptyViewState, extractViewState, mergeViewStateChange, readViewState, sameViewState, writeViewState, type ViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
 import type { MergeConflict } from './mergeThreeWay';
@@ -74,6 +74,9 @@ export class DiagramPanel {
   /** Canonical shared serialization of what is on disk; a persist whose shared form equals it is a
    *  view-state-only change and must not rewrite the tracked sidecar. */
   private diskSharedSerialized: string | null = null;
+  /** View-state as last loaded into / persisted from this panel; flushes write only the delta
+   *  against it (see mergeViewStateChange). null = no view-state file existed at load. */
+  private viewStateBaseline: ViewState | null = null;
   /** Set while the sidecar on disk is unparseable; shared writes are refused until a clean read. */
   private sidecarCorrupt = false;
   /** True once the webview has sent `ready` and received schema/layout; prompts wait for this. */
@@ -511,7 +514,10 @@ export class DiagramPanel {
    *  seeded once from flags a legacy (≤ v0.2.2) sidecar still carries; the next persist saves it. */
   private async withViewState(shared: Layout): Promise<Layout> {
     const vs = await readViewState(this.context, this.dbmlUri);
-    return applyViewState(shared, vs ?? extractViewState(shared));
+    const layout = applyViewState(shared, vs ?? extractViewState(shared));
+    // What the webview now knows; null forces the first persist to create the file (seeding).
+    this.viewStateBaseline = vs === null ? null : extractViewState(layout);
+    return layout;
   }
 
   /**
@@ -919,7 +925,13 @@ export class DiagramPanel {
     }
     // Local view-state: never tracked by git, so failures here are non-fatal.
     try {
-      await writeViewState(this.context, this.dbmlUri, extractViewState(layout));
+      const next = extractViewState(layout);
+      const base = this.viewStateBaseline;
+      if (base === null || !sameViewState(base, next)) {
+        const disk = (await readViewState(this.context, this.dbmlUri)) ?? emptyViewState();
+        await writeViewState(this.context, this.dbmlUri, mergeViewStateChange(disk, base ?? emptyViewState(), next));
+        this.viewStateBaseline = next;
+      }
     } catch (err) {
       console.error('[dddbml] failed to write view-state', err);
     }

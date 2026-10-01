@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -280,6 +281,47 @@ describe('view-state vs legacy sidecar flags (F67)', () => {
     writeFileSync(join(h.dir, 'd.dbml.layout.json'), LEGACY); // pulled from an old release
     const again = await open({ reuseDir: h.dir });
     expect(tablesOf(again.web.posted.find((m) => m.type === 'layout:loaded'))['public.a']?.hidden).toBeUndefined();
+  });
+});
+
+describe('view-state writes are per-key changes, not whole-file replacement', () => {
+  const viewStatePath = (h: Harness) =>
+    join(h.dir, 'global', 'view-state', `${createHash('sha256').update(h.dbml.toString()).digest('hex')}.json`);
+  const readVs = (h: Harness) => JSON.parse(readFileSync(viewStatePath(h), 'utf8')) as { tables: Record<string, unknown>; groups: Record<string, unknown>; viewport: unknown };
+
+  it("keeps another window's hide/collapse flags when this window persists an unrelated edit", async () => {
+    const h = await open();
+    const loaded = h.web.posted.find((m) => m.type === 'layout:loaded')!;
+    await h.web.receive({ type: 'layout:persist', payload: { ...(loaded.payload as Layout), tables: { 'public.a': { x: 5, y: 0 }, 'public.b': { x: 400, y: 0 } } } });
+    await DiagramPanel.settle();
+    await vi.waitFor(() => expect(readVs(h)).toBeDefined());
+    // Window 1 (another extension host sharing globalStorage) hides b and collapses G.
+    writeFileSync(viewStatePath(h), JSON.stringify({ viewport: { x: -500, y: -200, zoom: 0.5 }, tables: { 'public.b': { hidden: true } }, groups: { G: { collapsed: true } } }));
+    // Window 2 (this panel) drags a.
+    await h.web.receive({ type: 'layout:persist', payload: { ...(loaded.payload as Layout), tables: { 'public.a': { x: 50, y: 0 }, 'public.b': { x: 400, y: 0 } } } });
+    await vi.waitFor(() => expect(h.readSidecar()).toContain('"x": 50'));
+    await DiagramPanel.settle();
+    const vs = readVs(h);
+    expect(vs.tables).toEqual({ 'public.b': { hidden: true } });
+    expect(vs.groups).toEqual({ G: { collapsed: true } });
+    expect(vs.viewport).toEqual({ x: -500, y: -200, zoom: 0.5 });
+  });
+
+  it('keeps hidden flags of tables the webview never heard about (corrupt sidecar at open, F66)', async () => {
+    const h = await open();
+    const loaded = h.web.posted.find((m) => m.type === 'layout:loaded')!;
+    await h.web.receive({ type: 'layout:persist', payload: { ...(loaded.payload as Layout), tables: { 'public.a': { x: 0, y: 0, hidden: true }, 'public.b': { x: 400, y: 0 } } } });
+    await vi.waitFor(() => expect(readVs(h).tables).toEqual({ 'public.a': { hidden: true } }));
+    DiagramPanel.disposeAll();
+    await DiagramPanel.settle();
+    h.writeSidecar(h.readSidecar().replace('"edges": {}', '"edges": {},')); // trailing comma
+    const again = await open({ reuseDir: h.dir });
+    const reloaded = again.web.posted.find((m) => m.type === 'layout:loaded')!;
+    // The webview auto-places both tables (no entries) and the user moves one.
+    await again.web.receive({ type: 'layout:persist', payload: { ...(reloaded.payload as Layout), tables: { 'public.a': { x: 32, y: 32 }, 'public.b': { x: 99, y: 0 } } } });
+    await new Promise((r) => setTimeout(r, 300));
+    await DiagramPanel.settle();
+    expect(readVs(again).tables).toEqual({ 'public.a': { hidden: true } });
   });
 });
 
