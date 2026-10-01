@@ -122,6 +122,10 @@ duplicar el panel.
     los 3 modos de LOD (Full / Medium / Low) renderizando el **`TableNode` real** sobre una
     tabla dummy — ver spec 12 (`render/lodPreview.tsx`).
   - *Export*: defaultFormat, typeorm.{dialect, singularize, includeImports, emitNullableExplicit}.
+    `defaultFormat` y `dialect` son `SelectField` poblados desde `store.exporters` (ids de exporter;
+    `choices` del campo `dialect` del exporter TypeORM = dialects registrados = enum de
+    `package.json`), no texto libre. Un valor guardado fuera de la lista se muestra como
+    "(unsupported)" para no ocultarlo; el modal de export lo coerciona al `default` del campo.
 
 - **Reset (por sección + global).** Cada header de sección tiene un botón reset (`discard`,
   `<Button variant="subtle" size="icon">`) que envía `settings:update` con `patchFor(CATEGORY_KEYS[cat])`

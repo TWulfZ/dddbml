@@ -4,13 +4,14 @@ import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
 import { Modal } from '../ui/Modal';
-import { NumberField, TextField, Checkbox } from '../ui/Field';
+import { NumberField, SelectField, Checkbox, type SelectOption } from '../ui/Field';
 import { Slider } from '../ui/Slider';
 import { RadioGroup } from '../ui/RadioGroup';
 import { Button } from '../ui/Button';
 import { HoverCard } from '../ui/HoverCard';
 import { LodPreview } from './lodPreview';
 import { IconLayout, IconZoom, IconEye, IconExport, IconInfo, IconReset } from '../icons';
+import type { ExporterMeta } from '../../shared/exporters/types';
 import { defaultSettings, flattenSettings, SETTING_RANGES, type FlatSettingsPatch, type NumericSettingKey, type UiDensity } from '../../shared/types';
 
 type PatchKey = keyof FlatSettingsPatch;
@@ -54,6 +55,7 @@ function update(patch: Partial<FlatSettingsPatch>) {
 function SettingsPanelImpl() {
   const open = useAppStore((s) => s.settingsPanelOpen);
   const settings = useAppStore((s) => s.settings);
+  const exporters = useAppStore((s) => s.exporters);
   const [active, setActive] = useState<Category>('interface');
 
   const apply = <K extends PatchKey>(key: K, value: FlatSettingsPatch[K]) => {
@@ -170,8 +172,18 @@ function SettingsPanelImpl() {
 
           {active === 'export' ? (
             <Section category="export">
-              <TextField label="Default format" value={settings.export.defaultFormat} onCommit={(v) => apply('export.defaultFormat', v)} />
-              <TextField label="TypeORM dialect" value={settings.export.typeorm.dialect} onCommit={(v) => apply('export.typeorm.dialect', v)} />
+              <SelectField
+                label="Default format"
+                value={settings.export.defaultFormat}
+                options={withCurrent(exporters.map((e) => ({ value: e.id, label: e.label })), settings.export.defaultFormat)}
+                onChange={(v) => apply('export.defaultFormat', v)}
+              />
+              <SelectField
+                label="TypeORM dialect"
+                value={settings.export.typeorm.dialect}
+                options={withCurrent(dialectChoices(exporters), settings.export.typeorm.dialect)}
+                onChange={(v) => apply('export.typeorm.dialect', v)}
+              />
               <Checkbox label="Singularize class names" value={settings.export.typeorm.singularize} onCommit={(v) => apply('export.typeorm.singularize', v)} />
               <Checkbox label="Include typeorm imports" value={settings.export.typeorm.includeImports} onCommit={(v) => apply('export.typeorm.includeImports', v)} />
               <Checkbox label="Emit nullable explicit" value={settings.export.typeorm.emitNullableExplicit} onCommit={(v) => apply('export.typeorm.emitNullableExplicit', v)} />
@@ -207,6 +219,20 @@ function Section({ category, info, children }: { category: Category; info?: VNod
 
 function close() {
   store.getState().setSettingsPanelOpen(false);
+}
+
+/** Registered dialects, as declared by the host's TypeORM exporter (the package.json enum). */
+function dialectChoices(exporters: ExporterMeta[]): SelectOption[] {
+  const field = exporters.find((e) => e.id === 'typeorm')?.optionsSchema.find((f) => f.id === 'dialect');
+  return field?.type === 'enum' ? field.choices.map((c) => ({ value: c.value, label: c.label })) : [];
+}
+
+/**
+ * Keep the stored value selectable while the exporter list hasn't arrived (or names something
+ * unknown): a `<select>` whose value has no option renders blank and hides what is configured.
+ */
+function withCurrent(options: SelectOption[], current: string): SelectOption[] {
+  return options.some((o) => o.value === current) ? options : [...options, { value: current, label: options.length > 0 ? `${current} (unsupported)` : current }];
 }
 
 // memo: App re-renders on many store slices; this only re-renders via its own subscriptions.
