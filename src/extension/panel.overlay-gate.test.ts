@@ -6,7 +6,7 @@ vi.mock('vscode', () => import('./testing/vscodeFake'));
 
 import { fake } from './testing/vscodeFake';
 import { DiagramPanel } from './panel';
-import { cleanupDirs, DBML, gitIn, openPanel, persistPayload, settle, sidecarText, type Git, type Harness } from './testing/panelHarness';
+import { cleanupDirs, DBML, gitIn, openPanel, persistPayload, settle, sidecarText, tablesOf, type Git, type Harness } from './testing/panelHarness';
 import type { Schema } from '../shared/types';
 
 /** Host half of the read-only gate during the git overlays: time travel and diff (spec 16). */
@@ -199,3 +199,31 @@ describe('overlay transitions are serialized', () => {
   });
 });
 
+describe('a re-shown webview during a diff', () => {
+  it('gets the diff together with the working state, never an editable canvas first', async () => {
+    const { h } = await withHistory();
+    writeFileSync(join(h.dir, 'd.dbml'), `${DBML}\nTable c {\n  id int\n}\n`);
+    await h.web.receive({ type: 'git:diff:enter' });
+    await vi.waitFor(() => expect(h.web.posted.some((m) => m.type === 'git:diff:enter')).toBe(true));
+    await h.web.setVisible(false);
+    h.mark();
+    await h.web.setVisible(true);
+    void h.web.receive({ type: 'ready' });
+    await vi.waitFor(() => expect(h.since('schema:update')).toHaveLength(1), { interval: 1 });
+    expect(h.since('git:diff:enter')).toHaveLength(1);
+  });
+
+  it('reverts a persist dropped during the diff when the diff exits', async () => {
+    const { h } = await withHistory();
+    writeFileSync(join(h.dir, 'd.dbml'), `${DBML}\nTable c {\n  id int\n}\n`);
+    await h.web.receive({ type: 'git:diff:enter' });
+    await vi.waitFor(() => expect(h.web.posted.some((m) => m.type === 'git:diff:enter')).toBe(true));
+    await h.web.receive(persistPayload(h, { 'public.a': { x: 999, y: 0 }, 'public.b': { x: 400, y: 0 } }));
+    h.mark();
+    const start = h.web.posted.length;
+    await h.web.receive({ type: 'git:diff:exit' });
+    await vi.waitFor(() => expect(h.since('git:diff:exit')).toHaveLength(1));
+    expect(flowFrom(h, start, ['layout:loaded', 'git:diff:exit'])).toEqual(['layout:loaded', 'git:diff:exit']);
+    expect(tablesOf(h.since('layout:loaded')[0])['public.a']).toEqual({ x: 0, y: 0 });
+  });
+});

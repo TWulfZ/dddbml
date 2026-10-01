@@ -78,6 +78,9 @@ export class DiagramPanel {
   private gitOverlay: GitOverlay | null = null;
   /** A watcher or git-op reload that arrived during a git overlay; replayed when it ends (F21). */
   private reloadDeferred = false;
+  /** A layout:persist was dropped by the gate: the webview shows an edit the host never took, so
+   *  the next overlay exit must re-send the layout even when nothing else changed. */
+  private webviewDiverged = false;
   /** Overlay enter/exit and hydrate run one at a time. Interleaved, a second Exit click posted its
    *  exit before the first had sent the working state, unlocking the past revision for editing. */
   private overlayQueue: Promise<void> = Promise.resolve();
@@ -484,12 +487,15 @@ export class DiagramPanel {
     this.lastPostedMergeSig = null; // a fresh webview has no merge on screen: re-post it (F02)
     this.reloadDeferred = false; // it gets the current working state below
     await this.flushPendingPersistNow(); // sendLayout drops a pending persist; a working edit must land first
+    // Computed before the working state goes out: awaiting the diff after it left the fresh webview
+    // editable while the host still dropped its persists (spec 16).
+    const overlay = await this.overlayToRepost();
     // Send layout first so that when the schema arrives, positions are already in the
     // store and the auto-layout effect skips tables that already have a saved position.
     await this.sendLayout();
     await this.sendSchema();
     this.maybePostMerge(); // after schema, so the ghost tables can render
-    await this.repostGitOverlay();
+    if (overlay && this.gitOverlay) this.post(overlay); // a merge found meanwhile takes over instead
     this.post({ type: 'theme:change', payload: { kind: this.currentThemeKind() } });
     this.post({ type: 'settings:loaded', payload: loadSettings() });
     this.post({ type: 'exporters:list', payload: { exporters: listExporters() } });
@@ -549,6 +555,7 @@ export class DiagramPanel {
     // The webview is about to show this layout; a persist accepted against what it showed before
     // (another revision, or a reload that raced it) must not be written over it.
     this.cancelPendingPersist();
+    this.webviewDiverged = false;
     this.layoutLoaded = true;
     const external = isExternal === 'ifChanged' ? this.diskSidecarText !== seen : isExternal;
     this.post({
@@ -942,16 +949,16 @@ export class DiagramPanel {
 
   /**
    * End a git overlay and bring the webview back to the working state: time travel always (the past
-   * revision is on screen), a diff only when a reload was deferred meanwhile. The exit is posted
-   * LAST — the webview stays read-only until the working state is in its store (F27), and a merge
-   * found by the reload opens before it (merge wins over the overlay).
+   * revision is on screen), a diff only when a reload was deferred or a persist dropped meanwhile.
+   * The exit is posted LAST — the webview stays read-only until the working state is in its store
+   * (F27), and a merge found by the reload opens before it (merge wins over the overlay).
    */
   private async leaveOverlay(exit: 'git:timeTravel:exit' | 'git:diff:exit'): Promise<void> {
     const overlay = this.gitOverlay;
     // A repeated Exit, or a merge that already took over: nothing was restored, so nothing to unlock.
     if (!overlay) return;
     this.gitOverlay = null;
-    if (overlay.kind === 'timeTravel' || this.reloadDeferred) {
+    if (overlay.kind === 'timeTravel' || this.reloadDeferred || this.webviewDiverged) {
       this.reloadDeferred = false;
       await this.sendSchema();
       await this.sendLayout('ifChanged');
@@ -960,18 +967,18 @@ export class DiagramPanel {
     this.post({ type: exit });
   }
 
-  /** A reloaded webview starts on the working state; put the overlay it was showing back on top. */
-  private async repostGitOverlay(): Promise<void> {
+  /** A reloaded webview starts on the working state; the overlay it was showing goes back on top. */
+  private async overlayToRepost(): Promise<HostToWebview | null> {
     const overlay = this.gitOverlay;
-    if (!overlay) return;
-    if (overlay.kind === 'timeTravel') {
-      this.post({ type: 'git:timeTravel:enter', payload: overlay.enter });
-      return;
-    }
+    if (!overlay) return null;
+    if (overlay.kind === 'timeTravel') return { type: 'git:timeTravel:enter', payload: overlay.enter };
     // The working tree may have changed while the diff was up; a stale diff would mis-tint it.
     const diff = await this.computeDiff();
-    if (diff && this.gitOverlay === overlay) this.post({ type: 'git:diff:enter', payload: diff });
-    else if (this.gitOverlay === overlay) this.gitOverlay = null;
+    if (!diff) {
+      this.gitOverlay = null;
+      return null;
+    }
+    return { type: 'git:diff:enter', payload: diff };
   }
 
   /**
@@ -1049,6 +1056,7 @@ export class DiagramPanel {
     const reason = this.readOnly;
     if (reason) {
       console.warn(`[dddbml] layout:persist dropped: the canvas is read-only (${reason}).`);
+      this.webviewDiverged = true;
       return;
     }
     const merged = mergeLayout(this.currentLayout, payload);
