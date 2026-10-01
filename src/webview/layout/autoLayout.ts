@@ -64,12 +64,15 @@ function activeMetrics() {
  */
 export function estimateSize(columnCount: number): NodeSize {
   const m = activeMetrics();
-  return { width: m.tableWidth, height: m.headerHeight + columnCount * m.rowHeight + m.colsPad };
+  return {
+    width: m.tableWidth,
+    height: m.borderTop + m.headerHeight + columnCount * m.rowHeight + m.colsPad + m.borderBottom,
+  };
 }
 
 /** Y offset (from table top) for the vertical center of a column row at `index`. */
 export function columnCenterY(index: number): number {
   const m = activeMetrics();
   const topPad = m.colsPad / 2;
-  return m.headerHeight + topPad + index * m.rowHeight + m.rowHeight / 2;
+  return m.borderTop + m.headerHeight + topPad + index * m.rowHeight + m.rowHeight / 2;
 }

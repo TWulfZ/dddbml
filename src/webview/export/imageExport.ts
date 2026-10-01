@@ -91,7 +91,6 @@ export interface ThemeTokens {
 
 const PADDING = 28;
 const RADIUS = 6;
-const STRIPE = 3;
 
 const PAD_X: Record<UiDensity, number> = { compact: 6, cozy: 10, comfortable: 12 };
 const TEXT_PX: Record<UiDensity, number> = { compact: 11, cozy: 12, comfortable: 13 };
@@ -308,11 +307,12 @@ export function renderSvg(model: ExportModel, theme: ThemeTokens, resolve: (colo
     // a) surface fill
     out.push(`<rect x="${t.x}" y="${t.y}" width="${t.w}" height="${t.h}" rx="${RADIUS}" fill="${theme.surface}"/>`);
     // b) header band (rounded top) + c) accent stripe + d) header divider
-    out.push(`<path d="${roundedTopPath(t.x, t.y, t.w, m.headerHeight, RADIUS)}" fill="${headerBg}"/>`);
-    out.push(`<path d="${roundedTopPath(t.x, t.y, t.w, STRIPE, STRIPE)}" fill="${accent}"/>`);
-    out.push(`<line x1="${t.x}" y1="${t.y + m.headerHeight}" x2="${t.x + t.w}" y2="${t.y + m.headerHeight}" stroke="${theme.border}" stroke-width="1"/>`);
+    const headerBottom = t.y + m.borderTop + m.headerHeight;
+    out.push(`<path d="${roundedTopPath(t.x, t.y, t.w, m.borderTop + m.headerHeight, RADIUS)}" fill="${headerBg}"/>`);
+    out.push(`<path d="${roundedTopPath(t.x, t.y, t.w, m.borderTop, m.borderTop)}" fill="${accent}"/>`);
+    out.push(`<line x1="${t.x}" y1="${headerBottom}" x2="${t.x + t.w}" y2="${headerBottom}" stroke="${theme.border}" stroke-width="1"/>`);
     // e) header title
-    const titleY = t.y + m.headerHeight / 2;
+    const titleY = t.y + m.borderTop + m.headerHeight / 2;
     out.push(headerTitle(t.x + padX, titleY, t.schemaName, t.tableName, avail, textPx, theme));
     // f) column rows
     for (let i = 0; i < t.columns.length; i++) {

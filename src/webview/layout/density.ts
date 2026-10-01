@@ -5,6 +5,9 @@ export interface DensityMetrics {
   rowHeight: number;
   headerHeight: number;
   colsPad: number;
+  /** `.ddd-table` outer borders: the 3px accent stripe on top, 1px below. They add to the auto height. */
+  borderTop: number;
+  borderBottom: number;
 }
 
 /**
@@ -17,11 +20,11 @@ export interface DensityMetrics {
 export function densityMetrics(d: UiDensity): DensityMetrics {
   switch (d) {
     case 'compact':
-      return { tableWidth: 200, rowHeight: 16, headerHeight: 22, colsPad: 4 };
+      return { tableWidth: 200, rowHeight: 16, headerHeight: 22, colsPad: 4, borderTop: 3, borderBottom: 1 };
     case 'comfortable':
-      return { tableWidth: 280, rowHeight: 26, headerHeight: 34, colsPad: 12 };
+      return { tableWidth: 280, rowHeight: 26, headerHeight: 34, colsPad: 12, borderTop: 3, borderBottom: 1 };
     case 'cozy':
     default:
-      return { tableWidth: 240, rowHeight: 20, headerHeight: 28, colsPad: 8 };
+      return { tableWidth: 240, rowHeight: 20, headerHeight: 28, colsPad: 8, borderTop: 3, borderBottom: 1 };
   }
 }
