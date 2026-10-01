@@ -42,7 +42,7 @@ export const typeormExporter: Exporter = {
       type: 'boolean',
       label: 'Emit nullable explicitly',
       default: true,
-      description: 'Always include `nullable: true/false` in @Column options.',
+      description: '`nullable: true` is always emitted when needed; this also adds the redundant `nullable: false`.',
     },
   ],
   export: generateTypeOrm,

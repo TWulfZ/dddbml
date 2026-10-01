@@ -108,7 +108,9 @@ function emitColumn(
   if (col.unique) colOpts.unique = true;
   // Postgres serial columns are NOT NULL by definition.
   const nullable = !col.notNull && !generated;
-  if (opts.emitNullableExplicit) colOpts.nullable = nullable;
+  // TypeORM defaults to NOT NULL, so only `nullable: false` is ever redundant.
+  if (nullable) colOpts.nullable = true;
+  else if (opts.emitNullableExplicit) colOpts.nullable = false;
   const defaultExpr = generated ? undefined : emitDefault(col);
   if (defaultExpr !== undefined) colOpts.default = defaultExpr;
 

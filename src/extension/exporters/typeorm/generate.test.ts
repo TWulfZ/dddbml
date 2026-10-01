@@ -226,6 +226,19 @@ describe('generateTypeOrm — auto-increment keeps the column width', () => {
   });
 });
 
+describe('generateTypeOrm — emitNullableExplicit=false', () => {
+  it('drops only the redundant nullable: false, never the needed nullable: true', () => {
+    const { content } = exportDbml(
+      `Table people { id int [pk]
+        bio text
+        name text [not null] }`,
+      { emitNullableExplicit: false },
+    );
+    expect(propertyLine(content, 'bio')).toBe('@Column({ type: "text", nullable: true })');
+    expect(propertyLine(content, 'name')).toBe('@Column({ type: "text" })');
+  });
+});
+
 describe('generateTypeOrm — entities without a primary column', () => {
   it('emits a composite pk index as one @PrimaryColumn per member', () => {
     const { content, warnings } = exportDbml(`

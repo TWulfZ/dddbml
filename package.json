@@ -236,7 +236,7 @@
         "dddbml.export.typeorm.emitNullableExplicit": {
           "type": "boolean",
           "default": true,
-          "description": "Always include `nullable: true/false` in @Column options for non-primary columns."
+          "description": "Also emit the redundant `nullable: false` on NOT NULL columns. `nullable: true` is always emitted when a column is nullable."
         }
       }
     }

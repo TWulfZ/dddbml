@@ -190,7 +190,7 @@ Match case-insensitive, ignorando paréntesis para length/precision:
 - PK compuesta (`indexes { (a, b) [pk] }`): el parser marca `pk` en cada miembro, así que se emite un `@PrimaryColumn` por miembro (TypeORM los trata como clave compuesta).
 - Tabla sin ninguna columna `pk` → warning: TypeORM rechaza entities sin primary column al inicializar el DataSource.
 - `unique` (no pk) → opción `{ unique: true }`.
-- `notNull` → `{ nullable: false }`. Default TypeORM es `nullable: false` para columnas regulares; emitimos explícito siempre que el DBML diga `notNull`, **y** explícito `nullable: true` cuando no diga `notNull` ni `pk`. (Reduce sorpresas.)
+- Nulabilidad (columnas regulares): sin `notNull` → `{ nullable: true }` **siempre** (default de TypeORM es NOT NULL, así que omitirlo cambiaría el schema). Con `notNull` → `{ nullable: false }` sólo si `emitNullableExplicit` (es redundante; la opción sólo controla eso).
 - `default`: se decide por `Column.defaultKind` (el tipo que @dbml/core reporta en `dbdefault.type`), no por el texto:
   - `expression` (backticks, p.ej. `` `now()` ``, `` `CURRENT_TIMESTAMP` ``) → `{ default: () => 'now()' }`.
   - `string` → `{ default: '<value>' }` literal, aunque parezca número, booleano o llamada (`'00501'`, `'true'`, `'now()'`). Si contiene `'`, se emite como expresión con las comillas duplicadas (`() => "'it''s'"`), porque TypeORM no escapa los string defaults.
@@ -289,7 +289,7 @@ optionsSchema: [
     choices: [{ value: 'postgres', label: 'PostgreSQL' }] },
   { id: 'singularize', type: 'boolean', label: 'Singularize class names (English)', default: true },
   { id: 'includeImports', type: 'boolean', label: 'Include typeorm imports', default: true },
-  { id: 'emitNullableExplicit', type: 'boolean', label: 'Emit nullable: true/false explicitly', default: true },
+  { id: 'emitNullableExplicit', type: 'boolean', label: 'Emit nullable: true/false explicitly', default: true },  // sólo agrega el redundante `nullable: false`; `nullable: true` sale siempre
 ]
 ```
 
