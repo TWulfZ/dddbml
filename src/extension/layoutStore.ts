@@ -41,13 +41,17 @@ export function hasConflictMarkers(text: string): boolean {
  * purpose: leaving it out is what silently wiped persisted waypoints/colors/sides to `{}`.
  */
 export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
-  return {
+  // The positionless hidden markers belong to the `tables` set: a payload's tables replace both.
+  const tablesFrom = payload.tables ? payload : current;
+  const merged: Layout = {
     version: 1,
     viewport: payload.viewport ?? current.viewport,
-    tables: payload.tables ?? current.tables,
+    tables: tablesFrom.tables ?? current.tables,
     groups: payload.groups ?? current.groups,
     edges: payload.edges ?? current.edges ?? {},
   };
+  if (tablesFrom.hiddenUnplaced && tablesFrom.hiddenUnplaced.length > 0) merged.hiddenUnplaced = tablesFrom.hiddenUnplaced;
+  return merged;
 }
 
 /** Raw sidecar text, or null when the file is missing/unreadable. */

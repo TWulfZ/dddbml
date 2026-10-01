@@ -53,3 +53,14 @@ describe('viewStateStore — extract / apply split', () => {
     expect(rebuilt.groups).toEqual({ g: { color: '#def' } });
   });
 });
+
+describe('hidden tables with no shared entry (F66)', () => {
+  const empty: Layout = { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
+
+  it('reach the webview as a positionless marker and survive the persist round trip', () => {
+    const loaded = applyViewState(empty, { viewport: { x: 0, y: 0, zoom: 1 }, tables: { t: { hidden: true } }, groups: {} });
+    expect(loaded.hiddenUnplaced).toEqual(['t']);
+    // The webview has not placed t yet and echoes the marker back with its next persist.
+    expect(extractViewState({ ...empty, hiddenUnplaced: ['t'] }).tables).toEqual({ t: { hidden: true } });
+  });
+});

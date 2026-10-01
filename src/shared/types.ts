@@ -127,6 +127,12 @@ export interface Layout {
   tables: Record<QualifiedName, TableLayout>;
   groups: Record<string, GroupLayout>;
   edges?: Record<string, EdgeLayout>;
+  /**
+   * Personal hidden flags of tables with no `tables` entry yet (no shared position, e.g. a new or
+   * never-dragged table, or a corrupt sidecar at open). Rides with `tables` in both directions and
+   * is never serialized to the sidecar (F66).
+   */
+  hiddenUnplaced?: QualifiedName[];
 }
 
 /* ----- Collaborative merge (see specs/14) ----- */

@@ -41,6 +41,8 @@ export function schedulePersist(): void {
       tables: toTableLayoutRecord(state.positions, state.hiddenTables, state.tableColors),
       groups: state.groups,
       edges,
+      // Hidden but not yet placed (no position to carry `hidden` on); always sent, it rides with tables.
+      hiddenUnplaced: [...state.hiddenTables].filter((n) => !state.positions.has(n)),
       version: 1,
     },
   });

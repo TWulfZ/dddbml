@@ -25,6 +25,7 @@ export function extractViewState(layout: Layout): ViewState {
   for (const [k, v] of Object.entries(layout.tables)) {
     if (v.hidden) tables[k] = { hidden: true };
   }
+  for (const k of layout.hiddenUnplaced ?? []) tables[k] = { hidden: true };
   const groups: ViewState['groups'] = {};
   for (const [k, v] of Object.entries(layout.groups)) {
     const g: { hidden?: boolean; collapsed?: boolean } = {};
@@ -48,6 +49,7 @@ export function applyViewState(shared: Layout, vs: ViewState): Layout {
     if (vs.tables[k]?.hidden) t.hidden = true;
     tables[k] = t;
   }
+  const hiddenUnplaced = Object.keys(vs.tables).filter((k) => vs.tables[k]?.hidden && !(k in shared.tables)).sort();
 
   const groups: Record<string, GroupLayout> = {};
   const groupKeys = new Set([...Object.keys(shared.groups), ...Object.keys(vs.groups)]);
@@ -60,7 +62,12 @@ export function applyViewState(shared: Layout, vs: ViewState): Layout {
     groups[k] = g;
   }
 
-  return { ...shared, viewport: vs.viewport, tables, groups };
+  // Built field by field: a `shared` that is the in-memory layout (corrupt-sidecar fallback) may
+  // carry stale markers, and the markers must come from `vs` alone.
+  const out: Layout = { version: shared.version, viewport: vs.viewport, tables, groups };
+  if (shared.edges) out.edges = shared.edges;
+  if (hiddenUnplaced.length > 0) out.hiddenUnplaced = hiddenUnplaced;
+  return out;
 }
 
 type GroupFlags = { hidden?: boolean; collapsed?: boolean };

@@ -159,6 +159,12 @@ Flujo host (`panel.ts`):
   máquina (`globalStorage`) y un panel sólo conoce los flags de las entradas que se le
   mostraron: reemplazarlo borraba hide/collapse/cámara de otra ventana y el `hidden` de
   tablas sin entrada en el sidecar (p.ej. sidecar corrupto al abrir).
+- **Ocultas sin posición (F66).** Una tabla oculta en el view-state que no tiene entrada en el
+  sidecar (nunca arrastrada, sidecar corrupto o ausente) viaja al webview en
+  `Layout.hiddenUnplaced` (marcador sin posición; nunca se serializa al sidecar). `setLayout` la
+  agrega a `hiddenTables` sin posición, el auto-layout la ubica y desde ahí persiste como
+  `hidden: true` en su entrada. Hasta entonces el webview devuelve el marcador en cada
+  `layout:persist` (va con `tables`), así des-ocultarla o no tocarla nunca se confunden.
 - **Cámara (decisión 2026-10-01, F26).** El webview persiste el `viewport` al terminar un
   pan/zoom (debounced) y solo va al view-state local, nunca al sidecar. Un push de layout del
   host (watcher, merge aplicado, salida de overlay) no reemplaza la cámara actual; el viewport

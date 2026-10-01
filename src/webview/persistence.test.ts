@@ -60,3 +60,15 @@ describe('camera persistence (F26)', () => {
     expect(viewportPosts()).toHaveLength(1);
   });
 });
+
+describe('locally hidden table with no sidecar entry (F66)', () => {
+  it('renders hidden and is persisted as hidden once auto-layout places it', () => {
+    store.getState().setLayout({ version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {}, hiddenUnplaced: ['public.t'] });
+    expect(store.getState().hiddenTables.has('public.t')).toBe(true);
+    schedulePersist();
+    expect(persists().at(-1)![0]).toMatchObject({ payload: { hiddenUnplaced: ['public.t'] } });
+    store.getState().setPositionsBatch([['public.t', { x: 10, y: 20 }]]);
+    schedulePersist();
+    expect(persists().at(-1)![0]).toMatchObject({ payload: { tables: { 'public.t': { x: 10, y: 20, hidden: true } }, hiddenUnplaced: [] } });
+  });
+});

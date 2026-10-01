@@ -299,6 +299,8 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       if (pos.hidden) hiddenTables.add(name);
       if (pos.color) tableColors.set(name, pos.color);
     }
+    // No position: the auto-layout effect places these, and they then persist as hidden (F66).
+    for (const name of layout.hiddenUnplaced ?? []) hiddenTables.add(name);
     for (const [id, eo] of Object.entries(layout.edges ?? {})) {
       // Orphans no edge can resolve; dropping them here cleans the sidecar on the next persist.
       if (!isEdgeKey(id)) continue;
