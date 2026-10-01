@@ -1,5 +1,5 @@
 import { store } from '../state/store';
-import { estimateSize } from '../layout/autoLayout';
+import { deriveSceneGeometry, sceneBounds } from './sceneGeometry';
 import type { Bbox } from './spatialIndex';
 
 export interface Point { x: number; y: number }
@@ -59,27 +59,19 @@ export function resetView(): void {
 export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
   const state = store.getState();
   const { zoomMin, zoomMax } = state.settings;
-  const tables = state.schema.tables;
-  if (tables.length === 0) return;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const t of tables) {
-    const pos = state.positions.get(t.name);
-    if (!pos) continue;
-    const size = estimateSize(t.columns.length);
-    if (pos.x < minX) minX = pos.x;
-    if (pos.y < minY) minY = pos.y;
-    if (pos.x + size.width > maxX) maxX = pos.x + size.width;
-    if (pos.y + size.height > maxY) maxY = pos.y + size.height;
-  }
-  if (!Number.isFinite(minX)) return;
+  const { schema, positions } = state;
+  const tablesByName = new Map(schema.tables.map((t) => [t.name, t]));
+  const scene = deriveSceneGeometry(schema, positions, state.groups, state.hiddenTables, tablesByName);
+  const bounds = sceneBounds(schema, positions, scene);
+  if (!bounds) return;
   const rect = viewportEl.getBoundingClientRect();
   const availW = Math.max(1, rect.width - padding * 2);
   const availH = Math.max(1, rect.height - padding * 2);
-  const worldW = Math.max(1, maxX - minX);
-  const worldH = Math.max(1, maxY - minY);
+  const worldW = Math.max(1, bounds.w);
+  const worldH = Math.max(1, bounds.h);
   const zoom = clamp(Math.min(availW / worldW, availH / worldH), zoomMin, zoomMax);
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
+  const cx = bounds.x + bounds.w / 2;
+  const cy = bounds.y + bounds.h / 2;
   const x = rect.width / 2 - cx * zoom;
   const y = rect.height / 2 - cy * zoom;
   store.getState().setViewport({ x, y, zoom });

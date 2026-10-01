@@ -149,6 +149,15 @@ pasar el cursor por el canvas no lo enfoca. Por eso el viewport (con `tabIndex=0
 **enfoca en `pointerenter`** (salvo que un input/textarea/contenteditable tenga el
 foco), de modo que mantener Space sobre el canvas arma el paneo de inmediato.
 
+### Fit to content
+
+`fitToContent` (Ctrl+1, botón de zoom, comando) encuadra **lo que se dibuja**, no el
+schema completo: usa `deriveSceneGeometry` + `sceneBounds` (`render/sceneGeometry.ts`),
+los mismos helpers que `App` usa para `derived` y `worldBbox`. Omite tablas ocultas y
+miembros de grupos ocultos, usa el nodo de un grupo colapsado en vez de sus miembros e
+incluye padding + header del contenedor de grupo expandido. Si todo está oculto, no
+mueve la cámara.
+
 ### Selección
 
 - **Click simple** sobre una tabla → la selecciona sólo a ella (`setSelection([n])`).

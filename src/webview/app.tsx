@@ -13,6 +13,7 @@ import { AppMenu } from './render/appMenu';
 import { schedulePersist } from './persistence';
 import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
+import { deriveSceneGeometry, sceneBounds } from './render/sceneGeometry';
 import { lodForZoom } from './render/lod';
 import { useVisibleNames } from './render/useVisibleNames';
 import { edgeKeyedRefs } from './render/edgeKey';
@@ -31,11 +32,6 @@ import type { QualifiedName, RefDiffStatus, Table, WebviewToHost } from '../shar
 interface AppProps {
   post: (msg: WebviewToHost) => void;
 }
-
-const GROUP_NODE_W = 220;
-const GROUP_NODE_H = 80;
-const GROUP_CONTAINER_PADDING = 24;
-const GROUP_CONTAINER_HEADER = 20;
 
 const GROUP_PREFIX = '__group__:';
 const groupId = (name: string) => GROUP_PREFIX + name;
@@ -137,69 +133,8 @@ export function App(_props: AppProps) {
   }, [schema]);
 
   const derived = useMemo(() => {
-    const hiddenTables = new Set<QualifiedName>(individuallyHidden);
-    const collapsedTables = new Set<QualifiedName>();
-    const collapsedNodes: Array<{ name: string; x: number; y: number; w: number; h: number; color: string; count: number }> = [];
-    const containers: Array<{ name: string; x: number; y: number; w: number; h: number; color: string }> = [];
-
-    for (const g of schema.groups) {
-      const st = groupState[g.name];
-      if (st?.hidden) {
-        for (const t of g.tables) hiddenTables.add(t);
-        continue;
-      }
-      if (!st?.collapsed) {
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        let n = 0;
-        for (const t of g.tables) {
-          if (hiddenTables.has(t)) continue;
-          const pos = positions.get(t);
-          if (!pos) continue;
-          const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
-          if (pos.x < minX) minX = pos.x;
-          if (pos.y < minY) minY = pos.y;
-          if (pos.x + size.width > maxX) maxX = pos.x + size.width;
-          if (pos.y + size.height > maxY) maxY = pos.y + size.height;
-          n++;
-        }
-        if (n > 0) {
-          containers.push({
-            name: g.name,
-            x: Math.round(minX - GROUP_CONTAINER_PADDING),
-            y: Math.round(minY - GROUP_CONTAINER_PADDING - GROUP_CONTAINER_HEADER),
-            w: Math.round(maxX - minX + GROUP_CONTAINER_PADDING * 2),
-            h: Math.round(maxY - minY + GROUP_CONTAINER_PADDING * 2 + GROUP_CONTAINER_HEADER),
-            color: st?.color ?? colorForGroup(g.name),
-          });
-        }
-        continue;
-      }
-      if (st?.collapsed) {
-        let sumX = 0, sumY = 0, n = 0;
-        for (const t of g.tables) {
-          const pos = positions.get(t);
-          if (!pos) continue;
-          const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
-          sumX += pos.x + size.width / 2;
-          sumY += pos.y + size.height / 2;
-          n++;
-          collapsedTables.add(t);
-        }
-        if (n > 0) {
-          const cx = Math.round(sumX / n - GROUP_NODE_W / 2);
-          const cy = Math.round(sumY / n - GROUP_NODE_H / 2);
-          collapsedNodes.push({
-            name: g.name,
-            x: cx,
-            y: cy,
-            w: GROUP_NODE_W,
-            h: GROUP_NODE_H,
-            color: st.color ?? colorForGroup(g.name),
-            count: g.tables.length,
-          });
-        }
-      }
-    }
+    const { hiddenTables, collapsedTables, collapsedNodes, containers } =
+      deriveSceneGeometry(schema, positions, groupState, individuallyHidden, tablesByName);
 
     const mapEndpoint = (table: QualifiedName): QualifiedName | null => {
       if (hiddenTables.has(table)) return null;
@@ -499,32 +434,10 @@ export function App(_props: AppProps) {
   // World bounding box covering every rendered element — used to size the SVG edge layer
   // so paths are inside its coordinate viewport (more robust than overflow:visible on 0x0 parent).
   const worldBbox = useMemo(() => {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const t of schema.tables) {
-      if (derived.hiddenTables.has(t.name) || derived.collapsedTables.has(t.name)) continue;
-      const pos = positions.get(t.name);
-      if (!pos) continue;
-      const size = estimateSize(t.columns.length);
-      if (pos.x < minX) minX = pos.x;
-      if (pos.y < minY) minY = pos.y;
-      if (pos.x + size.width > maxX) maxX = pos.x + size.width;
-      if (pos.y + size.height > maxY) maxY = pos.y + size.height;
-    }
-    for (const g of derived.collapsedNodes) {
-      if (g.x < minX) minX = g.x;
-      if (g.y < minY) minY = g.y;
-      if (g.x + g.w > maxX) maxX = g.x + g.w;
-      if (g.y + g.h > maxY) maxY = g.y + g.h;
-    }
-    for (const c of derived.containers) {
-      if (c.x < minX) minX = c.x;
-      if (c.y < minY) minY = c.y;
-      if (c.x + c.w > maxX) maxX = c.x + c.w;
-      if (c.y + c.h > maxY) maxY = c.y + c.h;
-    }
-    if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 800, h: 600 };
+    const b = sceneBounds(schema, positions, derived);
+    if (!b) return { x: 0, y: 0, w: 800, h: 600 };
     const P = 400;
-    return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
+    return { x: Math.round(b.x - P), y: Math.round(b.y - P), w: Math.round(b.w + P * 2), h: Math.round(b.h + P * 2) };
   }, [schema, positions, derived, density]);
 
   // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
