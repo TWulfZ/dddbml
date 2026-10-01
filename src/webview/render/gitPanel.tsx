@@ -3,6 +3,7 @@ import { memo } from 'preact/compat';
 import { useEffect, useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
+import { flushPendingPersist } from '../persistence';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Search } from '../ui/Search';
@@ -129,12 +130,16 @@ function FileList({ status }: { status: GitStatusSummary }) {
   );
 }
 
+/** Staging the conflict-marked sidecar would erase git's unmerged stages (F31); the host refuses too. */
+const MERGE_BLOCKS_WRITES = 'Resolve the active layout merge before committing, stashing or discarding.';
+
 function CommitPane({ status }: { status: GitStatusSummary }) {
   const busy = useAppStore((s) => s.gitBusy);
+  const merging = useAppStore((s) => s.mergeConflicts != null);
   const commitOkCount = useAppStore((s) => s.gitCommitOkCount);
   const [message, setMessage] = useState('');
   const [confirmRevert, setConfirmRevert] = useState(false);
-  const canCommit = status.dirty && message.trim().length > 0 && !busy;
+  const canCommit = status.dirty && message.trim().length > 0 && !busy && !merging;
 
   // Clear only once the host reports success; a failed commit (no user.email, rejected hook)
   // used to wipe the message before the error toast arrived.
@@ -165,6 +170,7 @@ function CommitPane({ status }: { status: GitStatusSummary }) {
       <PanelHead icon={<IconGitCommit size={14} />} title="Commit" />
       <BranchRow status={status} />
       <FileList status={status} />
+      {merging ? <p class="ddd-git-warn">{MERGE_BLOCKS_WRITES}</p> : null}
       <label class="ddd-field">
         <span class="ddd-field__label">Commit message</span>
         <input
@@ -172,13 +178,13 @@ function CommitPane({ status }: { status: GitStatusSummary }) {
           type="text"
           value={message}
           placeholder="Describe the diagram change…"
-          disabled={!status.dirty || busy}
+          disabled={!status.dirty || busy || merging}
           onInput={(e) => setMessage((e.currentTarget as HTMLInputElement).value)}
           onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}
         />
       </label>
       <div class="ddd-git-actions">
-        <Button variant="danger" onClick={() => setConfirmRevert(true)} disabled={!status.dirty || busy}>
+        <Button variant="danger" onClick={() => setConfirmRevert(true)} disabled={!status.dirty || busy || merging}>
           <IconReset size={13} /> Discard changes
         </Button>
         <Button variant="primary" onClick={commit} disabled={!canCommit}>
@@ -212,7 +218,8 @@ function CommitPane({ status }: { status: GitStatusSummary }) {
 }
 
 function StashPane({ status }: { status: GitStatusSummary }) {
-  const busy = useAppStore((s) => s.gitBusy);
+  const busy = useAppStore((s) => s.gitBusy || s.mergeConflicts != null);
+  const merging = useAppStore((s) => s.mergeConflicts != null);
   const stashes = useAppStore((s) => s.gitStashes);
 
   // Stashes are repo-global — refresh the list whenever this pane mounts.
@@ -240,6 +247,7 @@ function StashPane({ status }: { status: GitStatusSummary }) {
           Stash changes
         </Button>
       </PanelHead>
+      {merging ? <p class="ddd-git-warn">{MERGE_BLOCKS_WRITES}</p> : null}
       {stashes.length === 0 ? (
         <p class="ddd-git-empty">No stashes.</p>
       ) : (
@@ -277,6 +285,7 @@ function HistoryPane() {
   const enter = (sha: string, label: string) => {
     if (merging) return;
     store.getState().setGitPanelOpen(false);
+    flushPendingPersist(); // the host drops persists once the overlay is up
     postToHost({ type: 'git:timeTravel:enter', payload: { sha, label } });
   };
 
@@ -344,6 +353,7 @@ function DiffPane({ status }: { status: GitStatusSummary }) {
   const showDiff = () => {
     if (merging) return;
     store.getState().setGitPanelOpen(false);
+    flushPendingPersist();
     postToHost({ type: 'git:diff:enter' });
   };
 

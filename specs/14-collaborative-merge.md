@@ -135,6 +135,9 @@ Sólo el host escribe el sidecar. Flujo:
      `git add -A`): el panel sigue en modo merge, read-only, con `merge:begin { conflicts: [],
      error }`; la barra muestra el error y no ofrece Apply. Nunca un layout vacío editable.
      Una lectura limpia posterior (el usuario arregló los marcadores) sale con `merge:done`.
+   - **`.dbml` y sidecar en conflicto a la vez**: el schema no parsea (sin tablas), pero el
+     mundo se monta igual mientras haya merge; los fantasmas caen al chip con el nombre
+     (`conflict.key`) y la barra explica que el `.dbml` debe parsear para ver las tablas.
    - **Resuelto/abortado fuera del diagrama** (`git checkout --theirs` + `add`, `merge
      --abort`): el watcher re-lee; sin conflicto, el host recarga el layout y postea
      `merge:done`. Un Apply que llega sin merge pendiente también responde `merge:done`.

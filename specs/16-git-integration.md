@@ -150,7 +150,10 @@ marca `is-focused` los routes cuyo endpoint coincide. Aplica en vista normal, di
 
 El gate de solo lectura es único: `isCanvasReadOnly(s) = mergeConflicts != null ||
 gitView != null`, consultado por drag/persist/undo/redo/marquee/teclado/smart-layout,
-edición de edges y el cinturón CSS `.is-merge-locked`. Merge y git-overlay son
+edición de edges, el panel **Diagram Views** (ocultar/colapsar/color de grupos, ocultar tablas:
+botones deshabilitados y las acciones `setGroup`/`setTableHidden`/`setTableColor`/`setEdgeColor`
+del store son no-op) y el cinturón CSS `.is-merge-locked`. Entrar en time-travel limpia los mapas
+de diff (solo son válidos bajo `gitView.kind === 'diff'`). Merge y git-overlay son
 mutuamente excluyentes (un merge del host limpia `gitView`).
 
 ### Gate en dos capas: host autoritativo + webview (decisión 2026-10-01)
@@ -172,7 +175,9 @@ de entrar sigue vivo, y el host acepta cualquier escritura. Por eso:
   conflicto, el host postea `merge:end` y recarga el layout; si la detección falla, el panel
   queda en solo lectura con el error visible (nunca un layout vacío editable).
 - **Webview.** `schedulePersist` evalúa el gate **al disparar** el timer, no solo al
-  programarlo, y entrar en solo lectura cancela el timer pendiente. Un write fallido al aplicar
+  programarlo, y entrar en solo lectura (por cualquier camino: una suscripción al store en
+  `persistence.ts`) cancela el timer pendiente; antes de pedir un overlay el panel Git vuelca el
+  persist pendiente (`flushPendingPersist`) para no perder la última edición. Un write fallido al aplicar
   un merge conserva las decisiones del usuario (no re-postea `merge:begin` desde cero).
 - Salir de cualquier overlay (incluido "Diff against HEAD" abierto desde time-travel) vuelve
   siempre al estado de trabajo.

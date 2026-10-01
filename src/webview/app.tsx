@@ -190,7 +190,9 @@ export function App(_props: AppProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
   const [viewportRect, setViewportRect] = useState({ w: 0, h: 0 });
-  const worldMounted = ready && schema.tables.length > 0;
+  // A merge mounts the world even with no parsed tables (the .dbml can conflict too): the ghosts
+  // fall back to chips, and without them table conflicts could not be picked.
+  const worldMounted = ready && (schema.tables.length > 0 || mergeConflicts != null);
 
   // The camera is applied imperatively (same technique as the drag controller): Preact never owns
   // `.ddd-world`'s transform, so pan/zoom frames touch one style property and nothing re-renders.

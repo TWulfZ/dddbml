@@ -29,6 +29,7 @@ function MergePanelImpl() {
   const view = useAppStore((s) => s.mergeView);
   const focusDimming = useAppStore((s) => s.focusDimming);
   const error = useAppStore((s) => s.mergeError);
+  const noTables = useAppStore((s) => s.schema.tables.length === 0);
   const [confirm, setConfirm] = useState(false);
 
   if (!conflicts) return null;
@@ -88,7 +89,11 @@ function MergePanelImpl() {
           <MergeStepper />
         ) : (
           <>
-            {tableCount > 0 ? (
+            {tableCount > 0 && noTables ? (
+              <p class="ddd-merge-bar__hint">
+                The .dbml does not parse yet, so each side's position shows as a name chip — click one, or use <em>Step through</em>. Fix the .dbml to see the full tables.
+              </p>
+            ) : tableCount > 0 ? (
               <p class="ddd-merge-bar__hint">
                 Table positions — click a ghost on the canvas, or use <em>Step through</em>. Kept lights up; the other turns red = discarded.
               </p>

@@ -252,6 +252,16 @@ const initial: AppState = {
   hoveredTable: null,
 };
 
+const NO_DIFF = {
+  diffByTable: null,
+  columnDiffByTable: null,
+  diffBaseByTable: null,
+  diffGhosts: null,
+  refDiff: null,
+  diffRemovedRefs: null,
+  diffCursor: -1,
+} satisfies Partial<AppState>;
+
 /** The canvas is read-only (pan/zoom only) during a merge OR any git overlay (time-travel / diff).
  *  Single predicate so every edit gate honors all three without scattering `||` checks (spec 14/16). */
 export function isCanvasReadOnly(s: AppState): boolean {
@@ -339,6 +349,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setGroup(name, patch) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s; // Diagram Views edits during merge/overlay would be reverted or lost
       const existing = s.groups[name] ?? {};
       const merged: GroupLayout = { ...existing, ...patch };
       if (merged.collapsed === false) delete merged.collapsed;
@@ -351,6 +362,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setTableHidden(name, hidden) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s;
       const next = new Set(s.hiddenTables);
       if (hidden) next.add(name); else next.delete(name);
       return { hiddenTables: next, selection: hidden ? withoutSelected(s.selection, [name]) : s.selection };
@@ -358,6 +370,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setTableColor(name, color) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s;
       const next = new Map(s.tableColors);
       if (color) next.set(name, color); else next.delete(name);
       return { tableColors: next };
@@ -397,6 +410,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setEdgeColor(refId, color) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s;
       const next = new Map(s.edgeLayouts);
       const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
       if (color) merged.color = color; else delete merged.color;
@@ -516,7 +530,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
     // A host merge always wins over a git overlay, so clear gitView too.
     const mergeDecisions = keepUnchangedDecisions(get(), conflicts);
-    set({ mergeConflicts: conflicts, mergeError: error, mergeDecisions, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: -1 });
+    set({ mergeConflicts: conflicts, mergeError: error, mergeDecisions, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, ...NO_DIFF });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -574,8 +588,9 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     set({ gitCommits: commits });
   },
   enterTimeTravel(rev, label) {
-    // Read-only preview of a past commit; drop selection so nothing edits behind the gate.
-    set({ gitView: { kind: 'timeTravel', rev, label }, selection: new Set(), selectedEdgeId: null });
+    // Read-only preview of a past commit; drop selection so nothing edits behind the gate. Diff maps
+    // are only valid under a diff view: kept, they would tint the past revision (F63).
+    set({ ...NO_DIFF, gitView: { kind: 'timeTravel', rev, label }, selection: new Set(), selectedEdgeId: null });
   },
   enterDiff(baseLabel, headLabel, diff) {
     const diffByTable = new Map<QualifiedName, TableDiffStatus>();
@@ -613,16 +628,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     });
   },
   exitGitView() {
-    set({
-      gitView: null,
-      diffByTable: null,
-      columnDiffByTable: null,
-      diffBaseByTable: null,
-      diffGhosts: null,
-      refDiff: null,
-      diffRemovedRefs: null,
-      diffCursor: -1,
-    });
+    set({ ...NO_DIFF, gitView: null });
   },
   setFocusDimming(on) {
     set({ focusDimming: on });
