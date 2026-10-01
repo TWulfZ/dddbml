@@ -174,7 +174,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     const pos = positions.get(t.name)!;
     const size = estimateSize(t.columns.length);
     const groupColor = t.groupName ? colorByGroup.get(t.groupName) : undefined;
-    const accent = tableColors.get(t.name) ?? groupColor ?? null;
+    const accent = tableColors.get(t.name) ?? t.headerColor ?? groupColor ?? null;
     tables.push({
       x: pos.x, y: pos.y, w: size.width, h: size.height,
       schemaName: t.schemaName, tableName: t.tableName,

@@ -42,7 +42,8 @@ export type IconName =
   | 'git-branch'
   | 'history'
   | 'diff'
-  | 'archive';
+  | 'archive'
+  | 'table';
 
 interface IconProps {
   size?: number;

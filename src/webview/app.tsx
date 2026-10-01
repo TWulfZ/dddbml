@@ -25,6 +25,7 @@ import { Tooltip } from './render/tooltip';
 import { ExportModal } from './render/exportModal';
 import { ExportImageModal } from './render/exportImageModal';
 import { SettingsPanel } from './render/settingsPanel';
+import { RecordsModal } from './render/recordsModal';
 import { GitPanel } from './render/gitPanel';
 import { EdgeOrderProgress } from './render/edgeOrderProgress';
 import { GitBanner, buildDiffTargets } from './render/gitBanner';
@@ -139,6 +140,11 @@ export function App(_props: AppProps) {
 
   /** Set of "table::column" keys for every column that participates in any ref. */
   const fkColumnsByTable = useMemo(() => fkColumnsOf(schema.refs), [schema]);
+  const recordCountByTable = useMemo(() => {
+    const m = new Map<QualifiedName, number>();
+    for (const r of schema.records ?? []) m.set(r.table, (m.get(r.table) ?? 0) + r.totalRows);
+    return m;
+  }, [schema]);
 
   // Rows each table actually draws (PK/FK filter, inline diff): every on-canvas size and port must
   // count these, not the full column list, or edges and group boxes drift off the nodes.
@@ -574,7 +580,8 @@ export function App(_props: AppProps) {
               const pos = positions.get(t.name);
               if (!pos) return null;
               const groupColor = t.groupName ? (groupState[t.groupName]?.color ?? colorForGroup(t.groupName)) : undefined;
-              const tColor = tableColors.get(t.name) ?? groupColor;
+              // Sidecar color beats DBML headercolor, which is display-only (spec 18).
+              const tColor = tableColors.get(t.name) ?? t.headerColor ?? groupColor;
               return (
                 <TableNode
                   key={t.name}
@@ -585,6 +592,7 @@ export function App(_props: AppProps) {
                   selected={selection.has(t.name)}
                   color={tColor}
                   fkColumns={fkColumnsByTable.get(t.name)}
+                  recordCount={recordCountByTable.get(t.name)}
                   diffStatus={diffByTable?.get(t.name)}
                   diffBase={diffBaseByTable?.get(t.name)}
                   columnDiff={columnDiffByTable?.get(t.name)}
@@ -661,6 +669,7 @@ export function App(_props: AppProps) {
         <ExportModal />
         <ExportImageModal derived={exportDerived} />
         <SettingsPanel />
+        <RecordsModal />
         <GitPanel />
         <EdgeOrderProgress />
       </ErrorBoundary>

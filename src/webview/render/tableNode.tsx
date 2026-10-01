@@ -12,7 +12,8 @@ import { store, useAppStore } from '../state/store';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
 import { ContextMenu, clampMenuAnchor } from './contextMenu';
 import type { ContextMenuItem } from './contextMenu';
-import { IconKey, IconNote, IconSettings } from '../icons';
+import { Icon, IconKey, IconNote, IconSettings } from '../icons';
+import { Button } from '../ui/Button';
 import { withAlpha } from '../groups/bcPalette';
 
 interface TableNodeProps {
@@ -31,9 +32,11 @@ interface TableNodeProps {
   diffBase?: Table;
   /** Per-column diff entries (by name) for a modified table — tells which columns changed. */
   columnDiff?: Map<string, ColumnDiffEntry>;
+  /** Total DBML `records` rows for this table; shows the preview badge when > 0 (spec 18). */
+  recordCount?: number;
 }
 
-function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
+function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff, recordCount }: TableNodeProps) {
   // The rect LOD sizes itself from estimateSize (density-dependent) instead of CSS, so the memoized
   // node must re-render on a density change or it keeps the previous density's box.
   useAppStore((s) => s.settings.ui.density);
@@ -154,7 +157,7 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
           borderTopColor: color ?? undefined,
         }}
       >
-        <TableHeader table={table} configurable headerStyle={headerStyle} />
+        <TableHeader table={table} configurable headerStyle={headerStyle} recordCount={recordCount} />
         <ul class="ddd-table__cols">
           {rows.map((r) => <ColumnRow key={r.key} col={r.col} isFk={r.isFk} diffKind={r.kind} />)}
         </ul>
@@ -164,7 +167,7 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
   );
 }
 
-function TableHeader({ table, configurable, headerStyle }: { table: Table; configurable?: boolean; headerStyle?: Record<string, string> }) {
+function TableHeader({ table, configurable, headerStyle, recordCount }: { table: Table; configurable?: boolean; headerStyle?: Record<string, string>; recordCount?: number }) {
   const [popup, setPopup] = useState<{ x: number; y: number } | null>(null);
   const existing = store.getState().tableColors.get(table.name);
 
@@ -192,7 +195,7 @@ function TableHeader({ table, configurable, headerStyle }: { table: Table; confi
 
   const onHeadPointerDown = (e: PointerEvent) => {
     const target = e.target as HTMLElement;
-    if (target.closest('.ddd-table__gear') || target.closest('.ddd-table__note-icon') || target.closest('.ddd-color-popup')) {
+    if (target.closest('.ddd-table__gear') || target.closest('.ddd-table__records') || target.closest('.ddd-table__note-icon') || target.closest('.ddd-color-popup')) {
       e.stopPropagation();
     }
   };
@@ -204,6 +207,18 @@ function TableHeader({ table, configurable, headerStyle }: { table: Table; confi
         <span class="ddd-table__name">{table.tableName}</span>
         {table.note ? <TableNoteIcon note={table.note} name={table.name} /> : null}
       </span>
+      {recordCount ? (
+        <Button
+          variant="subtle"
+          class="ddd-table__records gap-[var(--ddd-space-1)] px-[var(--ddd-space-1)] text-[length:var(--ddd-text-xs)]"
+          onClick={(e) => { e.stopPropagation(); store.getState().setRecordsTable(table.name); }}
+          title={`Preview ${recordCount} sample record${recordCount === 1 ? '' : 's'}`}
+          aria-label={`Preview ${recordCount} sample records of ${table.tableName}`}
+        >
+          <Icon name="table" size={12} />
+          {recordCount}
+        </Button>
+      ) : null}
       {configurable ? (
         <button
           class="ddd-table__gear"
@@ -214,7 +229,7 @@ function TableHeader({ table, configurable, headerStyle }: { table: Table; confi
       ) : null}
       {popup ? (
         <ColorPopup
-          current={existing ?? 'var(--ddd-accent)'}
+          current={existing ?? table.headerColor ?? 'var(--ddd-accent)'}
           x={popup.x}
           y={popup.y}
           onPick={applyColor}

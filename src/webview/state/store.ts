@@ -51,6 +51,10 @@ export interface AppState {
   tooltip: TooltipState | null;
   /** Ephemeral view flag: render only PK + FK columns in tables. Not persisted. */
   showOnlyPkFk: boolean;
+  /** Ephemeral view flag: draw DBML `Dep` edges (spec 18). Not persisted. */
+  showDeps: boolean;
+  /** Table whose sample records are open in the records modal (spec 18). Null = closed. */
+  recordsTable: QualifiedName | null;
   settings: AppSettings;
   exporters: ExporterMeta[];
   /** When true, the Export (schema) modal is open. */
@@ -158,6 +162,8 @@ export interface AppActions {
   clearSelection(): void;
   setTooltip(t: TooltipState | null): void;
   toggleShowOnlyPkFk(): void;
+  toggleShowDeps(): void;
+  setRecordsTable(name: QualifiedName | null): void;
   setSettings(s: AppSettings): void;
   setExporters(list: ExporterMeta[]): void;
   setExportPromptOpen(open: boolean): void;
@@ -222,6 +228,8 @@ const initial: AppState = {
   selection: new Set(),
   tooltip: null,
   showOnlyPkFk: false,
+  showDeps: true,
+  recordsTable: null,
   panMode: false,
   spacePan: false,
   edgeOrderProgress: null,
@@ -471,6 +479,12 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   toggleShowOnlyPkFk() {
     set((s) => ({ showOnlyPkFk: !s.showOnlyPkFk }));
+  },
+  toggleShowDeps() {
+    set((s) => ({ showDeps: !s.showDeps }));
+  },
+  setRecordsTable(name) {
+    set({ recordsTable: name });
   },
   setSettings(s) {
     set({ settings: s });
