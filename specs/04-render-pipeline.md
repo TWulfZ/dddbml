@@ -22,7 +22,7 @@ Schema update ─▶ positions update ─▶ SpatialIndex rebuild ─▶ visible
 - Drag de usuario (M5).
 - Layout file load (layout:loaded).
 
-**3. Spatial index** — grid bucketing 512x512px. Se reconstruye cada vez que `positions` o `schema` cambia (raro). Ver `render/spatialIndex.ts`.
+**3. Spatial index** — grid bucketing 512x512px. Se reconstruye cuando cambian schema, filtros (grupos ocultos/colapsados, tablas ocultas), filas renderizadas o densidad, o cuando `positions` cambia sin un delta conocido (carga de layout, undo, auto-layout masivo). Un frame de drag sólo **mueve** las entradas afectadas (`move`) sobre la misma instancia — ver "Drag incremental". Ver `render/spatialIndex.ts` y `render/sceneCache.ts`.
 
 **4. Viewport culling** — memoized por `viewport × viewportRect × positions × schema`. Query al spatial index con bbox de viewport + margen 256px. Retorna Set<QualifiedName>.
 
@@ -40,6 +40,8 @@ Schema update ─▶ positions update ─▶ SpatialIndex rebuild ─▶ visible
 - `remove(name)`: lookup membership, borra de cada celda.
 - `move(name, bbox)`: alias de insert (que ya hace remove interno).
 - `query(bbox)`: recorre celdas que intersecan bbox, acumula nombres, filtra por bbox real.
+- `version`: contador que sube en cada mutación. Como el drag muta la instancia en sitio,
+  `useVisibleNames` usa `version` (además de la identidad) como clave de su caché de culling.
 
 **Complejidad**:
 - insert / move / remove: O(c) donde c = celdas que span el nodo (típico 1-4).
@@ -100,8 +102,12 @@ seleccionada** + **LOD de arista** (recta a `lod === 'rect'`). Detalle: spec 05 
 
 Un solo `<svg>` overlay en el world container (regla dura: nunca un `<svg>` o path
 suelto por edge fuera de esta capa). Edge culling:
-- `routeRefs` se memoiza (`[refs, positions, tablesByName, groupSizes, edgeLayouts]`);
-  las posiciones world no cambian en pan/zoom → el ruteo no recomputa por frame.
+- El ruteo se memoiza (`[refs, positions, rows, groupSizes, edgeLayouts]`) sobre un
+  `EdgeRouteCache` persistente; las posiciones world no cambian en pan/zoom → el ruteo no
+  recomputa por frame. Un frame de drag re-rutea sólo las refs afectadas (ver "Drag incremental").
+- Cada arista visible es un hijo `memo` (`EdgeStroke` en la capa base, `EdgeHit` en el overlay,
+  ambos `<g>` dentro del **único** `<svg>` de su capa): las rutas que conservan identidad no se
+  re-diffean. Sólo la arista seleccionada construye inline su DOM de edición.
 - Se rutean todas las `effectiveRefs`; las *rutas* se filtran por `visibleRefIds`
   (`useVisibleEdgeIds`): una arista es visible si su **caja** (rects de sus dos nodos
   extremo ∪ waypoints, `edgeBoxes` en `app.tsx`) cruza el viewport + margen 256px.
@@ -194,6 +200,51 @@ mueve la cámara.
   difieren la decisión al click. El multi-drag (press sobre miembro de una
   multi-selección) mueve todo el set.
 
+## Drag incremental (commit por frame)
+
+**Decisión 2026-10-01 (b)** — ver Preguntas abiertas. Antes cada `pointermove` hacía
+`setPositionsBatch` y cada commit rehacía `derived`, el spatial index, las cajas de arista,
+`worldBbox` y **ruteaba todas las refs**: ~8 ms de JS por evento en `huge.dbml`.
+
+- **Commit por rAF.** `dragController` sólo guarda el último puntero en `pointermove` (y en
+  cambios de cámara); un `requestAnimationFrame` aplica el movimiento: escribe el transform del
+  nodo arrastrado y hace **un** `setPositionsBatch`. El umbral click/drag (4 px) se evalúa por
+  evento, no por frame (una excursión deshecha dentro del mismo frame sigue siendo drag). El
+  `pointerup` cancela el frame pendiente y aplica la última posición antes de empujar el
+  `MoveCommand`. Un frame que llega con el canvas ya en solo lectura (overlay merge/git) no
+  escribe, y el `pointerup` no empuja comando.
+- **Delta de posiciones.** `setPositionsBatch`/`setTablePos` registran en
+  `state/positionsDelta.ts` qué nombres cambiaron entre el `Map` previo y el nuevo (versiones en
+  un `WeakMap` + log acotado de 16 entradas: no retiene mapas viejos). `positionsMovedSince(prev,
+  next)` une los deltas encadenados (varios commits entre dos renders) o devuelve `null` si el
+  linaje es desconocido (carga de layout, undo, reset) → rebuild completo. `smallPositionsDelta`
+  además devuelve `null` si se movió más de ¼ de las tablas.
+- **Escena incremental (`render/sceneCache.ts`).** `SceneCache.update` reemplaza los memos de
+  `App` (`derived`, spatial index, `edgeBoxes`, `worldBbox`). Si sólo cambió `positions` por un
+  delta pequeño de tablas **renderizadas** (no ocultas ni miembros de grupo colapsado):
+  - recalcula sólo el contenedor de los grupos expandidos tocados (`groupContainerRects`,
+    el mismo helper que `deriveSceneGeometry`) y su gemelo de export;
+  - `SpatialIndex.move` para las tablas movidas y sus contenedores (misma instancia);
+  - re-calcula sólo las cajas de las aristas que tocan una tabla movida;
+  - `worldBbox`: une los rects nuevos; re-escanea todo sólo si un rect movido sostenía un lado
+    del bbox y ya no lo alcanza (encogimiento).
+  - `effectiveRefs`, `collapsedNodes`, `hiddenTables`/`collapsedTables` conservan identidad.
+  Cualquier otro cambio (o un delta que toca una tabla oculta/colapsada) cae al rebuild completo,
+  cuyo resultado es idéntico (test de equivalencia aleatorio en `sceneCache.test.ts`). Un cambio
+  sólo de `edgeLayouts` (edición de waypoints) reutiliza geometría e índice y rehace cajas/bbox.
+- **Re-ruteo incremental (`EdgeRouteCache`, `render/edgeRouter.ts`).** Con `refs`, `rows`,
+  `groupSizes` y `edgeLayouts` idénticos y un delta pequeño, `routeMoved` re-rutea: (1) las refs
+  con un extremo en el conjunto movido (lados recalculados) y (2) toda ref que comparte un
+  **grupo de puertos** (tabla + lado) — antes o después del movimiento — con una de ellas y cuyo
+  ratio cambió: el orden baricéntrico del grupo depende del extremo lejano, así que mover una
+  tabla puede reordenar/re-espaciar los stubs de sus vecinas. El resto de rutas conserva
+  identidad. El orden del grupo desempata por id de ref y luego por (índice de arista, origen
+  antes que destino), así el re-sort incremental coincide con el completo.
+- **Coste medido** (`render/dragFrame.perf.test.ts`, `huge.dbml` 5000 tablas / 1000 refs, 20
+  grupos expandidos; commit + escena + ruteo + las dos consultas de culling, sin Preact ni
+  paint): antes ~7.7–10 ms/frame; ahora ~0.55–0.8 ms/frame (1 tabla) y ~0.7–0.8 ms (50 tablas).
+  El resto es la copia del `Map` de 5000 posiciones del store (~0.5 ms). Ver spec 07.
+
 ## Cámara fuera de Preact (pan/zoom sin re-render)
 
 **Problema (2026-09, reportado con esquemas grandes):** `App` seleccionaba `s.viewport` y
@@ -217,7 +268,7 @@ flotante "desaparecía o se partía".
   fuera de Preact, consulta el spatial index y **devuelve la misma instancia de `Set`** mientras
   la membresía no cambie. Sólo fuerza render de `App` cuando una tabla entra o sale del
   viewport (+ margen 256 px). Las aristas usan el mismo mecanismo (`useVisibleEdgeIds`). Así
-  `visibleRefIds` → `visibleRoutes` → vnodes SVG se cachean entre frames. Recalcula sincrónicamente si cambian `spatialIndex`, `viewportRect` o `ready`.
+  `visibleRefIds` → `visibleRoutes` → vnodes SVG se cachean entre frames. Recalcula sincrónicamente si cambian `spatialIndex` (identidad o `version`: el drag lo muta en sitio), `viewportRect` o `ready`.
 - **`setViewport` con identity guard:** una cámara sin cambios no notifica (mismo patrón que
   `setHoveredTable`).
 - **Lo único que sigue la cámara en `App` es el `%` del statusbar**, aislado en el leaf
@@ -274,7 +325,9 @@ en un stack trace en el Output del host.
 
 - [x] **Commit del drag por frame vs. en `pointerup`.** **Decisión (2026-10-01): (b)** — commit por
   rAF, spatial index actualizado incrementalmente (`move`) y re-ruteo sólo de las refs con un
-  extremo en el conjunto arrastrado; las aristas siguen a la tabla en vivo. Contexto original: Este spec dice "mutación DOM directa
+  extremo en el conjunto arrastrado (más las que comparten lado de puerto con ellas, para que los
+  stubs sigan bien repartidos); las aristas siguen a la tabla en vivo. **Implementado** — ver
+  "Drag incremental (commit por frame)". Contexto original: Este spec dice "mutación DOM directa
   durante drag, commit al store al `pointerup`", pero `dragController` hace `setPositionsBatch`
   en cada `pointermove` (así las aristas siguen a la tabla en vivo). Cada commit rehace
   `derived`, el spatial index, `worldBbox` y **rutea todas las refs** (`routeRefs`). Opciones:
@@ -296,7 +349,7 @@ en un stack trace en el Output del host.
 
 - **Preact** no React: bundle más chico, compat aliases en vite para zustand.
 - **`useAppStore(selector)`** sobre zustand vanilla (hook propio con `Object.is`): selectores granulares → solo los componentes que miran el slice afectado re-renderizan. **Nunca un selector que devuelva objeto/array/Set nuevo** (siempre "cambia").
-- **Mutación DOM directa durante drag** (M5): bypass Preact re-render, sólo se commit al store al `pointerup`.
+- **Drag con commit por frame**: transform del nodo arrastrado escrito directo + un commit al store por `requestAnimationFrame`, aplicado incrementalmente a escena, índice y ruteo (ver "Drag incremental").
 - **`transform: translate(x, y)` (2D) en los nodos; sólo `.ddd-world` lleva `will-change: transform`.** Ver "Capas compositadas".
 - **SVG overlay único**: reduce DOM node count vs un `<svg>` por edge.
 

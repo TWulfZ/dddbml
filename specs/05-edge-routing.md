@@ -318,7 +318,10 @@ Cuatro piezas, escalonadas:
    o el layout — **nunca en pan/zoom** (que sólo tocan el transform CSS), ni al
    cambiar hover/selección (estado local de `EdgeLayer`). Antes `routeRefs`
    corría en el cuerpo del render → se recomputaba en cada frame de pan y en cada
-   hover. Ahora el ruteo es O(refs) una vez por movimiento, no por frame.
+   hover. Ahora el ruteo es O(refs) una vez por movimiento, no por frame. Durante un drag ni
+   siquiera eso: `EdgeRouteCache.routeMoved` re-rutea sólo las refs de las tablas movidas y las
+   que comparten grupo de puertos con ellas, conservando la identidad del resto (spec 04 "Drag
+   incremental").
 2. **Route-all-then-cull (puertos estables).** Se rutean **todas** las
    `effectiveRefs` (no el subconjunto visible) y luego se filtran las *rutas* por
    `visibleRefIds` (memo en `app.tsx`: refs con ≥ 1 endpoint en `visibleNames`).
