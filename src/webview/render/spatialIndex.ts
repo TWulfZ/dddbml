@@ -22,8 +22,15 @@ export class SpatialIndex {
   private readonly cells = new Map<string, Set<QualifiedName>>();
   private readonly membership = new Map<QualifiedName, string[]>();
   private readonly bboxes = new Map<QualifiedName, Bbox>();
+  private revision = 0;
+
+  /** Bumped on every mutation: culling caches keyed on the instance must also key on this. */
+  public get version(): number {
+    return this.revision;
+  }
 
   public clear(): void {
+    this.revision++;
     this.cells.clear();
     this.membership.clear();
     this.bboxes.clear();
@@ -42,6 +49,7 @@ export class SpatialIndex {
     }
     this.membership.set(name, keys);
     this.bboxes.set(name, bbox);
+    this.revision++;
   }
 
   public remove(name: QualifiedName): void {
@@ -55,6 +63,7 @@ export class SpatialIndex {
     }
     this.membership.delete(name);
     this.bboxes.delete(name);
+    this.revision++;
   }
 
   public move(name: QualifiedName, bbox: Bbox): void {

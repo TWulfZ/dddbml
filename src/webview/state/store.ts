@@ -6,6 +6,7 @@ import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
 import { isEdgeKey } from '../render/edgeKey';
 import { densityMetrics, type DensityMetrics } from '../layout/density';
+import { recordPositionsDelta } from './positionsDelta';
 
 export interface TooltipState {
   title: string;
@@ -339,13 +340,19 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     set((s) => {
       const next = new Map(s.positions);
       next.set(name, { x: Math.round(x), y: Math.round(y) });
+      recordPositionsDelta(s.positions, next, [name]);
       return { positions: next };
     });
   },
   setPositionsBatch(entries) {
     set((s) => {
       const next = new Map(s.positions);
-      for (const [name, pos] of entries) next.set(name, { x: Math.round(pos.x), y: Math.round(pos.y) });
+      const names: QualifiedName[] = [];
+      for (const [name, pos] of entries) {
+        next.set(name, { x: Math.round(pos.x), y: Math.round(pos.y) });
+        names.push(name);
+      }
+      recordPositionsDelta(s.positions, next, names);
       return { positions: next };
     });
   },

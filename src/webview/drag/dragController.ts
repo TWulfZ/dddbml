@@ -11,9 +11,10 @@ import type { Waypoint } from '../../shared/types';
  * Pointer-driven drag for a table node.
  *
  * During drag:
- *   - Mutates the dragged node's transform directly (GPU compositing, no Preact re-render for the move).
- *   - Writes to the store on every frame so Preact re-renders edges + LOD in sync with the move.
- *     For large diagrams this stays at 60fps because only the visible subset renders (M3 culling).
+ *   - Pointer/camera events only record the latest pointer; the move is applied at most once per
+ *     animation frame (spec 04, "Commit del drag por frame"): the dragged node's transform is written
+ *     directly and the store gets one positions commit, so edges follow the table live while the
+ *     scene and the router update incrementally from that positions-only delta.
  *
  * On drop:
  *   - Final store commit.
@@ -96,11 +97,11 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
   try { node.setPointerCapture(e.pointerId); } catch { /* noop */ }
   document.body.classList.add('ddd-is-dragging');
 
+  let frame: number | null = null;
   const apply = () => {
-    if (!dragging) {
-      if (Math.hypot(lastX - pointerStartX, lastY - pointerStartY) < CLICK_THRESHOLD_PX) return;
-      dragging = true;
-    }
+    frame = null;
+    // A merge / git overlay can lock the canvas while a deferred frame is still pending.
+    if (!dragging || isCanvasReadOnly(store.getState())) return;
     const snap = gridSnapper();
     const cur = clientToWorld(lastX, lastY, origin);
     const dx = cur.x - grab.x;
@@ -117,18 +118,30 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
     store.getState().setPositionsBatch(entries);
   };
 
+  const schedule = () => {
+    if (dragging && frame === null) frame = requestAnimationFrame(apply);
+  };
+
   const onMove = (ev: PointerEvent) => {
     lastX = ev.clientX;
     lastY = ev.clientY;
-    apply();
+    // Latched per pointer event, not per frame: an excursion past the threshold that a later event
+    // in the same frame undoes is still a drag.
+    if (!dragging && Math.hypot(lastX - pointerStartX, lastY - pointerStartY) >= CLICK_THRESHOLD_PX) dragging = true;
+    schedule();
   };
   const unsubViewport = store.subscribe((s, prev) => {
-    if (s.viewport !== prev.viewport) apply();
+    if (s.viewport !== prev.viewport) schedule();
   });
 
   const onUp = (ev: PointerEvent) => {
     active = false;
     unsubViewport();
+    // The release must land where the pointer last was, even if that frame never got painted.
+    if (frame !== null) {
+      cancelAnimationFrame(frame);
+      apply();
+    }
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
@@ -151,6 +164,7 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
       return;
     }
 
+    if (isCanvasReadOnly(store.getState())) return;
     const cmd = buildMoveCommand(origins, store.getState().positions);
     if (cmd) commitMove(cmd);
     schedulePersist();
