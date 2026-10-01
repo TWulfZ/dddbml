@@ -1,8 +1,8 @@
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import { store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
-import { fitToContent, zoomAtCenter } from './viewport';
+import { fitToContent, zoomAtCenter, zoomToAtCenter } from './viewport';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
 import { IconFitScreen, IconMinus, IconPan, IconPlus, IconRedo, IconUndo } from '../icons';
@@ -74,19 +74,21 @@ function ZoomButtonsImpl() {
 
 function ZoomInput({ zoom }: { zoom: number }) {
   const [draft, setDraft] = useState<string | null>(null);
-  // Two primitive selectors: an object-returning selector is never Object.is-equal, so it would
-  // re-render this input on every store mutation (every pan/drag frame).
-  const zoomMin = useAppStore((s) => s.settings.zoomMin);
-  const zoomMax = useAppStore((s) => s.settings.zoomMax);
+  // Escape blurs the field, and blur commits; the flag makes that one blur discard the draft
+  // (the `draft` closure still holds the typed value when blur fires synchronously).
+  const cancelRef = useRef(false);
   const displayed = draft ?? String(Math.round(zoom * 100));
 
   const commit = () => {
+    if (cancelRef.current) {
+      cancelRef.current = false;
+      setDraft(null);
+      return;
+    }
     if (draft === null) return;
     const n = parseFloat(draft.replace('%', '').trim());
-    if (Number.isFinite(n) && n > 0) {
-      const nextZoom = Math.max(zoomMin, Math.min(zoomMax, n / 100));
-      store.getState().setViewport({ zoom: nextZoom });
-    }
+    const el = document.querySelector<HTMLElement>('.ddd-viewport');
+    if (Number.isFinite(n) && n > 0 && el) zoomToAtCenter(n / 100, el);
     setDraft(null);
   };
 
@@ -100,10 +102,9 @@ function ZoomInput({ zoom }: { zoom: number }) {
         onInput={(e) => setDraft((e.currentTarget as HTMLInputElement).value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
-            commit();
             (e.currentTarget as HTMLInputElement).blur();
           } else if (e.key === 'Escape') {
-            setDraft(null);
+            cancelRef.current = true;
             (e.currentTarget as HTMLInputElement).blur();
           }
         }}

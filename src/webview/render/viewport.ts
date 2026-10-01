@@ -21,10 +21,15 @@ export function worldToScreen(world: Point): Point {
 }
 
 export function zoomAt(screen: Point, factor: number): void {
+  zoomToAt(screen, store.getState().viewport.zoom * factor);
+}
+
+/** Set an absolute zoom (clamped) keeping the world point under `screen` fixed. */
+export function zoomToAt(screen: Point, targetZoom: number): void {
   const state = store.getState();
   const { zoomMin, zoomMax } = state.settings;
   const vp = state.viewport;
-  const nextZoom = clamp(vp.zoom * factor, zoomMin, zoomMax);
+  const nextZoom = clamp(targetZoom, zoomMin, zoomMax);
   if (nextZoom === vp.zoom) return;
   const world = { x: (screen.x - vp.x) / vp.zoom, y: (screen.y - vp.y) / vp.zoom };
   const nextX = screen.x - world.x * nextZoom;
@@ -40,6 +45,11 @@ export function panBy(dx: number, dy: number): void {
 export function zoomAtCenter(factor: number, viewportEl: HTMLElement): void {
   const rect = viewportEl.getBoundingClientRect();
   zoomAt({ x: rect.width / 2, y: rect.height / 2 }, factor);
+}
+
+export function zoomToAtCenter(targetZoom: number, viewportEl: HTMLElement): void {
+  const rect = viewportEl.getBoundingClientRect();
+  zoomToAt({ x: rect.width / 2, y: rect.height / 2 }, targetZoom);
 }
 
 export function resetView(): void {
