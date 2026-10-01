@@ -52,6 +52,10 @@ hover se revela el nombre del grupo como label en screen-space (`setTooltip`):
 - **Contenedor expandido** → handler **sólo en la franja-label** (el cuerpo es
   `pointer-events: none`), para no competir con el hover de las tablas internas.
 
+Al desmontarse bajo el cursor (doble-click expand/collapse, culling, ocultar desde el panel)
+no llega `mouseleave`, así que ambos nodos limpian su label en el cleanup de unmount (sólo si
+el slot sigue mostrando ese grupo).
+
 La condición `lodForZoom(...) === 'rect'` se evalúa dentro del handler. El slot único
 `tooltip` garantiza que nunca se muestren dos labels a la vez (ver spec 04, "Regla de
 un solo label").

@@ -1,8 +1,10 @@
+import { useEffect } from 'preact/hooks';
 import { store } from '../state/store';
 import { memo } from 'preact/compat';
 import { schedulePersist } from '../persistence';
 import { withAlpha } from '../groups/bcPalette';
 import { lodForZoom } from './lod';
+import { clearGroupLabel } from './collapsedGroupNode';
 
 interface GroupContainerProps {
   name: string;
@@ -23,6 +25,7 @@ interface GroupContainerProps {
  *   - Label is clickable: double-click collapses the group.
  */
 function GroupContainerImpl({ name, x, y, w, h, color }: GroupContainerProps) {
+  useEffect(() => () => clearGroupLabel(name), [name]);
   const onLabelDblClick = (e: Event) => {
     e.stopPropagation();
     store.getState().setGroup(name, { collapsed: true });
