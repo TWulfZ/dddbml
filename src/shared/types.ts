@@ -39,6 +39,9 @@ export interface Ref {
   source: { table: QualifiedName; columns: string[]; relation: RefEndpointRelation };
   target: { table: QualifiedName; columns: string[]; relation: RefEndpointRelation };
   name?: string | null;
+  /** DBML referential actions as written (`cascade`, `set null`, ...); absent when unspecified. */
+  onDelete?: string;
+  onUpdate?: string;
 }
 
 export interface TableGroup {

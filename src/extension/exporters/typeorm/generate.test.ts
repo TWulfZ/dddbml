@@ -126,6 +126,24 @@ describe('generateTypeOrm — @JoinColumn names the referenced column when it is
   });
 });
 
+describe('generateTypeOrm — referential actions reach the owning relation', () => {
+  it('emits onDelete/onUpdate on the FK side for both ref directions', () => {
+    const { content } = exportDbml(`
+      Table teams { id int [pk] }
+      Table teachers { id int [pk] }
+      Table enrollments { id int [pk]
+        team_id int
+        teacher_id int }
+      Ref: enrollments.team_id > teams.id [delete: cascade, update: set null]
+      Ref: teachers.id < enrollments.teacher_id [delete: restrict]
+    `);
+    const enrollment = entityBlock(content, 'Enrollment');
+    expect(enrollment).toContain(`{ onDelete: "CASCADE", onUpdate: "SET NULL" })`);
+    expect(enrollment).toContain(`{ onDelete: "RESTRICT" })`);
+    expect(entityBlock(content, 'Team')).not.toContain('onDelete');
+  });
+});
+
 describe('generateTypeOrm — entities without a primary column', () => {
   it('emits a composite pk index as one @PrimaryColumn per member', () => {
     const { content, warnings } = exportDbml(`

@@ -245,7 +245,10 @@ function mapRef(r: ExportedRef, defaultSchemaName: string, resolveTable: Endpoin
     relation: normalizeRelation(b.relation),
   };
   const id = stableRefId(source.table, source.columns, target.table, target.columns);
-  return { id, source, target, name: r.name || null };
+  const ref: Ref = { id, source, target, name: r.name || null };
+  if (typeof r.onDelete === 'string') ref.onDelete = r.onDelete;
+  if (typeof r.onUpdate === 'string') ref.onUpdate = r.onUpdate;
+  return ref;
 }
 
 function normalizeRelation(rel: unknown): RefEndpointRelation {

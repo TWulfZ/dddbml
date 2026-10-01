@@ -65,6 +65,8 @@ DBML permite refs con 2 endpoints. Cada endpoint: `{ schemaName, tableName, fiel
 - resto (incluyendo `1`, `-`, `<`) → `'1'`
 - La dirección (`>` vs `<`) se pierde intencionalmente en v1; el orden `source→target` la preserva.
 
+**Acciones referenciales**: `onDelete` / `onUpdate` del export se copian tal cual (`'cascade'`, `'set null'`, ...) sólo si son string; si no, la key se omite (el JSON de refs sin acciones no cambia). No participan en el ID estable.
+
 **ID estable**: hash determinista `sourceTable(col1,col2)->targetTable(col3,col4)`, orden canónico (alfabético). Asegura que al re-parsear obtenemos el mismo ID → edges no "saltan" de identidad entre frames.
 
 ### TableGroup

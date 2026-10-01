@@ -23,6 +23,9 @@ export interface RelationSide {
    * referenced table's single-column PK, which is what TypeORM assumes without `referencedColumnName`.
    */
   referencedColumns: string[];
+  /** Raw DBML referential actions; only set on the owning side. */
+  onDelete?: string;
+  onUpdate?: string;
   /** Inverse property name on the other entity, used for the `tgt => tgt.foo` callback. */
   inversePropertyName: string;
   /** Original ref id — for traceability + dedup. */
@@ -139,6 +142,10 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): Re
     const referenced = (end: Ref['source']) =>
       end.columns.length === 1 && keyRank(opts.tables.get(end.table), end.columns) === 2 ? [] : [...end.columns];
 
+    const actions: Pick<RelationSide, 'onDelete' | 'onUpdate'> = {};
+    if (ref.onDelete) actions.onDelete = ref.onDelete;
+    if (ref.onUpdate) actions.onUpdate = ref.onUpdate;
+
     out.push({
       cardinality: card,
       source: {
@@ -150,6 +157,7 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): Re
         isOwning: sourceOwns,
         fkColumns: sourceOwns ? [...ref.source.columns] : [],
         referencedColumns: sourceOwns ? referenced(ref.target) : [],
+        ...(sourceOwns ? actions : {}),
         inversePropertyName: targetProp,
         refId: ref.id,
       },
@@ -162,6 +170,7 @@ export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): Re
         isOwning: !sourceOwns,
         fkColumns: !sourceOwns ? [...ref.target.columns] : [],
         referencedColumns: !sourceOwns ? referenced(ref.source) : [],
+        ...(!sourceOwns ? actions : {}),
         inversePropertyName: sourceProp,
         refId: ref.id,
       },

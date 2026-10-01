@@ -51,7 +51,7 @@ export function emitEntity(
 
   const relationBlocks: string[] = [];
   for (const rel of relations) {
-    relationBlocks.push(emitRelation(rel, opts, decoratorsUsed));
+    relationBlocks.push(emitRelation(rel, opts, decoratorsUsed, warnings, table.name));
   }
 
   const allBlocks = [...columnBlocks, ...relationBlocks];
@@ -164,16 +164,53 @@ function sqlDefault(raw: string): DefaultMarker {
   return { __sql: true, raw };
 }
 
+const REFERENTIAL_ACTIONS: Record<string, string> = {
+  'cascade': 'CASCADE',
+  'restrict': 'RESTRICT',
+  'set null': 'SET NULL',
+  'set default': 'SET DEFAULT',
+  'no action': 'NO ACTION',
+};
+
+function referentialActionOptions(
+  rel: RelationSide,
+  warnings: string[],
+  ownerTable: QualifiedName,
+): string | undefined {
+  const parts: string[] = [];
+  for (const key of ['onDelete', 'onUpdate'] as const) {
+    const raw = rel[key];
+    if (!raw) continue;
+    const label = `${ownerTable}.${rel.propertyName}: ${key} "${raw}"`;
+    // TypeORM applies ManyToMany actions to the generated join table, not to the DBML columns.
+    if (rel.decorator === 'ManyToMany') {
+      warnings.push(`${label} dropped — not representable on a ManyToMany relation.`);
+      continue;
+    }
+    const action = REFERENTIAL_ACTIONS[raw.trim().toLowerCase().replace(/\s+/g, ' ')];
+    if (!action) {
+      warnings.push(`${label} dropped — unknown referential action.`);
+      continue;
+    }
+    parts.push(`${key}: ${JSON.stringify(action)}`);
+  }
+  return parts.length > 0 ? `{ ${parts.join(', ')} }` : undefined;
+}
+
 function emitRelation(
   rel: RelationSide,
   opts: EmitOptions,
   decoratorsUsed: Set<string>,
+  warnings: string[],
+  ownerTable: QualifiedName,
 ): string {
   decoratorsUsed.add(rel.decorator);
   const targetClass = toClassName(rel.targetTable, { singularize: opts.singularize });
 
   const inverseFn = `(${shortVar(targetClass)}) => ${shortVar(targetClass)}.${rel.inversePropertyName}`;
-  const decoratorArgs = `() => ${targetClass}, ${inverseFn}`;
+  let decoratorArgs = `() => ${targetClass}, ${inverseFn}`;
+  const actionOpts = referentialActionOptions(rel, warnings, ownerTable);
+  if (actionOpts) decoratorArgs += `, ${actionOpts}`;
 
   const lines: string[] = [];
   lines.push(`@${rel.decorator}(${decoratorArgs})`);
