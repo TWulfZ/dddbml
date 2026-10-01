@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 vi.mock('vscode', () => import('./testing/vscodeFake'));
 
-import { fake } from './testing/vscodeFake';
+import { fake, workspace, type Uri } from './testing/vscodeFake';
 import { DiagramPanel } from './panel';
 import { cleanupDirs, DBML, gitIn, openPanel, persistPayload, settle, sidecarText, tablesOf, type Git, type Harness } from './testing/panelHarness';
 import type { Schema } from '../shared/types';
@@ -225,5 +225,50 @@ describe('a re-shown webview during a diff', () => {
     await vi.waitFor(() => expect(h.since('git:diff:exit')).toHaveLength(1));
     expect(flowFrom(h, start, ['layout:loaded', 'git:diff:exit'])).toEqual(['layout:loaded', 'git:diff:exit']);
     expect(tablesOf(h.since('layout:loaded')[0])['public.a']).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('an external reload racing time-travel entry', () => {
+  /** Hold the `nth` read of `path` until released: the reload has passed its overlay check by then. */
+  function holdRead(path: string, nth: number): { held: () => boolean; release: () => void; restore: () => void } {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let seen = 0;
+    let held = false;
+    const read = workspace.fs.readFile;
+    const spy = vi.spyOn(workspace.fs, 'readFile').mockImplementation(async (uri: Uri) => {
+      if (uri.path === path && ++seen === nth) { held = true; await gate; }
+      return read(uri);
+    });
+    return { held: () => held, release, restore: () => spy.mockRestore() };
+  }
+
+  it.each([
+    ['the .dbml read', 'dbml', 1],
+    ['the sidecar check', 'sidecar', 1],
+    ['the layout load', 'sidecar', 2],
+  ] as const)('posts nothing over the past revision when held at %s; the exit replays it as external', async (_, file, nth) => {
+    const { h, oldSha } = await withHistory();
+    writeFileSync(join(h.dir, 'd.dbml'), `${DBML}\nTable c {\n  id int\n}\n`);
+    h.writeSidecar(sidecarText({ 'public.a': { x: 777, y: 0 }, 'public.b': { x: 400, y: 0 } }));
+    const hold = holdRead(file === 'dbml' ? h.dbml.path : h.sidecar.path, nth);
+    try {
+      await fake.fireFsEvent('change', h.sidecar);
+      await vi.waitFor(() => expect(hold.held()).toBe(true));
+      await enterTimeTravel(h, oldSha);
+      const enteredAt = h.web.posted.length;
+      hold.release();
+      await settle();
+      expect(flowFrom(h, enteredAt, ['schema:update', 'layout:loaded', 'layout:external-change'])).toEqual([]);
+
+      h.mark();
+      await h.web.receive({ type: 'git:timeTravel:exit' });
+      await vi.waitFor(() => expect(h.since('git:timeTravel:exit')).toHaveLength(1));
+      expect(tableNames(h.since('schema:update').at(-1))).toContain('public.c');
+      expect(h.since('layout:loaded')).toHaveLength(0);
+      expect(tablesOf(h.since('layout:external-change').at(-1))['public.a']).toEqual({ x: 777, y: 0 });
+    } finally {
+      hold.restore();
+    }
   });
 });
