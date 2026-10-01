@@ -126,6 +126,9 @@ seleccionan ni mueven tablas. Implementación:
   (barra de zoom, menús, paneles) vive **fuera** de `.ddd-world`, así que la
   herramienta mano nunca le roba el click (si no, no podrías ni apagar su propio
   toggle ni usar los menús). Con `panActive` se omite el marquee.
+- `app.tsx onWheel`: el zoom con rueda usa el **mismo** test de canvas
+  (`isCanvasTarget`). Sobre el chrome flotante la rueda no se cancela, así las listas
+  con scroll (Diagram Views, "Review all" del merge) hacen scroll en vez de hacer zoom.
 - `dragController.startDrag`: retorna temprano si `panActive` — **antes** de
   `stopPropagation`, para que el pointerdown burbujee al viewport y este panee.
 - Cursor: `.ddd-viewport.is-pan-mode { cursor: grab }` (clase reactiva desde

@@ -266,7 +266,15 @@ export function App(_props: AppProps) {
     const el = viewportRef.current;
     if (!el) return;
 
+    // "Canvas" = the viewport background or anything inside the world (tables / groups / edges).
+    // The floating chrome (zoom bar, app menu, panels) lives OUTSIDE `.ddd-world`, so canvas gestures
+    // must not start on it — panning would steal clicks from its toggles, and wheel-zoom would keep
+    // its scrollable lists from scrolling.
+    const isCanvasTarget = (target: EventTarget | null): boolean =>
+      target === el || (target instanceof Element && target.closest('.ddd-world') != null);
+
     const onWheel = (e: WheelEvent) => {
+      if (!isCanvasTarget(e.target)) return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -283,10 +291,7 @@ export function App(_props: AppProps) {
 
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
-      // "Canvas" = the viewport background or anything inside the world (tables / groups / edges).
-      // The floating chrome (zoom bar, app menu, panels) lives OUTSIDE `.ddd-world`, so panning must
-      // NOT start on it — otherwise the pan tool would steal clicks from its own toggle and the menus.
-      const onCanvas = target === el || target.closest('.ddd-world') != null;
+      const onCanvas = isCanvasTarget(target);
       // Pan on the middle button, or the left button while the hand tool is active (toggle / Space).
       const panActive = store.getState().panMode || store.getState().spacePan;
       if (onCanvas && (e.button === 1 || (e.button === 0 && panActive))) {
