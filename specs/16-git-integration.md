@@ -120,7 +120,11 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
 - **Navegación:** la barra (`GitBanner`) trae botones prev/next + contador que enfocan la
   cámara en cada cambio (`fitToBbox`, store `diffCursor`).
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
-  layer); eliminadas → conector punteado en `DiffGhosts`. Los edges con cambio quedan a
+  layer); **cambiadas** (`'changed'`: mismo id pero otra cardinalidad, dirección o
+  emparejamiento de columnas compuestas; se comparan en orientación canónica, así `a > b` y
+  `b < a` son iguales) → tinte `--ddd-warning` sobre el edge vivo; eliminadas → conector
+  punteado en `DiffGhosts`. El id estable no basta para detectar cambios: ignora relación y
+  emparejamiento. Los edges con cambio quedan a
   opacidad llena (auto-focus) mientras los demás siguen el fade global (ver abajo).
 
 ### Edges suavizados (fade + reveal on focus)

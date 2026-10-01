@@ -491,13 +491,13 @@ export function App(_props: AppProps) {
   const mergeTableKeys = new Set<QualifiedName>();
   if (mergeConflicts) for (const c of mergeConflicts) if (c.section === 'tables') mergeTableKeys.add(c.key);
 
-  // Diff overlay (spec 16): translate added refs' stable ids to the edge layer's composite keys so
-  // the matching edges can be tinted. Removed refs are drawn by DiffGhosts, not here.
+  // Diff overlay (spec 16): translate added/changed refs' stable ids to the edge layer's composite
+  // keys so the matching edges can be tinted. Removed refs are drawn by DiffGhosts, not here.
   const edgeRefDiff = useMemo(() => {
     if (!refDiff) return null;
     const m = new Map<string, RefDiffStatus>();
     for (const [stableId, status] of refDiff) {
-      if (status !== 'added') continue;
+      if (status === 'removed') continue;
       const key = derived.refKeyByStableId.get(stableId);
       if (key) m.set(key, status);
     }

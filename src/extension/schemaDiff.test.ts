@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { diffSchemas } from './schemaDiff';
+import { parseDbml } from './parser';
 import type { Column, Schema, Table } from '../shared/types';
 
 function col(name: string, type = 'int', extra: Partial<Column> = {}): Column {
@@ -76,5 +77,36 @@ describe('diffSchemas', () => {
     const after = table('public.t', [col('id', 'int', { pk: true, notNull: true })]);
     const d = diffSchemas(schema([before]), schema([after]));
     expect(d.tables[0]?.columns[0]).toMatchObject({ name: 'id', status: 'changed' });
+  });
+});
+
+describe('diffSchemas — refs with the same endpoints but different semantics (F35)', () => {
+  const TABLES = `Table users {\n  id int\n  org int\n}\nTable posts {\n  id int\n  user_id int\n  user_org int\n}\n`;
+  const parse = (refs: string): Schema => {
+    const r = parseDbml(TABLES + refs);
+    if (!r.schema) throw new Error(r.error.message);
+    return r.schema;
+  };
+  const refDiff = (base: string, head: string) => diffSchemas(parse(base), parse(head)).refs;
+
+  it('reports a cardinality change', () => {
+    expect(refDiff('Ref: posts.user_id > users.id\n', 'Ref: posts.user_id - users.id\n')).toEqual([
+      { id: expect.any(String), status: 'changed', source: 'public.posts', target: 'public.users' },
+    ]);
+  });
+
+  it('reports a direction change', () => {
+    expect(refDiff('Ref: posts.user_id > users.id\n', 'Ref: posts.user_id < users.id\n').map((r) => r.status)).toEqual(['changed']);
+  });
+
+  it('reports a composite re-pairing', () => {
+    expect(refDiff(
+      'Ref: posts.(user_id, user_org) > users.(id, org)\n',
+      'Ref: posts.(user_id, user_org) > users.(org, id)\n',
+    ).map((r) => r.status)).toEqual(['changed']);
+  });
+
+  it('treats the same relation written from the other side as unchanged', () => {
+    expect(refDiff('Ref: posts.user_id > users.id\n', 'Ref: users.id < posts.user_id\n')).toEqual([]);
   });
 });

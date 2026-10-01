@@ -1,4 +1,4 @@
-import type { Column, Schema, SchemaDiff, ColumnDiffEntry, TableDiff, RefDiff } from '../shared/types';
+import type { Column, Ref, Schema, SchemaDiff, ColumnDiffEntry, TableDiff, RefDiff } from '../shared/types';
 
 /**
  * Pure structural diff between two parsed schemas (spec 16). No git, no vscode, no layout — the
@@ -33,11 +33,14 @@ export function diffSchemas(base: Schema, head: Schema): SchemaDiff {
   }
   tables.sort((a, z) => a.table.localeCompare(z.table));
 
-  const baseRefs = new Set(base.refs.map((r) => r.id));
+  const baseRefs = new Map(base.refs.map((r) => [r.id, r]));
   const headRefs = new Map(head.refs.map((r) => [r.id, r]));
   const refs: RefDiff[] = [];
   for (const r of head.refs) {
-    if (!baseRefs.has(r.id)) refs.push({ id: r.id, status: 'added', source: r.source.table, target: r.target.table });
+    const b = baseRefs.get(r.id);
+    if (!b) refs.push({ id: r.id, status: 'added', source: r.source.table, target: r.target.table });
+    // Same id ≠ same ref: the id ignores cardinality, direction and how composite columns pair up.
+    else if (refSemantics(b) !== refSemantics(r)) refs.push({ id: r.id, status: 'changed', source: r.source.table, target: r.target.table });
   }
   for (const r of base.refs) {
     if (!headRefs.has(r.id)) refs.push({ id: r.id, status: 'removed', source: r.source.table, target: r.target.table });
@@ -45,6 +48,16 @@ export function diffSchemas(base: Schema, head: Schema): SchemaDiff {
   refs.sort((a, z) => a.id.localeCompare(z.id));
 
   return { tables, refs };
+}
+
+/** Orientation-independent identity of a ref: `a > b` and `b < a` compare equal, while a change of
+ *  either endpoint's relation or of the column pairing does not. */
+function refSemantics(r: Ref): string {
+  const endpointKey = (e: Ref['source']) => `${e.table}(${[...e.columns].sort().join(',')})`;
+  const flip = endpointKey(r.target) < endpointKey(r.source);
+  const [first, second] = flip ? [r.target, r.source] : [r.source, r.target];
+  const pairs = first.columns.map((c, i) => `${c}=${second.columns[i] ?? ''}`).sort();
+  return JSON.stringify([first.table, first.relation, second.table, second.relation, pairs]);
 }
 
 function diffColumns(base: Column[], head: Column[]): ColumnDiffEntry[] {
