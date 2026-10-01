@@ -21,6 +21,11 @@ Cada group tiene 3 campos opcionales en `groups` del layout file:
 
 **Hidden domina sobre collapsed**: si `hidden: true`, el grupo no se renderiza, collapsed se ignora.
 
+**Selección**: ocultar o colapsar un group (y ocultar una tabla suelta) saca esas tablas de la
+`selection`; un `setSchema` que elimina tablas también las saca. Una tabla no renderizada nunca
+queda seleccionada, así el multi-drag y las acciones con scope "selección" (export, smart layout,
+reset de relaciones) no actúan sobre ella.
+
 ## Collapsed: semántica de edges
 
 Cuando un group está collapsed, todas sus tablas se sustituyen por el nodo-caja (virtual id `__group__:{name}`). Edges incidentes se transforman:
