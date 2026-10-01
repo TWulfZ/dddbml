@@ -6,6 +6,7 @@ import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
 import { ContextMenu, clampMenuAnchor, type ContextMenuItem } from './contextMenu';
 import { runSmartLayout, runEdgeOrdering } from '../layout/smartLayout';
+import type { AutoArrangeMode } from '../../shared/types';
 import {
   IconAutoArrange,
   IconChevronDown,
@@ -31,7 +32,7 @@ function ActionsPanelImpl() {
   const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
   const selCount = useAppStore((s) => s.selection.size);
 
-  const arrange = (mode: 'all' | 'new' | 'selection') => {
+  const arrange = (mode: AutoArrangeMode) => {
     void runSmartLayout(mode, { orderEdges, preserveManualEdges: preserveManual });
     setArrangeMenu(null);
   };
@@ -39,7 +40,7 @@ function ActionsPanelImpl() {
   // Anchor the popover just above the auto-arrange button (the bar sits at the bottom).
   const openArrangeMenu = (e: MouseEvent) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const estHeight = 232; // two toggles + two separators + four action rows
+    const estHeight = 204; // two toggles + two separators + three action rows
     const { x, y } = clampMenuAnchor(r.left, r.top - 8 - estHeight, 220, estHeight);
     setArrangeMenu({ x, y });
   };
@@ -49,7 +50,6 @@ function ActionsPanelImpl() {
     { label: 'Preserve manual edges', checked: preserveManual, onClick: () => setPreserveManual((v) => !v) },
     { label: '', onClick: () => {}, separator: true },
     { label: 'Re-arrange all', onClick: () => arrange('all') },
-    { label: 'Place new tables', onClick: () => arrange('new') },
     { label: `Re-arrange selection (${selCount})`, onClick: () => arrange('selection'), disabled: selCount === 0 },
     { label: '', onClick: () => {}, separator: true },
     { label: 'Order edges only (tables fixed)', onClick: () => { void runEdgeOrdering({ preserveManual }); setArrangeMenu(null); } },

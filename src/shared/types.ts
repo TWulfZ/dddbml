@@ -326,8 +326,11 @@ export function clampSetting(key: NumericSettingKey, v: unknown, fallback: numbe
 
 export type ViewportCommand = 'zoomIn' | 'zoomOut' | 'resetView' | 'fitToContent';
 
-/** Smart auto-layout modes. See specs/13-smart-auto-layout.md. */
-export type AutoArrangeMode = 'all' | 'new' | 'selection';
+/**
+ * User-facing smart auto-layout modes (specs/13). The layout engine's internal 'new' mode is not one:
+ * new tables are placed as soon as they appear (F19b).
+ */
+export type AutoArrangeMode = 'all' | 'selection';
 
 export type HostToWebview =
   | { type: 'schema:update'; payload: { schema: Schema; parseError: ParseError | null } }

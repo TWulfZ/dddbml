@@ -197,8 +197,8 @@ ejecuta `smartLayout`; calcula el conjunto movido; resetea waypoints (+ `dx/dy`)
 extremos en el conjunto movido (conservando `color`/sides) y descarta la forma entera de las aristas
 de A\* (`auto`, spec 05 §9) con **cualquier** extremo movido (conservando `color`, F20); aplica posiciones + reseteos; arma un
 `ArrangeCommand` compuesto y lo empuja al historial; agenda persistencia. `selection` con selección
-vacía cae a `all` por el atajo. `new` sin ninguna tabla que colocar es un **no-op** (sin comando y
-sin re-rutear aristas con A\*).
+vacía cae a `all` por el atajo. `runSmartLayout` sólo acepta los modos de usuario
+(`AutoArrangeMode`); `new` no le llega (F19b).
 
 **Colocación automática de tablas nuevas (`app.tsx`).** Tablas sin posición: si el canvas está
 vacío se usa el `autoLayout` plano; si ya hay tablas colocadas, las faltantes se colocan con
@@ -226,7 +226,8 @@ runtime en `resetSelectedEdges` (`runner.ts`).
 
 ## Modelo de datos / tipos afectados
 
-- `src/shared/types.ts`: nuevo `AutoArrangeMode = 'all' | 'new' | 'selection'`; nuevo miembro en
+- `src/shared/types.ts`: nuevo `AutoArrangeMode = 'all' | 'selection'` (sólo modos de usuario; `new`
+  vive en `SmartLayoutMode` del motor, F19b); nuevo miembro en
   `HostToWebview`: `{ type: 'command:autoArrange'; payload: { mode: AutoArrangeMode } }`. El **schema
   del layout sidecar no cambia** (`EdgeLayout.waypoints[]` intacto; la reescritura de aristas de 0.2.2
   no alteró el formato).
@@ -263,7 +264,8 @@ runtime en `resetSelectedEdges` (`runner.ts`).
 ## Protocolo host↔webview
 
 Nuevo mensaje **host → webview**: `{ type: 'command:autoArrange'; payload: { mode: AutoArrangeMode } }`.
-`extension.ts` registra `dddbml.autoArrange` → QuickPick de 3 modos → `panel.sendAutoArrange(mode)` →
+`extension.ts` registra `dddbml.autoArrange` → QuickPick (Re-arrange all / Re-arrange selection /
+Order edges only) → `panel.sendAutoArrange(mode)` (u `sendEdgeOrderOnly`) →
 `post(...)`. El webview (`main.tsx`) despacha `case 'command:autoArrange'` → `void runSmartLayout(mode)`.
 Las otras dos superficies (ActionsPanel, menú contextual) llaman `runSmartLayout` directo, sin salto al
 host.

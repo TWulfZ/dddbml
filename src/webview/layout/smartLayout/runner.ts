@@ -1,10 +1,10 @@
-import type { EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
+import type { AutoArrangeMode, EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
 import { store, isCanvasReadOnly, type AppState } from '../../state/store';
 import { buildArrangeCommand, buildEdgesResetCommand } from '../../state/history';
 import { schedulePersist } from '../../persistence';
 import { postToHost } from '../../vscode';
 import { estimateSize } from '../autoLayout';
-import { smartLayout, type SmartLayoutMode } from './layout';
+import { smartLayout } from './layout';
 import { computeAutoShapeDrops, computeEdgeResets, computeSelectionEdgeResets, movedNames, rawLayoutRefs } from './edgeReset';
 import { computeEdgeOrdering } from './edgeOrdering';
 import { edgeKeyedRefs } from '../../render/edgeKey';
@@ -102,7 +102,7 @@ function mergeResets(
  * engine, so the store is mutated EXACTLY ONCE, only on success: A* routes against the COMPUTED (not
  * yet applied) positions, and on abort nothing is applied (critic G2 — atomic, cancel = no-op).
  */
-export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions = {}): Promise<void> {
+export async function runSmartLayout(mode: AutoArrangeMode, opts: ArrangeOptions = {}): Promise<void> {
   const orderEdges = opts.orderEdges ?? true;
   const preserveManual = opts.preserveManualEdges ?? true;
 
@@ -139,8 +139,6 @@ export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions
   if (result.size === 0) return;
 
   const moved = movedNames(before, result);
-  // Nothing new to place: the user asked for placement only, so do not re-route every edge.
-  if (mode === 'new' && moved.size === 0) return;
   // Auto shapes are checked on every schema ref: one whose other endpoint is hidden or collapsed
   // is still A*'s and still stale once the visible endpoint moves.
   const strandedResets = [
