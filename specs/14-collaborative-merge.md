@@ -120,10 +120,24 @@ Sólo el host escribe el sidecar. Flujo:
    (Ctrl+Z/Y) checan `mergeConflicts` y hacen no-op; el `ActionsPanel` se **oculta**;
    el marquee de `app.tsx` se salta. Así ningún botón ni atajo muta el layout
    provisional (que se descartaría al aplicar). El host además: (a) **no re-postea**
-   `merge:begin` si el set de conflictos no cambió (firma por ids) → un watcher que
-   dispara doble no borra las decisiones del usuario; (b) un `git pull` que cambia el
-   set sí refresca (avisa); (c) `mergeResolving` evita Apply concurrentes (doble
-   escritura/stage).
+   `merge:begin` si el set de conflictos no cambió (firma por ids **y lados**
+   `ours`/`theirs`) → un watcher que dispara doble no borra las decisiones del usuario;
+   (b) un `git pull` / el siguiente paso de un rebase que cambia el set **o los valores de
+   una misma clave** sí refresca (avisa); el webview conserva las decisiones de los
+   conflictos idénticos y descarta las de los que cambiaron (se eligieron contra valores
+   que ya no existen); (c) `mergeResolving` evita Apply concurrentes (doble
+   escritura/stage); (d) es la **autoridad del gate** (spec 16, "Gate en dos capas"):
+   descarta `layout:persist`, rechaza Reset Layout / Prune Orphans y Commit/Stash/Revert
+   de los archivos del diagrama (también si git aún lista paths unmerged), cancela un
+   persist pendiente al detectar marcadores, y re-postea `merge:begin` a un webview
+   recargado.
+   - **Detección fallida** (marcadores en el archivo pero sin stages legibles, p. ej. tras
+     `git add -A`): el panel sigue en modo merge, read-only, con `merge:begin { conflicts: [],
+     error }`; la barra muestra el error y no ofrece Apply. Nunca un layout vacío editable.
+     Una lectura limpia posterior (el usuario arregló los marcadores) sale con `merge:done`.
+   - **Resuelto/abortado fuera del diagrama** (`git checkout --theirs` + `add`, `merge
+     --abort`): el watcher re-lee; sin conflicto, el host recarga el layout y postea
+     `merge:done`. Un Apply que llega sin merge pendiente también responde `merge:done`.
    - **Tablas** (con `(x,y)`): se ocultan sus `TableNode` normales y se dibuja la
      **tabla completa** (header + columnas, como en el diff view de spec 16) en cada
      posición candidata (@ours y @theirs), en coords world. **Sin etiquetas
@@ -157,8 +171,10 @@ Sólo el host escribe el sidecar. Flujo:
 4. **Apply:** el webview postea `merge:resolve { decisions: Record<id,'ours'|'theirs'> }`.
    El host mapea cada `id` → su `MergeConflict` retenido, `applySide(merged, c,
    side)`, **escribe limpio** (`writeSharedLayout`), `git add`, actualiza
-   `diskSidecarText`/`diskSharedSerialized`, limpia `pendingMerge`, postea `layout:loaded` (final,
-   con view-state re-aplicado) y `merge:done`. El webview sale del modo conflicto
+   `diskSidecarText`/`diskSharedSerialized`, limpia `pendingMerge` y `sidecarCorrupt` (lo
+   recién escrito es JSON válido), postea `layout:loaded` (final,
+   con view-state re-aplicado) y `merge:done`. Si la escritura falla, postea
+   `merge:applyFailed`: el webview sale de "Applying…" **conservando** las decisiones. El webview sale del modo conflicto
    en `merge:done`. Un `layout:loaded`/`layout:external-change` que llega con el modo
    conflicto activo **conserva la cámara actual** del webview: el viewport del host es el
    view-state guardado antes del merge (pan/zoom no persiste) y Apply hacía saltar la vista.
@@ -281,8 +297,8 @@ Tailwind en `@layer utilities` ganarían sobre `@layer components`; por eso no h
 - `panel.ts` — `loadSharedLayout` enruta a `detectSidecarConflict`, guarda
   `pendingMerge`, postea `merge:begin`; `handleWebviewMessage` recibe
   `merge:resolve` → `applyResolvedConflicts` → `layout:loaded` + `merge:done`.
-- `shared/types.ts` — `SerializableMergeConflict` + mensajes `merge:begin` /
-  `merge:resolve` / `merge:done`.
+- `shared/types.ts` — `SerializableMergeConflict` + mensajes `merge:begin` (con `error`) /
+  `merge:resolve` / `merge:done` / `merge:applyFailed`.
 - `webview/state/store.ts` — slice de conflicto (`mergeConflicts`,
   `mergeDecisions`, `mergeApplying`) + acciones.
 - `webview/render/mergeGhosts.tsx` — fantasmas de tabla en el lienzo (hover vía `mergeHover`).

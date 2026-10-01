@@ -72,6 +72,8 @@ export interface AppState {
   /** Active layout-merge conflicts (spec 14). Non-null ⇒ the diagram is in blocking
    *  conflict-resolution mode: pan/zoom only, no select/drag/edit/persist until resolved. */
   mergeConflicts: SerializableMergeConflict[] | null;
+  /** Set when the host could not read the conflict from git: still blocking, nothing to pick. */
+  mergeError: string | null;
   /** Per-conflict decisions keyed by `SerializableMergeConflict.id`. Revertible until Apply. */
   mergeDecisions: Record<string, 'ours' | 'theirs'>;
   /** True after Apply is posted to the host, while awaiting `merge:done`. */
@@ -165,7 +167,7 @@ export interface AppActions {
   undo(): void;
   redo(): void;
   clearHistory(): void;
-  beginMerge(conflicts: SerializableMergeConflict[]): void;
+  beginMerge(conflicts: SerializableMergeConflict[], error?: string | null): void;
   setMergeDecision(id: string, side: 'ours' | 'theirs'): void;
   setMergeDecisionsBulk(side: 'ours' | 'theirs'): void;
   setMergeApplying(applying: boolean): void;
@@ -226,6 +228,7 @@ const initial: AppState = {
   future: [],
   historyCapacity: 200,
   mergeConflicts: null,
+  mergeError: null,
   mergeDecisions: {},
   mergeApplying: false,
   mergeView: 'all',
@@ -509,10 +512,11 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   clearHistory() {
     set({ past: [], future: [] });
   },
-  beginMerge(conflicts) {
+  beginMerge(conflicts, error = null) {
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
     // A host merge always wins over a git overlay, so clear gitView too.
-    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: -1 });
+    const mergeDecisions = keepUnchangedDecisions(get(), conflicts);
+    set({ mergeConflicts: conflicts, mergeError: error, mergeDecisions, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: -1 });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -549,7 +553,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     set({ mergeHover: hover });
   },
   endMerge() {
-    set({ mergeConflicts: null, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null });
+    set({ mergeConflicts: null, mergeError: null, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null });
   },
   setGitStatus(status) {
     set({ gitStatus: status });
@@ -663,6 +667,19 @@ function withoutSelected(sel: Set<QualifiedName>, names: Iterable<QualifiedName>
     next.delete(n);
   }
   return next ?? sel;
+}
+
+/** A refreshed conflict list keeps the picks whose conflict is identical (same id, same sides); a
+ *  pick made against values that changed on disk would apply something the user never saw. */
+function keepUnchangedDecisions(s: AppState, next: SerializableMergeConflict[]): Record<string, 'ours' | 'theirs'> {
+  if (!s.mergeConflicts) return {};
+  const prev = new Map(s.mergeConflicts.map((c) => [c.id, JSON.stringify(c)]));
+  const kept: Record<string, 'ours' | 'theirs'> = {};
+  for (const c of next) {
+    const decision = s.mergeDecisions[c.id];
+    if (decision && prev.get(c.id) === JSON.stringify(c)) kept[c.id] = decision;
+  }
+  return kept;
 }
 
 function pushHistory(s: AppState, cmd: EditCommand): Partial<AppState> {

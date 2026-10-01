@@ -19,6 +19,11 @@ const SCHEMA_DEBOUNCE_MS = 150;
 /** Each git status spawns 2-3 processes; a drag+save burst used to spawn ~6 of them. */
 const GIT_STATUS_DEBOUNCE_MS = 200;
 
+const MERGE_UNREADABLE = 'The layout file has git conflict markers, but the conflict could not be read from git. Resolve the markers in the layout file manually; layout changes are not saved until then.';
+
+/** Why the panel refuses shared writes (spec 16, "Gate en dos capas"). */
+type ReadOnlyReason = 'merge' | 'timeTravel' | 'diff';
+
 export class DiagramPanel {
   private static panels = new Map<string, DiagramPanel>();
 
@@ -94,9 +99,12 @@ export class DiagramPanel {
   /** Set while a conflicted sidecar awaits in-webview resolution; null otherwise. Holds the
    *  retained host-side conflicts so the webview only has to return per-conflict decisions. */
   private pendingMerge: { conflicts: MergeConflict[]; merged: Layout; repoRoot: string; relpath: string } | null = null;
+  /** The sidecar has conflict markers but git's stages could not be read (F04): still a merge, so
+   *  still read-only, with no conflicts to pick until a clean read. */
+  private mergeUnreadable = false;
   /** Guards against concurrent Apply round-trips writing/staging twice. */
   private mergeResolving = false;
-  /** Signature (joined conflict ids) of the last `merge:begin` posted — so re-detecting the SAME
+  /** Signature (conflicts with both sides) of the last `merge:begin` posted — so re-detecting the SAME
    *  conflict set (e.g. a double-firing watcher) doesn't re-post and wipe the user's decisions. */
   private lastPostedMergeSig: string | null = null;
 
@@ -177,6 +185,7 @@ export class DiagramPanel {
   }
 
   public async resetLayout(): Promise<void> {
+    if (this.refuseWhileReadOnly('Reset Layout')) return;
     this.currentLayout = { ...this.currentLayout, tables: {} };
     await this.flushPersist(this.currentLayout);
     this.post({ type: 'layout:loaded', payload: this.currentLayout });
@@ -184,6 +193,7 @@ export class DiagramPanel {
   }
 
   public async pruneOrphans(): Promise<void> {
+    if (this.refuseWhileReadOnly('Prune orphans')) return;
     // "Orphan" is judged against the schema: with no current parse (or no layout loaded yet) every
     // entry looks orphaned and the whole sidecar — positions and colours — would be wiped.
     if (!this.layoutLoaded || !this.lastParseOk) {
@@ -200,13 +210,28 @@ export class DiagramPanel {
       { modal: true },
       'Prune',
     );
-    if (answer !== 'Prune') return;
+    if (answer !== 'Prune' || this.refuseWhileReadOnly('Prune orphans')) return;
     // Recomputed: the layout may have changed while the modal was open.
     const { tables: nextTables, groups: nextGroups, removedTables, removedGroups } = this.computePrune();
     this.currentLayout = { ...this.currentLayout, tables: nextTables, groups: nextGroups };
     await this.flushPersist(this.currentLayout);
     this.post({ type: 'layout:loaded', payload: this.currentLayout });
     void vscode.window.showInformationMessage(`dddbml: pruned ${removedTables} orphan table(s), ${removedGroups} orphan group(s).`);
+  }
+
+  /** Host half of the read-only gate: the webview's own gate does not survive a reload, a timer set
+   *  before entering, or a host command, so the host is the authority (spec 16). */
+  private get readOnly(): ReadOnlyReason | null {
+    if (this.pendingMerge || this.mergeUnreadable) return 'merge';
+    return null;
+  }
+
+  private refuseWhileReadOnly(action: string): boolean {
+    const reason = this.readOnly;
+    if (!reason) return false;
+    const fix = reason === 'merge' ? 'resolve the layout merge first' : 'exit the read-only git view first';
+    void vscode.window.showWarningMessage(`dddbml: ${action} is unavailable — ${fix}.`);
+    return true;
   }
 
   private computePrune(): { tables: Layout['tables']; groups: Layout['groups']; removedTables: number; removedGroups: number } {
@@ -429,6 +454,7 @@ export class DiagramPanel {
 
   private async hydrate(): Promise<void> {
     this.timeTravelSchema = null; // a fresh webview always starts on the working state
+    this.lastPostedMergeSig = null; // a fresh webview has no merge on screen: re-post it (F02)
     // Send layout first so that when the schema arrives, positions are already in the
     // store and the auto-layout effect skips tables that already have a saved position.
     await this.sendLayout();
@@ -522,6 +548,7 @@ export class DiagramPanel {
     try {
       const { layout, text } = await readLayout(this.dbmlUri);
       this.pendingMerge = null; // a clean read clears any stale conflict state
+      this.mergeUnreadable = false;
       this.sidecarCorrupt = false;
       this.diskSidecarText = text;
       this.diskSharedSerialized = text === null ? null : serializeSharedLayout(layout);
@@ -559,14 +586,16 @@ export class DiagramPanel {
     try {
       detected = await detectSidecarConflict(this.dbmlUri);
     } catch {
-      void vscode.window.showWarningMessage(
-        'dddbml: could not read the layout conflict from git — resolve the markers manually, then reopen the diagram.',
-      );
+      // Never fall back to an editable layout: the first edit would overwrite both sides (F04).
+      this.pendingMerge = null;
+      this.mergeUnreadable = true;
+      this.cancelPendingPersist();
       return this.currentLayout;
     }
+    this.mergeUnreadable = false;
     const { merged, conflicts, repoRoot, relpath } = detected;
     if (conflicts.length === 0) {
-      this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, merged));
+      await this.writeShared(merged);
       try { await gitAdd(repoRoot, relpath); } catch { /* staging is best-effort */ }
       this.pendingMerge = null;
       void vscode.window.showInformationMessage(
@@ -574,40 +603,57 @@ export class DiagramPanel {
       );
       return merged;
     }
+    // A persist debounced before the markers landed holds the pre-merge layout (F27).
+    this.cancelPendingPersist();
     this.pendingMerge = { conflicts, merged, repoRoot, relpath };
     return merged;
   }
 
   /** Post the conflict set to the webview (schema must already be up so ghosts can render). Skips a
-   *  re-post when the conflict set is unchanged, so a double-firing watcher doesn't wipe decisions. */
+   *  re-post when the conflict set is unchanged, so a double-firing watcher doesn't wipe decisions.
+   *  A merge that ended outside the diagram (resolved, aborted) posts merge:done (F03). */
   private maybePostMerge(): void {
-    if (!this.pendingMerge) { this.lastPostedMergeSig = null; return; }
-    const conflicts = toSerializableConflicts(this.pendingMerge.conflicts);
-    const sig = conflicts.map((c) => c.id).join('|');
+    if (!this.pendingMerge && !this.mergeUnreadable) {
+      if (this.lastPostedMergeSig !== null) this.post({ type: 'merge:done' });
+      this.lastPostedMergeSig = null;
+      return;
+    }
+    const conflicts = this.pendingMerge ? toSerializableConflicts(this.pendingMerge.conflicts) : [];
+    const error = this.mergeUnreadable ? MERGE_UNREADABLE : null;
+    // Sides are part of the signature: the next rebase step can conflict on the same keys with new
+    // values, and keeping the old ghosts would make Apply write a value the user never saw.
+    const sig = JSON.stringify({ conflicts, error });
     if (sig === this.lastPostedMergeSig) return; // identical set already on screen — keep the user's picks
     if (this.lastPostedMergeSig !== null) {
       void vscode.window.showWarningMessage('dddbml: the layout changed on disk — the conflict list was refreshed.');
     }
     this.lastPostedMergeSig = sig;
     this.timeTravelSchema = null; // beginMerge drops the webview out of any git view
-    this.post({ type: 'merge:begin', payload: { conflicts } });
+    this.post({ type: 'merge:begin', payload: { conflicts, error } });
   }
 
   /** The webview resolved the conflicts: apply decisions, write the clean sidecar, stage, refresh, exit. */
   private async resolveMerge(decisions: Record<string, 'ours' | 'theirs'>): Promise<void> {
+    if (this.mergeResolving) return; // ignore concurrent Apply clicks
     const pending = this.pendingMerge;
-    if (!pending || this.mergeResolving) return; // ignore concurrent Apply clicks
+    if (!pending) {
+      if (this.mergeUnreadable) { this.post({ type: 'merge:applyFailed' }); return; }
+      // Resolved or aborted outside the diagram: the webview must still leave merge mode (F03).
+      this.lastPostedMergeSig = null;
+      this.post({ type: 'merge:done' });
+      return;
+    }
     this.mergeResolving = true;
     try {
-      const resolved = applyDecisions(pending.merged, pending.conflicts, decisions);
+      let resolved: Layout;
       try {
-        this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, resolved));
+        resolved = applyDecisions(pending.merged, pending.conflicts, decisions);
+        await this.writeShared(resolved);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         void vscode.window.showErrorMessage(`dddbml: failed to write resolved layout — ${message}`);
-        // Re-post the conflicts so the webview leaves its "Applying…" state and can retry; the file
-        // still has its markers and pendingMerge is intact.
-        this.post({ type: 'merge:begin', payload: { conflicts: toSerializableConflicts(pending.conflicts) } });
+        // The file keeps its markers and pendingMerge is intact; the user's picks must survive the retry (F73).
+        this.post({ type: 'merge:applyFailed' });
         return;
       }
       try { await gitAdd(pending.repoRoot, pending.relpath); } catch { /* staging is best-effort */ }
@@ -668,6 +714,11 @@ export class DiagramPanel {
       this.post({ type: 'git:commitResult', payload: { ok: false, message: 'Not a git repository' } });
       return;
     }
+    const blocked = await this.mergeBlocksGitWrite(scope);
+    if (blocked) {
+      this.post({ type: 'git:commitResult', payload: { ok: false, message: blocked } });
+      return;
+    }
     const dirty = (await gitStatusPorcelain(scope.repoRoot, scope.relpaths)).map((f) => f.relpath);
     if (dirty.length === 0) {
       this.post({ type: 'git:commitResult', payload: { ok: false, message: 'No diagram changes to commit' } });
@@ -714,6 +765,8 @@ export class DiagramPanel {
   private async handleGitRestore(): Promise<void> {
     const scope = await this.diagramScope();
     if (!scope) { this.postOpResult('restore', false, 'Not a git repository'); return; }
+    const blocked = await this.mergeBlocksGitWrite(scope);
+    if (blocked) { this.postOpResult('restore', false, blocked); return; }
     const status = await gitStatusPorcelain(scope.repoRoot, scope.relpaths);
     const restorable = status.filter((f) => f.status !== 'untracked' && f.status !== 'added').map((f) => f.relpath);
     const stagedNew = status.filter((f) => f.status === 'added').map((f) => f.relpath);
@@ -737,6 +790,8 @@ export class DiagramPanel {
   private async handleGitStashPush(message?: string): Promise<void> {
     const scope = await this.diagramScope();
     if (!scope) { this.postOpResult('stashPush', false, 'Not a git repository'); return; }
+    const blocked = await this.mergeBlocksGitWrite(scope);
+    if (blocked) { this.postOpResult('stashPush', false, blocked); return; }
     const tracked = (await gitStatusPorcelain(scope.repoRoot, scope.relpaths))
       .filter((f) => f.status !== 'untracked')
       .map((f) => f.relpath);
@@ -758,6 +813,8 @@ export class DiagramPanel {
   private async handleGitStashOp(op: 'stashApply' | 'stashPop', ref: string): Promise<void> {
     const scope = await this.diagramScope();
     if (!scope) { this.postOpResult(op, false, 'Not a git repository'); return; }
+    const blocked = await this.mergeBlocksGitWrite(scope);
+    if (blocked) { this.postOpResult(op, false, blocked); return; }
     try {
       if (op === 'stashApply') await gitStashApply(scope.repoRoot, ref);
       else await gitStashPop(scope.repoRoot, ref);
@@ -778,6 +835,17 @@ export class DiagramPanel {
       this.postOpResult(op, false, m);
       void vscode.window.showErrorMessage(`dddbml: stash ${op === 'stashPop' ? 'pop' : 'apply'} failed — ${m}`);
     }
+  }
+
+  /**
+   * Staging the marker-laden sidecar erases git's unmerged stages (F31). Git state is checked, not
+   * only pendingMerge: a stash-pop conflict has no MERGE_HEAD, so git itself refuses nothing.
+   */
+  private async mergeBlocksGitWrite(scope: { repoRoot: string; relpaths: string[] }): Promise<string | null> {
+    if (this.readOnly !== 'merge' && !(await this.hasUnmergedDiagramFiles(scope))) return null;
+    const message = 'Resolve the layout merge first';
+    void vscode.window.showWarningMessage(`dddbml: ${message.toLowerCase()} — git operations on the diagram files are blocked while it is pending.`);
+    return message;
   }
 
   private async hasUnmergedDiagramFiles(scope: { repoRoot: string; relpaths: string[] }): Promise<boolean> {
@@ -884,6 +952,11 @@ export class DiagramPanel {
   }
 
   private onLayoutPersist(payload: Partial<Layout>): void {
+    const reason = this.readOnly;
+    if (reason) {
+      console.warn(`[dddbml] layout:persist dropped: the canvas is read-only (${reason}).`);
+      return;
+    }
     const merged = mergeLayout(this.currentLayout, payload);
     this.currentLayout = merged;
     this.pendingPersist = merged;
@@ -894,9 +967,13 @@ export class DiagramPanel {
     }, PERSIST_DEBOUNCE_MS);
   }
 
-  private noteSidecarWritten(serialized: string): void {
+  /** Every shared write goes through here: what we just wrote is valid, so a stale corrupt flag
+   *  must not keep blocking later saves (F30). */
+  private async writeShared(layout: Layout): Promise<void> {
+    const serialized = await writeSharedLayout(this.dbmlUri, layout);
     this.diskSidecarText = serialized;
     this.diskSharedSerialized = serialized;
+    this.sidecarCorrupt = false;
   }
 
   private async flushPersist(layout: Layout): Promise<void> {
@@ -905,10 +982,10 @@ export class DiagramPanel {
     let sharedChanged = false;
     try {
       const sharedSerialized = serializeSharedLayout(layout);
-      if (this.sidecarCorrupt) {
-        // Never clobber a corrupt sidecar with a layout derived from it; the watcher re-reads on fix.
+      if (this.sidecarCorrupt || this.readOnly === 'merge') {
+        // Never clobber a corrupt or conflict-marked sidecar; the watcher re-reads on fix.
       } else if (sharedSerialized !== this.diskSharedSerialized) {
-        this.noteSidecarWritten(await writeSharedLayout(this.dbmlUri, layout));
+        await this.writeShared(layout);
         sharedChanged = true;
       }
     } catch (err) {

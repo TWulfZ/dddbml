@@ -70,7 +70,10 @@ window.addEventListener('message', (ev: MessageEvent<HostToWebview>) => {
       void runEdgeOrdering({ preserveManual: msg.payload.preserveManualEdges });
       return;
     case 'merge:begin':
-      state.beginMerge(msg.payload.conflicts);
+      state.beginMerge(msg.payload.conflicts, msg.payload.error);
+      return;
+    case 'merge:applyFailed':
+      state.setMergeApplying(false);
       return;
     case 'merge:done':
       state.endMerge();

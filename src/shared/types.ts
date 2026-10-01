@@ -323,8 +323,11 @@ export type HostToWebview =
   | { type: 'exporters:list'; payload: { exporters: ExporterMeta[] } }
   | { type: 'export:result'; payload: { ok: boolean; warnings?: string[]; message?: string } }
   | { type: 'settings:loaded'; payload: AppSettings }
-  | { type: 'merge:begin'; payload: { conflicts: SerializableMergeConflict[] } }
+  /** `error` set = the conflict could not be read from git: read-only with no conflicts to pick. */
+  | { type: 'merge:begin'; payload: { conflicts: SerializableMergeConflict[]; error: string | null } }
   | { type: 'merge:done' }
+  /** The Apply write failed: leave "Applying…" but keep every decision so the user can retry. */
+  | { type: 'merge:applyFailed' }
   | { type: 'git:status'; payload: GitStatusSummary }
   | { type: 'git:commitResult'; payload: { ok: boolean; message?: string } }
   | { type: 'git:stashes'; payload: { stashes: GitStashEntry[] } }

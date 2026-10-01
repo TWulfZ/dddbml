@@ -28,9 +28,22 @@ function MergePanelImpl() {
   const applying = useAppStore((s) => s.mergeApplying);
   const view = useAppStore((s) => s.mergeView);
   const focusDimming = useAppStore((s) => s.focusDimming);
+  const error = useAppStore((s) => s.mergeError);
   const [confirm, setConfirm] = useState(false);
 
   if (!conflicts) return null;
+
+  if (error) {
+    return (
+      <div class="ddd-merge-bar" role="alert" aria-label="Layout merge blocked">
+        <div class="ddd-merge-bar__head">
+          <span class="ddd-merge-bar__title">Layout merge</span>
+          <span class="ddd-merge-bar__count">read-only</span>
+        </div>
+        <p class="ddd-merge-bar__hint">{error}</p>
+      </div>
+    );
+  }
 
   const total = conflicts.length;
   const resolved = conflicts.filter((c) => decisions[c.id] != null).length;
