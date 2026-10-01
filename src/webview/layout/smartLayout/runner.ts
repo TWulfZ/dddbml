@@ -25,15 +25,44 @@ export interface ArrangeOptions {
  */
 let activeArrange: AbortController | null = null;
 
-/** Begin a progress run: supersede any prior run, show the overlay, return its signal + reporter. */
-function beginProgress(): { signal: AbortSignal; onProgress: (p: number) => void } {
+/**
+ * Begin a progress run: supersede any prior run and show the overlay. Progress and cleanup are
+ * gated on `activeArrange === ctrl`, so a superseded run finishing late cannot hide the new run's
+ * overlay, detach its Cancel, or bump its bar (audit F45).
+ */
+function beginProgress(): { ctrl: AbortController; onProgress: (p: number) => void } {
   activeArrange?.abort();
-  activeArrange = new AbortController();
+  const ctrl = new AbortController();
+  activeArrange = ctrl;
   store.getState().startEdgeOrderProgress();
   return {
-    signal: activeArrange.signal,
-    onProgress: (p) => store.getState().setEdgeOrderProgress(p),
+    ctrl,
+    onProgress: (p) => {
+      if (activeArrange === ctrl) store.getState().setEdgeOrderProgress(p);
+    },
   };
+}
+
+function endProgress(ctrl: AbortController): void {
+  if (activeArrange !== ctrl) return;
+  activeArrange = null;
+  store.getState().endEdgeOrderProgress();
+}
+
+/**
+ * True when the state an A* run was computed from is no longer current: a user edit or undo, a host
+ * layout/schema push, or a merge/time-travel entered during the await. Applying anyway would clobber
+ * those edits and record undo against a state that no longer exists (audit F44). Zustand updates
+ * are immutable, so reference identity suffices.
+ */
+function staleSince(s: AppState): boolean {
+  const now = store.getState();
+  return (
+    now.positions !== s.positions ||
+    now.edgeLayouts !== s.edgeLayouts ||
+    now.schema !== s.schema ||
+    isCanvasReadOnly(now)
+  );
 }
 
 /** Cancel the in-flight edge-ordering run (the overlay's Cancel button). Discards — no command pushed. */
@@ -123,7 +152,8 @@ export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions
   }
 
   // Order edges against the COMPUTED positions (NOT the store — it still holds the old ones).
-  const { signal, onProgress } = beginProgress();
+  const { ctrl, onProgress } = beginProgress();
+  const { signal } = ctrl;
   let ordered: Array<[string, EdgeLayout]>;
   try {
     const res = await computeEdgeOrdering({
@@ -138,13 +168,11 @@ export async function runSmartLayout(mode: SmartLayoutMode, opts: ArrangeOptions
   } catch (err) {
     // Aborted (or engine error): apply NOTHING. Tables were never moved → true no-op.
     if (!signal.aborted) console.error('[dddbml] edge ordering failed', err);
-    store.getState().endEdgeOrderProgress();
-    activeArrange = null;
+    endProgress(ctrl);
     return;
   }
-  store.getState().endEdgeOrderProgress();
-  activeArrange = null;
-  if (signal.aborted) return;
+  endProgress(ctrl);
+  if (signal.aborted || staleSince(s)) return;
 
   // Atomic apply: positions + merged edge resets + one composite command, no await in between.
   const merged = mergeResets(strandedResets, ordered);
@@ -169,7 +197,8 @@ export async function runEdgeOrdering(opts: { preserveManual?: boolean } = {}): 
   const positions = new Map(s.positions);
   const edgesBefore = new Map(s.edgeLayouts);
 
-  const { signal, onProgress } = beginProgress();
+  const { ctrl, onProgress } = beginProgress();
+  const { signal } = ctrl;
   let ordered: Array<[string, EdgeLayout]>;
   try {
     const res = await computeEdgeOrdering({
@@ -183,13 +212,11 @@ export async function runEdgeOrdering(opts: { preserveManual?: boolean } = {}): 
     ordered = res.resets;
   } catch (err) {
     if (!signal.aborted) console.error('[dddbml] edge ordering failed', err);
-    store.getState().endEdgeOrderProgress();
-    activeArrange = null;
+    endProgress(ctrl);
     return;
   }
-  store.getState().endEdgeOrderProgress();
-  activeArrange = null;
-  if (signal.aborted || ordered.length === 0) return;
+  endProgress(ctrl);
+  if (signal.aborted || ordered.length === 0 || staleSince(s)) return;
 
   store.getState().applyEdgeLayouts(ordered);
   const cmd = buildEdgesResetCommand(

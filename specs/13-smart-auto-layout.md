@@ -165,6 +165,13 @@ extremos en el conjunto movido (conservando `color`/sides); aplica posiciones + 
 `ArrangeCommand` compuesto y lo empuja al historial; agenda persistencia. `selection` con selección
 vacía cae a `all` por el atajo.
 
+**Concurrencia del `await` (A\*).** Si tras el `await` cambió `positions`, `edgeLayouts` o `schema`
+(referencia distinta: edición del usuario, undo, push del host) o el canvas pasó a solo-lectura
+(merge / time-travel), el resultado se **descarta** sin aplicar ni empujar comando — aplicarlo
+pisaría esas ediciones con un snapshot viejo. Un segundo arrange **reemplaza** al primero (lo
+aborta); el progreso y la limpieza del overlay sólo los ejecuta la corrida vigente, así que la
+corrida reemplazada no oculta el overlay ni desengancha el Cancel de la nueva.
+
 ### Reset manual de relaciones (selección)
 
 Acción independiente del auto-arrange: "resetear las relaciones de las tablas seleccionadas". Para
