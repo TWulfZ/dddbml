@@ -80,6 +80,9 @@ function buildDiffRows(current: Column[], base: Column[] | undefined, changed: S
 }
 
 function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
+  // The rect LOD sizes itself from estimateSize (density-dependent) instead of CSS, so the memoized
+  // node must re-render on a density change or it keeps the previous density's box.
+  useAppStore((s) => s.settings.ui.density);
   const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);

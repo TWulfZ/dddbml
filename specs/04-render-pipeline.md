@@ -58,6 +58,12 @@ Decidido por `lodForZoom(viewport.zoom, settings.lod)` en `render/lod.ts`. Un so
 umbral configurable (`lowThreshold`, default `0.3`) — `full` a zoom normal/in,
 `rect` para vista "pájaro" de 5000 tablas (puntos de color agrupados por grupo).
 
+El rectángulo de `rect` se dimensiona con `estimateSize` (métrica de densidad en px), no
+por CSS como el nodo `full`. Por eso `TableNode` se suscribe a `settings.ui.density`: si
+no, el nodo memoizado conservaba el tamaño de la densidad anterior (al cambiarla o al
+abrir con una densidad no-default, ya que `settings:loaded` llega tras el schema) y
+desalineaba aristas, contenedores de grupo y spatial index.
+
 > **Un solo modo de detalle (por feedback de usuarios).** El antiguo nivel
 > intermedio `header` (sólo la franja del título, sin columnas) se eliminó: aportaba
 > poco y duplicaba el umbral. Hoy hay dos niveles y un único `lowThreshold`.
