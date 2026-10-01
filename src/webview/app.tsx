@@ -93,17 +93,22 @@ export function App(_props: AppProps) {
 
   // Auto-layout tables that have no position. Depends on `positions` too: "Reset layout" empties
   // them without touching the schema, and the effect must re-run or the canvas stays blank.
+  // The closure values are only re-run triggers: the effect flushes after paint, and a layout:loaded
+  // that lands between render and flush (time-travel exit, reload) must not be overwritten by
+  // positions laid out from the stale closure.
   useEffect(() => {
-    if (!ready) return;
-    const missing = schema.tables.filter((t) => !positions.has(t.name));
+    const { ready: isReady, schema: liveSchema, positions: livePositions } = store.getState();
+    if (!isReady) return;
+    const missing = liveSchema.tables.filter((t) => !livePositions.has(t.name));
     if (missing.length === 0) return;
-    const sizeOf = (name: QualifiedName) => estimateSize(tablesByName.get(name)?.columns.length ?? 0);
-    const layoutTargets = positions.size === 0 ? schema.tables : missing;
-    const laidOut = autoLayout(layoutTargets, schema.refs, sizeOf);
+    const columnCount = new Map(liveSchema.tables.map((t) => [t.name, t.columns.length]));
+    const sizeOf = (name: QualifiedName) => estimateSize(columnCount.get(name) ?? 0);
+    const layoutTargets = livePositions.size === 0 ? liveSchema.tables : missing;
+    const laidOut = autoLayout(layoutTargets, liveSchema.refs, sizeOf);
     const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
     for (const [name, pos] of laidOut) entries.push([name, pos]);
     if (entries.length > 0) store.getState().setPositionsBatch(entries);
-  }, [schema, tablesByName, positions, ready]);
+  }, [schema, positions, ready]);
 
   /** Set of "table::column" keys for every column that participates in any ref. */
   const fkColumnsByTable = useMemo(() => {
