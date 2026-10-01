@@ -406,7 +406,12 @@ function truncate(text: string, maxW: number, fontPx: number): string {
   const max = Math.floor(maxW / charW);
   if (text.length <= max) return text;
   if (max <= 1) return '…';
-  return text.slice(0, max - 1) + '…';
+  let cut = text.slice(0, max - 1);
+  // A cut between a surrogate pair leaves a lone high surrogate, which makes encodeURIComponent
+  // (PNG / clipboard data URL) throw 'URI malformed'.
+  const last = cut.charCodeAt(cut.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  return cut + '…';
 }
 
 function esc(s: string): string {

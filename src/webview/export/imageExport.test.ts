@@ -105,6 +105,18 @@ describe('renderSvg', () => {
     expect(height).toBe(m.bounds.h);
   });
 
+  it('truncating a label never splits a surrogate pair (PNG/clipboard encode the SVG)', () => {
+    const emoji = source();
+    emoji.schema = {
+      ...schema,
+      tables: schema.tables.map((t) =>
+        t.name === 'public.a' ? { ...t, columns: [{ name: 'abcdefghijklmnop😀xyz', type: 'int' }] } : t,
+      ),
+    };
+    const { svg } = renderSvg(buildExportModel(emoji, { scope: 'all', background: true, filename: 'd' })!, theme, stub);
+    expect(() => encodeURIComponent(svg)).not.toThrow();
+  });
+
   it('omits the background rect when background is off', () => {
     const withBg = renderSvg(buildExportModel(source(), { scope: 'all', background: true, filename: 'd' })!, theme, stub).svg;
     const noBg = renderSvg(buildExportModel(source(), { scope: 'all', background: false, filename: 'd' })!, theme, stub).svg;

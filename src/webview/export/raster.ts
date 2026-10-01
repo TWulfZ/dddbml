@@ -27,6 +27,11 @@ export function fitScale(width: number, height: number, desired: number): { scal
   return { scale: Math.max(0.05, max), clamped: true };
 }
 
+/** Safety net: any lone UTF-16 surrogate would make `encodeURIComponent` throw 'URI malformed'. */
+function replaceLoneSurrogates(s: string): string {
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -55,7 +60,7 @@ export async function svgToPng(
     try { await document.fonts.ready; } catch { /* non-fatal */ }
   }
   // data: URL (not blob:) so the webview CSP `img-src … data:` permits the load.
-  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(replaceLoneSurrogates(svg))}`;
   const img = await loadImage(url);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(width * s));
