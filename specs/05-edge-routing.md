@@ -157,6 +157,18 @@ mismo schema ⇒ mismos puertos). Asignar `ratio = (i+1)/(n+1)` (equidistante, s
 esquinas; clamp `[0.05, 0.95]`). Alinear `y` del puerto a la fila de la columna PK/FK vía
 `columnYResolver` (`columnCenterY`).
 
+**Filas renderizadas, no columnas del schema.** El índice de fila y el alto del bbox salen
+de `buildRowGeometry` (`layout/tableRows.ts`), el mismo helper (`renderedRows`) con el que
+`TableNode` dibuja: con "PK/FK columns only" cuentan sólo las filas PK/FK, y una tabla
+added/modified en diff cuenta sus filas de diff inline (el puerto va a la fila viva —
+context/added/`+`new—, nunca a la `-`old/removed). App lo memoiza en `rowGeometry` y lo usa
+también para contenedores de grupo, spatial index, `worldBbox` y objetivos de diff; antes
+todo usaba la lista completa y con el filtro el puerto FK quedaba filas por debajo de la
+tabla y el contenedor de grupo sobresalía (auditoría F08). El export de imagen sigue con
+todas las columnas (spec 17), con sus propios contenedores (`exportContainers`). El pase A*
+on-demand (§9) sigue midiendo columnas completas: lo que persiste no depende del filtro de
+vista.
+
 **Computar path** (`buildPath`): polilínea ortogonal de ejes alternados. El
 **polígono editable** se rutea entre los extremos fijos `aStub`/`bStub` (decisión
 7) conectando las **esquinas literales** del usuario directamente (`cornersThrough`,

@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'preact/hooks';
 import { createPortal, memo } from 'preact/compat';
-import type { QualifiedName, Ref, RefDiffStatus, Schema } from '../../shared/types';
+import type { QualifiedName, Ref, RefDiffStatus } from '../../shared/types';
 import { columnCenterY, estimateSize } from '../layout/autoLayout';
+import type { RowGeometry } from '../layout/tableRows';
 import { routeRefs, isDipRun, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
 import type { LodLevel } from './lod';
@@ -29,7 +30,8 @@ interface EdgeLayerProps {
   /** Current zoom LOD. `'rect'` (low zoom) → straight lines, no markers/dots/overlay. */
   lod: LodLevel;
   positions: Map<QualifiedName, { x: number; y: number }>;
-  tablesByName: Map<QualifiedName, Schema['tables'][number]>;
+  /** Rendered rows per table (PK/FK filter, inline diff) — sizes and column ports follow these. */
+  rows: RowGeometry;
   groupSizes?: GroupSize[];
   worldBbox: { x: number; y: number; w: number; h: number };
   /** Diff overlay (spec 16): composite edge key → status. Tints added refs. Null = not diffing. */
@@ -60,7 +62,7 @@ interface HoverState {
   near: number;
 }
 
-function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, tablesByName, groupSizes, worldBbox, refDiff }: EdgeLayerProps) {
+function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, worldBbox, refDiff }: EdgeLayerProps) {
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
   // Edges are faded by default; they reveal (full opacity) when their table or the edge is focused.
@@ -86,15 +88,12 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, tablesByName, grou
     }
     const pos = positions.get(name);
     if (!pos) return undefined;
-    const t = tablesByName.get(name);
-    const size = estimateSize(t?.columns.length ?? 0);
+    const size = estimateSize(rows.count(name));
     return { x: pos.x, y: pos.y, w: size.width, h: size.height };
   };
 
   const columnY = (tableName: QualifiedName, column: string): number | undefined => {
-    const t = tablesByName.get(tableName);
-    if (!t) return undefined;
-    const idx = t.columns.findIndex((c) => c.name === column);
+    const idx = rows.indexOf(tableName, column);
     if (idx < 0) return undefined;
     return columnCenterY(idx);
   };
@@ -106,7 +105,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, tablesByName, grou
   // whenever the memo recomputes. See spec 05 §8.
   const routes = useMemo(
     () => routeRefs(refs, bboxOf, columnY, (id) => edgeLayouts.get(id)),
-    [refs, positions, tablesByName, groupSizes, edgeLayouts],
+    [refs, positions, rows, groupSizes, edgeLayouts],
   );
 
   // route-all-then-cull: render only the routes whose ref has a visible endpoint. `null` ⇒ all.
