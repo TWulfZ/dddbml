@@ -60,6 +60,7 @@ export function App(_props: AppProps) {
   const groupState = useAppStore((s) => s.groups);
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
   const tableColors = useAppStore((s) => s.tableColors);
+  const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selection = useAppStore((s) => s.selection);
   const panMode = useAppStore((s) => s.panMode);
   const spacePan = useAppStore((s) => s.spacePan);
@@ -433,12 +434,25 @@ export function App(_props: AppProps) {
 
   // World bounding box covering every rendered element — used to size the SVG edge layer
   // so paths are inside its coordinate viewport (more robust than overflow:visible on 0x0 parent).
+  // Waypoint runs can be slid arbitrarily far past the outermost table; without them the SVG would
+  // clip those runs and their drag handles.
   const worldBbox = useMemo(() => {
     const b = sceneBounds(schema, positions, derived);
     if (!b) return { x: 0, y: 0, w: 800, h: 600 };
+    let minX = b.x, minY = b.y, maxX = b.x + b.w, maxY = b.y + b.h;
+    for (const r of derived.effectiveRefs) {
+      const wps = edgeLayouts.get(r.id)?.waypoints;
+      if (!wps) continue;
+      for (const p of wps) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+    }
     const P = 400;
-    return { x: Math.round(b.x - P), y: Math.round(b.y - P), w: Math.round(b.w + P * 2), h: Math.round(b.h + P * 2) };
-  }, [schema, positions, derived, density]);
+    return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
+  }, [schema, positions, derived, edgeLayouts, density]);
 
   // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
   const mergeTableKeys = new Set<QualifiedName>();

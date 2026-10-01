@@ -234,7 +234,9 @@ temporalmente es el que se arrastra (`dragController` lo pone en `startDrag` y l
 `pointerup`).
 
 **Superficies world-size (SVG de aristas, `.ddd-grid`).** Siguen dimensionadas al bbox
-completo del mundo. Al no estar promovidas viven dentro del layer tileado del mundo, por lo
+completo del mundo (`worldBbox`: escena dibujada ∪ waypoints de las aristas dibujadas, + 400
+de margen; sin los waypoints, un tramo deslizado más allá de la tabla más externa se
+recortaba junto con su handle). Al no estar promovidas viven dentro del layer tileado del mundo, por lo
 que su tamaño no crea texturas gigantes; el coste es sólo de *paint records*. Si la medición
 en DevTools → Layers sigue mostrando presión de memoria tras este cambio, el siguiente paso
 es acotar esas superficies al rect visible cuantizado (Preguntas abiertas).
