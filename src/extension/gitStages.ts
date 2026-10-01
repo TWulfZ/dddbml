@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const pexec = promisify(execFile);
@@ -55,7 +56,20 @@ export async function getRepoRoot(fsPath: string): Promise<string | null> {
 
 /** Git index paths are always forward-slash and relative to the repo root. */
 export function toRepoRelative(repoRoot: string, fsPath: string): string {
-  return path.relative(repoRoot, fsPath).split(path.sep).join('/');
+  return path.relative(repoRoot, canonicalDir(fsPath)).split(path.sep).join('/');
+}
+
+/**
+ * git reports the toplevel with symlinks resolved, so a workspace opened through a symlink would
+ * relativize to '../…' and silently match nothing. Only the directory is resolved: a symlinked
+ * file itself must keep its own name in this repo, not jump to its target.
+ */
+function canonicalDir(fsPath: string): string {
+  try {
+    return path.join(fs.realpathSync.native(path.dirname(fsPath)), path.basename(fsPath));
+  } catch {
+    return fsPath;
+  }
 }
 
 /** Which of stages 1/2/3 exist for `relpath` (empty set = not unmerged). */

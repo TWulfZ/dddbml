@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -14,6 +14,7 @@ import {
   gitStashPush,
   gitStatusPorcelain,
   showBlob,
+  toRepoRelative,
 } from './gitStages';
 
 /**
@@ -104,6 +105,19 @@ suite('git harness (real repo)', () => {
     // The relpaths must be usable as pathspecs as-is.
     await gitCommit(repo, status.map((s) => s.relpath), 'both');
     expect(await gitStatusPorcelain(repo, [spaced, accented])).toHaveLength(0);
+  });
+
+  it('resolves a repo-relative path when the workspace is opened through a symlink', async () => {
+    const { repo } = newRepo();
+    repos.push(repo);
+    const link = `${repo}-link`;
+    symlinkSync(repo, link, 'dir');
+    repos.push(link);
+    writeFileSync(join(repo, DBML), 'Table a { id int }\n');
+
+    const viaLink = join(link, DBML);
+    const root = (await getRepoRoot(viaLink))!;
+    expect(toRepoRelative(root, viaLink)).toBe(DBML);
   });
 
   it('stashes scoped changes and pops them back', async () => {
