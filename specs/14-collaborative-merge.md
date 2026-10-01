@@ -140,6 +140,12 @@ Sólo el host escribe el sidecar. Flujo:
      sólo de color) el fantasma *incoming* se desplaza un alto de header abajo-derecha
      (`ghostPos`) para que *current* siga visible y clickable; es sólo de dibujo (Apply
      escribe el valor original) y el foco de cámara del stepper usa el mismo desplazamiento.
+     Los fantasmas respetan el contrato de **culling/LOD** de spec 04: `MergeGhosts` arma su
+     propio `SpatialIndex` (el compartido sólo conoce la posición provisional `ours`) con
+     claves `<id>:<side>` y lo consulta con `useVisibleNames`; bajo el LOD `rect` se dibujan
+     como rectángulo de color (igual que `TableNode`). Cada `Ghost` (memo) se suscribe sólo a
+     su énfasis/decisión, así un hover re-renderiza 2 tarjetas, no todas; el stepper lee
+     `mergeHover` sólo en sus dos botones (`SideChoice`).
    - **Grupos / aristas** (sin posición): filas mía/suya en la barra de conflictos
      (swatch de color para grupos; "ruta mía/suya" para aristas).
    - **Barra persistente:** `N conflictos · M resueltos`, **Resolver todo como

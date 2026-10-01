@@ -610,7 +610,7 @@ export function App(_props: AppProps) {
                 />
               );
             })}
-            {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} /> : null}
+            {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} viewportRect={viewportRect} lod={lod} /> : null}
             {diffActive ? (
               <DiffGhosts
                 ghosts={diffGhosts ?? []}

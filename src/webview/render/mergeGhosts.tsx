@@ -1,9 +1,24 @@
+import { useMemo } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { QualifiedName, SerializableMergeConflict, Table, TableLayout } from '../../shared/types';
 import { estimateSize } from '../layout/autoLayout';
 import { store, useAppStore } from '../state/store';
 import { IconKey } from '../icons';
 import { densityMetrics } from '../layout/density';
 import { bcColorFor, withAlpha } from '../groups/bcPalette';
+import type { LodLevel } from './lod';
+import { SpatialIndex } from './spatialIndex';
+import { useVisibleNames, type ViewportRect } from './useVisibleNames';
+
+type Side = 'ours' | 'theirs';
+const SIDES = ['ours', 'theirs'] as const;
+const ghostKey = (id: string, side: Side) => `${id}:${side}`;
+
+interface MergeGhostsProps {
+  tablesByName: Map<QualifiedName, Table>;
+  viewportRect: ViewportRect;
+  lod: LodLevel;
+}
 
 /**
  * On-canvas conflict picker for tables whose position BOTH sides changed (spec 14 §Tier-3). Each side
@@ -12,50 +27,57 @@ import { bcColorFor, withAlpha } from '../groups/bcPalette';
  * already says which is current vs incoming. Emphasis = hover/decision (keep = accent bloom, the
  * other dims + danger = discarded); click commits the pick (revertible until Apply). A side that
  * deletes the saved position has no table to draw, so it shows a compact chip instead.
+ *
+ * Ghosts follow the table culling/LOD contract (spec 04): their own spatial index (the shared one
+ * only knows each table's provisional `ours` position) feeds `useVisibleNames`, and each Ghost
+ * subscribes to its own emphasis, so a hover re-renders two cards instead of every ghost.
  */
-export function MergeGhosts({ tablesByName }: { tablesByName: Map<QualifiedName, Table> }) {
+function MergeGhostsImpl({ tablesByName, viewportRect, lod }: MergeGhostsProps) {
   const conflicts = useAppStore((s) => s.mergeConflicts);
-  const decisions = useAppStore((s) => s.mergeDecisions);
-  // Hover is shared via the store so the stepper's current/incoming buttons cross-highlight these.
-  const hover = useAppStore((s) => s.mergeHover);
+  const density = useAppStore((s) => s.settings.ui.density);
 
-  if (!conflicts) return null;
-  const tableConflicts = conflicts.filter((c) => c.section === 'tables');
+  const tableConflicts = useMemo(() => (conflicts ?? []).filter((c) => c.section === 'tables'), [conflicts]);
+
+  const index = useMemo(() => {
+    const idx = new SpatialIndex();
+    const nudge = densityMetrics(density).headerHeight;
+    for (const c of tableConflicts) {
+      const size = estimateSize(tablesByName.get(c.key)?.columns.length ?? 0);
+      for (const side of SIDES) {
+        const p = ghostPos(c, side, nudge);
+        if (p) idx.insert(ghostKey(c.id, side), { x: p.x, y: p.y, w: size.width, h: size.height });
+      }
+    }
+    return idx;
+  }, [tableConflicts, tablesByName, density]);
+
+  const visible = useVisibleNames(index, viewportRect, true);
+
   if (tableConflicts.length === 0) return null;
 
   return (
     <div class="ddd-merge-ghost-layer">
-      {tableConflicts.map((c) => {
-        const table = tablesByName.get(c.key);
-        return (['ours', 'theirs'] as const).map((side) => (
-          <Ghost
-            key={`${c.id}:${side}`}
-            conflict={c}
-            side={side}
-            table={table}
-            decided={decisions[c.id]}
-            hovered={hover?.id === c.id ? hover.side : null}
-            onHover={(entering) => {
-              if (entering) store.getState().setMergeHover({ id: c.id, side });
-              else {
-                const cur = store.getState().mergeHover;
-                if (cur && cur.id === c.id && cur.side === side) store.getState().setMergeHover(null);
-              }
-            }}
-            onPick={() => store.getState().setMergeDecision(c.id, side)}
-          />
-        ));
-      })}
+      {tableConflicts.map((c) =>
+        SIDES.map((side) =>
+          visible && !visible.has(ghostKey(c.id, side)) ? null : (
+            <Ghost key={ghostKey(c.id, side)} conflict={c} side={side} table={tablesByName.get(c.key)} lod={lod} />
+          ),
+        ),
+      )}
     </div>
   );
 }
+
+// memo: every prop is stable across pans (tablesByName is memoized on schema), so App's
+// culling re-renders skip the whole ghost layer.
+export const MergeGhosts = memo(MergeGhostsImpl);
 
 /**
  * Where a side's ghost is drawn. Both sides at the same x/y (a color-only conflict) would stack the
  * cards and hide 'current', so 'incoming' is nudged down-right by `nudge` (one header height keeps the
  * current header exposed). Display-only: Apply still writes the original `theirs` value.
  */
-export function ghostPos(c: SerializableMergeConflict, side: 'ours' | 'theirs', nudge: number): { x: number; y: number } | null {
+export function ghostPos(c: SerializableMergeConflict, side: Side, nudge: number): { x: number; y: number } | null {
   const ours = c.ours as TableLayout | null;
   const theirs = c.theirs as TableLayout | null;
   const pos = side === 'ours' ? (ours ?? theirs) : (theirs ?? ours);
@@ -68,23 +90,31 @@ export function ghostPos(c: SerializableMergeConflict, side: 'ours' | 'theirs', 
 
 type Emphasis = 'keep' | 'discard' | 'neutral';
 
-function Ghost({
-  conflict,
-  side,
-  table,
-  decided,
-  hovered,
-  onHover,
-  onPick,
-}: {
-  conflict: SerializableMergeConflict;
-  side: 'ours' | 'theirs';
-  table: Table | undefined;
-  decided: 'ours' | 'theirs' | undefined;
-  hovered: 'ours' | 'theirs' | null;
-  onHover: (entering: boolean) => void;
-  onPick: () => void;
-}) {
+/** Hover wins; else the committed decision; else neutral. */
+export function ghostEmphasis(
+  hover: { id: string; side: Side } | null,
+  decided: Side | undefined,
+  id: string,
+  side: Side,
+): Emphasis {
+  if (hover && hover.id === id) return hover.side === side ? 'keep' : 'discard';
+  if (decided != null) return decided === side ? 'keep' : 'discard';
+  return 'neutral';
+}
+
+function onGhostHover(id: string, side: Side, entering: boolean): void {
+  if (entering) {
+    store.getState().setMergeHover({ id, side });
+    return;
+  }
+  const cur = store.getState().mergeHover;
+  if (cur && cur.id === id && cur.side === side) store.getState().setMergeHover(null);
+}
+
+function GhostImpl({ conflict, side, table, lod }: { conflict: SerializableMergeConflict; side: Side; table: Table | undefined; lod: LodLevel }) {
+  const id = conflict.id;
+  const emphasis = useAppStore((s) => ghostEmphasis(s.mergeHover, s.mergeDecisions[id], id, side));
+  const checkedSide = useAppStore((s) => s.mergeDecisions[id] === side);
   const nudge = densityMetrics(useAppStore((s) => s.settings.ui.density)).headerHeight;
   const groupName = table?.groupName;
   const groupColor = useAppStore((s) => (groupName ? s.groups[groupName]?.color : undefined));
@@ -95,19 +125,14 @@ function Ghost({
   // Same tint path as TableNode, so each card shows the color that side would apply.
   const color = thisVal?.color ?? (groupName ? (groupColor ?? bcColorFor(groupName)) : undefined);
 
-  // Emphasis: hover wins; else the committed decision; else both neutral.
-  const emphasis: Emphasis =
-    hovered != null ? (hovered === side ? 'keep' : 'discard')
-    : decided != null ? (decided === side ? 'keep' : 'discard')
-    : 'neutral';
-
   const handlers = {
-    onPointerEnter: () => onHover(true),
-    onPointerLeave: () => onHover(false),
+    onPointerEnter: () => onGhostHover(id, side, true),
+    onPointerLeave: () => onGhostHover(id, side, false),
     onPointerDown: (e: PointerEvent) => { e.stopPropagation(); },
-    onClick: (e: MouseEvent) => { e.stopPropagation(); onPick(); },
+    onClick: (e: MouseEvent) => { e.stopPropagation(); store.getState().setMergeDecision(id, side); },
   };
-  const checked = decided === side ? <span class="ddd-merge-ghost__check" aria-hidden="true">✓</span> : null;
+  const checked = checkedSide ? <span class="ddd-merge-ghost__check" aria-hidden="true">✓</span> : null;
+  const title = `${table?.name ?? conflict.key} (${thisVal?.x ?? pos.x}, ${thisVal?.y ?? pos.y})${thisVal?.color ? ` · ${thisVal.color}` : ''}`;
 
   // Delete-side (or unknown table): a compact chip, not a full duplicate of the other position.
   if (removed || !table) {
@@ -125,6 +150,23 @@ function Ghost({
   }
 
   const size = estimateSize(table.columns.length);
+  if (lod === 'rect') {
+    return (
+      <div
+        class={`ddd-table ddd-table--rect ddd-merge-ghost is-${emphasis}`}
+        style={{
+          position: 'absolute',
+          transform: `translate(${pos.x}px, ${pos.y}px)`,
+          width: `${size.width}px`,
+          height: `${size.height}px`,
+          background: color ?? 'var(--ddd-accent)',
+        }}
+        title={title}
+        {...handlers}
+      />
+    );
+  }
+
   return (
     <div
       class={`ddd-table ddd-merge-ghost is-${emphasis}`}
@@ -134,7 +176,7 @@ function Ghost({
         width: `${size.width}px`,
         borderTopColor: color,
       }}
-      title={`${table.name} (${thisVal?.x ?? pos.x}, ${thisVal?.y ?? pos.y})${thisVal?.color ? ` · ${thisVal.color}` : ''}`}
+      title={title}
       {...handlers}
     >
       {checked}
@@ -162,3 +204,5 @@ function Ghost({
     </div>
   );
 }
+
+const Ghost = memo(GhostImpl);

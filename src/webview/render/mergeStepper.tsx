@@ -27,7 +27,6 @@ export function MergeStepper() {
   const decisions = useAppStore((s) => s.mergeDecisions);
   const cursor = useAppStore((s) => s.mergeCursor);
   const schema = useAppStore((s) => s.schema);
-  const hoverState = useAppStore((s) => s.mergeHover);
   const [dotsExpanded, setDotsExpanded] = useState(false);
   const activeDotRef = useRef<HTMLButtonElement>(null);
 
@@ -66,13 +65,6 @@ export function MergeStepper() {
     store.getState().setMergeDecision(c.id, side);
     const next = nextUnresolved(conflicts, decisions, idx, c.id);
     if (next !== -1) store.getState().setMergeCursor(next);
-  };
-  const enter = (side: 'ours' | 'theirs') => store.getState().setMergeHover({ id: c.id, side });
-  // Clear only if WE still own the hover — moving onto a ghost (which sets its own hover) must not be
-  // wiped by this button's late pointerleave (mirrors the defensive clear in mergeGhosts.tsx).
-  const leave = (side: 'ours' | 'theirs') => {
-    const cur = store.getState().mergeHover;
-    if (cur && cur.id === c.id && cur.side === side) store.getState().setMergeHover(null);
   };
 
   return (
@@ -122,38 +114,55 @@ export function MergeStepper() {
         <span class="ddd-merge-bar__row-noun">{noun}</span> {c.key}
       </div>
       <div class="ddd-merge-step__choices">
-        <Button
-          variant="action"
-          size="sm"
-          active={decided === 'ours'}
-          class={sideClass(decided, 'ours', hoverState?.id === c.id && hoverState.side === 'ours' ? 'ddd-merge-cross' : undefined)}
-          onPointerEnter={() => enter('ours')}
-          onPointerLeave={() => leave('ours')}
-          onClick={() => pick('ours')}
-        >
-          {colorOf(c.ours) ? <span class="ddd-merge-bar__swatch" style={{ background: colorOf(c.ours)! }} /> : null}
-          <span class="ddd-merge-side__stack">
-            <span class="ddd-merge-side__cap">{SIDE_LABEL.ours}</span>
-            {posLine(c.ours) ? <span class="ddd-merge-side__pos">{posLine(c.ours)}</span> : null}
-          </span>
-        </Button>
-        <Button
-          variant="action"
-          size="sm"
-          active={decided === 'theirs'}
-          class={sideClass(decided, 'theirs', hoverState?.id === c.id && hoverState.side === 'theirs' ? 'ddd-merge-cross' : undefined)}
-          onPointerEnter={() => enter('theirs')}
-          onPointerLeave={() => leave('theirs')}
-          onClick={() => pick('theirs')}
-        >
-          {colorOf(c.theirs) ? <span class="ddd-merge-bar__swatch" style={{ background: colorOf(c.theirs)! }} /> : null}
-          <span class="ddd-merge-side__stack">
-            <span class="ddd-merge-side__cap">{SIDE_LABEL.theirs}</span>
-            {posLine(c.theirs) ? <span class="ddd-merge-side__pos">{posLine(c.theirs)}</span> : null}
-          </span>
-        </Button>
+        <SideChoice conflict={c} side="ours" decided={decided} onPick={pick} />
+        <SideChoice conflict={c} side="theirs" decided={decided} onPick={pick} />
       </div>
     </div>
+  );
+}
+
+/**
+ * One current/incoming pick. Owns the `mergeHover` subscription so a ghost hover re-renders this
+ * button, not the whole stepper (and its orb rail).
+ */
+function SideChoice({
+  conflict,
+  side,
+  decided,
+  onPick,
+}: {
+  conflict: SerializableMergeConflict;
+  side: 'ours' | 'theirs';
+  decided: 'ours' | 'theirs' | undefined;
+  onPick: (side: 'ours' | 'theirs') => void;
+}) {
+  const id = conflict.id;
+  const crossed = useAppStore((s) => s.mergeHover?.id === id && s.mergeHover.side === side);
+  const val = side === 'ours' ? conflict.ours : conflict.theirs;
+  const swatch = colorOf(val);
+  const pos = posLine(val);
+  // Clear only if WE still own the hover — moving onto a ghost (which sets its own hover) must not be
+  // wiped by this button's late pointerleave (mirrors the defensive clear in mergeGhosts.tsx).
+  const leave = () => {
+    const cur = store.getState().mergeHover;
+    if (cur && cur.id === id && cur.side === side) store.getState().setMergeHover(null);
+  };
+  return (
+    <Button
+      variant="action"
+      size="sm"
+      active={decided === side}
+      class={sideClass(decided, side, crossed ? 'ddd-merge-cross' : undefined)}
+      onPointerEnter={() => store.getState().setMergeHover({ id, side })}
+      onPointerLeave={leave}
+      onClick={() => onPick(side)}
+    >
+      {swatch ? <span class="ddd-merge-bar__swatch" style={{ background: swatch }} /> : null}
+      <span class="ddd-merge-side__stack">
+        <span class="ddd-merge-side__cap">{SIDE_LABEL[side]}</span>
+        {pos ? <span class="ddd-merge-side__pos">{pos}</span> : null}
+      </span>
+    </Button>
   );
 }
 
