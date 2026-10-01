@@ -85,7 +85,9 @@ Los edges se dibujan a opacidad completa (sin el fade de hover del canvas).
 ### Alcances
 
 - **Todo**: todas las tablas renderizadas (no ocultas/colapsadas, con posición) +
-  nodos colapsados + contenedores. `bounds` = unión + padding.
+  nodos colapsados + contenedores. `bounds` = unión + padding. La unión incluye **cada
+  esquina de la ruta** de los edges incluidos (no sólo los puertos): un edge doblado fuera
+  del casco de las tablas no se recorta (también en Selección).
 - **Vista**: rect del viewport en coords de mundo (`{-vp.x/zoom, …, w/zoom, h/zoom}`),
   leído del `.ddd-viewport` al exportar; se incluye lo que interseca y el `viewBox`
   recorta el resto.

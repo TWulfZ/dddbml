@@ -80,6 +80,13 @@ describe('buildExportModel — scope', () => {
     expect(m.bounds.x).toBeLessThan(0);
     expect(m.bounds.w).toBeGreaterThan(600);
   });
+
+  it('all-bounds enclose an edge bent outside the table hull', () => {
+    const bent = source();
+    bent.edgeLayouts = new Map([[ref.id, { waypoints: [{ x: 300, y: -300 }] }]]);
+    const m = buildExportModel(bent, { scope: 'all', background: true, filename: 'd' })!;
+    expect(m.bounds.y).toBeLessThan(-300);
+  });
 });
 
 describe('renderSvg', () => {
