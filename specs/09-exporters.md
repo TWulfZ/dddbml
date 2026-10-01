@@ -179,6 +179,11 @@ Match case-insensitive, ignorando paréntesis para length/precision:
 | `bytea` | `Buffer` | `{ type: 'bytea' }` |
 | desconocido | `string` | `{ type: <raw> }` + warning |
 
+Sufijos (lo que sigue a los argumentos no se descarta):
+- Arrays `T[]`, `T(…)[]`, `T[][]` (el importer Postgres de @dbml/core los emite entre comillas: `"varchar(50)[]"`) → mapeo de `T` + `array: true`, y `[]` en el tipo TS por cada dimensión.
+- Modificador tras `)` → se une a la base: `timestamp(3) with time zone` = `timestamp with time zone` → `timestamptz`. Si la base resultante no está en la tabla → desconocido + warning.
+- `timestamp(P)`, `timestamptz(P)`, `time(P)`, `timetz(P)` → `precision: P`.
+
 ### Column decorators (`template.ts`)
 
 - "Generado" = `increment` en el DBML, o un tipo de la familia serial (`serial`, `serial4`, `smallserial`, `serial2`, `bigserial`, `serial8`; el dialect lo marca con `generated: 'increment'`).
