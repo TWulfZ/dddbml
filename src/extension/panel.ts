@@ -3,7 +3,7 @@ import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, WebviewToHost } from '../shared/types';
 import { parseDbml } from './parser';
 import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
-import { applyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
+import { applyViewState, emptyViewState, extractViewState, readViewState, writeViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
 import type { MergeConflict } from './mergeThreeWay';
@@ -504,9 +504,14 @@ export class DiagramPanel {
    * (viewport / per-user hidden+collapsed). The webview never sees the split.
    */
   private async loadFullLayout(): Promise<Layout> {
-    const shared = await this.loadSharedLayout();
+    return this.withViewState(await this.loadSharedLayout());
+  }
+
+  /** Clothes a working shared layout with this user's view-state. With no view-state file yet, it is
+   *  seeded once from flags a legacy (≤ v0.2.2) sidecar still carries; the next persist saves it. */
+  private async withViewState(shared: Layout): Promise<Layout> {
     const vs = await readViewState(this.context, this.dbmlUri);
-    return applyViewState(shared, vs);
+    return applyViewState(shared, vs ?? extractViewState(shared));
   }
 
   /**
@@ -612,8 +617,7 @@ export class DiagramPanel {
       this.lastPostedMergeSig = null;
       const chosen = pending.conflicts.length;
       const auto = countKeys(resolved) - chosen;
-      const vs = await readViewState(this.context, this.dbmlUri);
-      this.currentLayout = applyViewState(resolved, vs);
+      this.currentLayout = await this.withViewState(resolved);
       // Apply the final layout WHILE still in conflict mode (conflicting tables are hidden behind
       // their ghosts), THEN exit — so each conflicting table goes ghost → final position with no
       // intermediate frame at the provisional (ours) spot.
@@ -817,7 +821,8 @@ export class DiagramPanel {
     const schema = parsed.schema;
     const sidecarSrc = await showBlob(scope.repoRoot, sha, scope.sidecarRel);
     const shared = sidecarSrc != null ? parseLayout(sidecarSrc) : emptyLayout();
-    const vs = await readViewState(this.context, this.dbmlUri);
+    // Never seed from the past sidecar's legacy flags: a peek always wears the current view-state.
+    const vs = (await readViewState(this.context, this.dbmlUri)) ?? emptyViewState();
     const layout = applyViewState(shared, vs);
     this.timeTravelSchema = schema;
     this.post({ type: 'git:timeTravel:enter', payload: { rev: sha, label, schema, layout } });
@@ -887,9 +892,7 @@ export class DiagramPanel {
     if (this.persistTimer) clearTimeout(this.persistTimer);
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
-      const next = this.pendingPersist;
-      this.pendingPersist = null;
-      if (next) void this.flushPersist(next);
+      void this.flushPendingPersistNow();
     }, PERSIST_DEBOUNCE_MS);
   }
 

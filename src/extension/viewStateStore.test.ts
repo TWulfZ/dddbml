@@ -38,4 +38,18 @@ describe('viewStateStore — extract / apply split', () => {
     });
     expect(rebuilt.edges).toEqual(shared.edges);
   });
+
+  it('ignores legacy hidden/collapsed flags in the shared sidecar; local view-state wins (F67)', () => {
+    const legacy: Layout = {
+      version: 1,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      tables: { a: { x: 1, y: 1, hidden: true, color: '#abc' } },
+      groups: { g: { hidden: true, collapsed: true, color: '#def' } },
+      edges: {},
+    };
+    const local = { viewport: { x: 3, y: 4, zoom: 1 }, tables: {}, groups: {} };
+    const rebuilt = applyViewState(legacy, local);
+    expect(rebuilt.tables).toEqual({ a: { x: 1, y: 1, color: '#abc' } });
+    expect(rebuilt.groups).toEqual({ g: { color: '#def' } });
+  });
 });

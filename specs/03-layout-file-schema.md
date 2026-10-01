@@ -43,7 +43,11 @@ Razón de naming visible en lugar de carpeta oculta: usuario explicitó querer v
 escriben aquí**. Un grupo sin `color` no produce entrada (no hay nada compartido
 que guardar). El lector sigue tolerando archivos viejos que aún los contengan:
 `toViewport(undefined)` rinde `{0,0,1}` y los flags se ignoran al cargar (se
-re-derivan del estado de vista local), y al siguiente persist se "soft-strip".
+re-derivan del estado de vista local: `applyViewState` toma de las tablas sólo
+`x/y/color` y de los grupos sólo `color`), y al siguiente persist con cambio compartido
+se "soft-strip". **Única excepción (migración ≤ v0.2.2):** si el usuario todavía no tiene
+archivo de view-state (`readViewState` → `null`), en la carga en vivo se siembra una vez
+desde los flags del sidecar y el siguiente persist lo guarda. Time-travel nunca siembra.
 
 ### Campos
 

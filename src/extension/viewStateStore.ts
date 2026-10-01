@@ -37,17 +37,23 @@ export function extractViewState(layout: Layout): ViewState {
 
 /** Re-injects local view-state onto a shared (git) layout to reconstruct the full
  *  layout the webview expects. Group keys are unioned: a group may exist only for its
- *  shared color, only for a local hidden flag, or both. */
+ *  shared color, only for a local hidden flag, or both. Hidden/collapsed flags still present in
+ *  an old (≤ v0.2.2) sidecar are ignored — a teammate's file must not hide things for everyone;
+ *  the one-time migration seeds `vs` from them instead (see {@link readViewState}). */
 export function applyViewState(shared: Layout, vs: ViewState): Layout {
   const tables: Record<QualifiedName, TableLayout> = {};
   for (const [k, v] of Object.entries(shared.tables)) {
-    tables[k] = vs.tables[k]?.hidden ? { ...v, hidden: true } : { ...v };
+    const t: TableLayout = { x: v.x, y: v.y };
+    if (v.color) t.color = v.color;
+    if (vs.tables[k]?.hidden) t.hidden = true;
+    tables[k] = t;
   }
 
   const groups: Record<string, GroupLayout> = {};
   const groupKeys = new Set([...Object.keys(shared.groups), ...Object.keys(vs.groups)]);
   for (const k of groupKeys) {
-    const g: GroupLayout = { ...(shared.groups[k] ?? {}) };
+    const color = shared.groups[k]?.color;
+    const g: GroupLayout = color !== undefined ? { color } : {};
     const view = vs.groups[k];
     if (view?.hidden) g.hidden = true;
     if (view?.collapsed) g.collapsed = true;
@@ -66,16 +72,19 @@ function viewStateFileUri(context: vscode.ExtensionContext, dbmlUri: vscode.Uri)
   return vscode.Uri.joinPath(viewStateDir(context), `${key}.json`);
 }
 
+/** The user's view-state for this diagram, or null when none was ever written — the caller's cue
+ *  to seed it once from a legacy sidecar's flags. An unreadable/corrupt file counts as empty. */
 export async function readViewState(
   context: vscode.ExtensionContext,
   dbmlUri: vscode.Uri,
-): Promise<ViewState> {
+): Promise<ViewState | null> {
+  let bytes: Uint8Array;
   try {
-    const bytes = await vscode.workspace.fs.readFile(viewStateFileUri(context, dbmlUri));
-    return parseViewState(new TextDecoder('utf-8').decode(bytes));
+    bytes = await vscode.workspace.fs.readFile(viewStateFileUri(context, dbmlUri));
   } catch {
-    return emptyViewState();
+    return null;
   }
+  return parseViewState(new TextDecoder('utf-8').decode(bytes));
 }
 
 export async function writeViewState(

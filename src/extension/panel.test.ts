@@ -35,11 +35,14 @@ interface Harness {
 
 const dirs: string[] = [];
 
-async function open(opts: { dbml?: string; sidecar?: string | null } = {}): Promise<Harness> {
-  const dir = mkdtempSync(join(tmpdir(), 'dddbml-panel-'));
-  dirs.push(dir);
-  writeFileSync(join(dir, 'd.dbml'), opts.dbml ?? DBML);
-  if (opts.sidecar !== null) writeFileSync(join(dir, 'd.dbml.layout.json'), opts.sidecar ?? sidecarText({ 'public.a': { x: 0, y: 0 }, 'public.b': { x: 400, y: 0 } }));
+/** `reuseDir` reopens an existing diagram (same files, same view-state store) as-is. */
+async function open(opts: { dbml?: string; sidecar?: string | null; reuseDir?: string } = {}): Promise<Harness> {
+  const dir = opts.reuseDir ?? mkdtempSync(join(tmpdir(), 'dddbml-panel-'));
+  if (!opts.reuseDir) {
+    dirs.push(dir);
+    writeFileSync(join(dir, 'd.dbml'), opts.dbml ?? DBML);
+    if (opts.sidecar !== null) writeFileSync(join(dir, 'd.dbml.layout.json'), opts.sidecar ?? sidecarText({ 'public.a': { x: 0, y: 0 }, 'public.b': { x: 400, y: 0 } }));
+  }
   const dbml = Uri.file(join(dir, 'd.dbml'));
   const context = { extensionUri: Uri.file('/ext'), globalStorageUri: Uri.file(join(dir, 'global')) };
   DiagramPanel.createOrShow(context as never, dbml as never);
@@ -247,6 +250,36 @@ describe('panel lifecycle', () => {
     await h.web.setVisible(true);
     await h.web.receive({ type: 'ready' });
     await vi.waitFor(() => expect(h.since('export:prompt')).toHaveLength(1));
+  });
+});
+
+describe('view-state vs legacy sidecar flags (F67)', () => {
+  const LEGACY = `{\n  "version": 1,\n  "tables": {\n    "public.a": { "x": 0, "y": 0, "hidden": true },\n    "public.b": { "x": 400, "y": 0 }\n  },\n  "groups": {\n  },\n  "edges": {}\n}\n`;
+
+  it('seeds view-state once from a legacy sidecar and keeps it after the sidecar is stripped', async () => {
+    const h = await open({ sidecar: LEGACY });
+    const loaded = h.web.posted.find((m) => m.type === 'layout:loaded')!;
+    expect(tablesOf(loaded)['public.a']?.hidden).toBe(true);
+    // A real edit rewrites the sidecar in shared form (flags stripped).
+    await h.web.receive({ type: 'layout:persist', payload: { ...(loaded.payload as Layout), tables: { 'public.a': { x: 0, y: 0, hidden: true }, 'public.b': { x: 410, y: 0 } } } });
+    await vi.waitFor(() => expect(h.readSidecar()).toContain('"x": 410'));
+    expect(h.readSidecar()).not.toContain('hidden');
+    DiagramPanel.disposeAll();
+    await DiagramPanel.settle();
+    const again = await open({ reuseDir: h.dir });
+    expect(tablesOf(again.web.posted.find((m) => m.type === 'layout:loaded'))['public.a']?.hidden).toBe(true);
+  });
+
+  it("does not let a teammate's legacy flags override existing local view-state", async () => {
+    const h = await open();
+    const loaded = h.web.posted.find((m) => m.type === 'layout:loaded')!;
+    await h.web.receive({ type: 'layout:persist', payload: { ...(loaded.payload as Layout), tables: { 'public.a': { x: 0, y: 0 }, 'public.b': { x: 410, y: 0 } } } });
+    await vi.waitFor(() => expect(h.readSidecar()).toContain('"x": 410'));
+    DiagramPanel.disposeAll();
+    await DiagramPanel.settle();
+    writeFileSync(join(h.dir, 'd.dbml.layout.json'), LEGACY); // pulled from an old release
+    const again = await open({ reuseDir: h.dir });
+    expect(tablesOf(again.web.posted.find((m) => m.type === 'layout:loaded'))['public.a']?.hidden).toBeUndefined();
   });
 });
 
