@@ -136,9 +136,12 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
 - Cambiar el color desde la UI cuando no había color en el sidecar y la tabla tiene
   `headerColor` → el webview envía `notify:headerColorOverride`. El host responde con
   `showWarningMessage(…, 'Learn more')` y el botón abre la sección del README "Design vs data".
-- `ColorPopup`: la fila custom deja de tener texto y pasa a ser un chip con ícono de gotero que
-  envuelve un `<input type="color">` (el picker de Chromium ya trae gotero de pantalla). El color
-  se aplica en `change`, no en `input`: un solo comando de undo y un solo aviso.
+- `ColorPopup`: la fila custom deja de tener texto y pasa a ser un chip con ícono de gotero (último
+  de la grilla) que envuelve el `<input type="color">` nativo (el picker de Chromium ya trae gotero
+  de pantalla). Conserva el modelo existente: preview en vivo con `onPreview` y un único `onPick`
+  al confirmar (listener nativo de `change`, porque preact/compat convierte el `onChange` de JSX en
+  `oninput`). Resultado: un solo comando de undo y un solo aviso. Como el preview ya escribe el
+  store, "la tabla no tenía color en el sidecar" se toma como foto al **abrir** el popup.
 
 ### Parse en worker
 

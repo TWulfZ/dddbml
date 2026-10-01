@@ -413,6 +413,7 @@ export type WebviewToHost =
   | { type: 'git:timeTravel:exit' }
   | { type: 'git:diff:enter' }
   | { type: 'git:diff:exit' }
+  | { type: 'notify:headerColorOverride'; payload: { table: QualifiedName } }
   | { type: 'error:log'; payload: { message: string; stack?: string } };
 
 /**

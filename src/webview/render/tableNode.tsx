@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import type { Column, ColumnDiffEntry, Table, TableDiffStatus } from '../../shared/types';
 import { renderedRows, type DiffKind } from '../layout/tableRows';
@@ -8,7 +8,7 @@ import { startDrag } from '../drag/dragController';
 import { countResettableSelectionEdges, resetSelectedEdges, runEdgeOrdering, runSmartLayout } from '../layout/smartLayout';
 import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
-import { store, useAppStore } from '../state/store';
+import { isCanvasReadOnly, store, useAppStore } from '../state/store';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
 import { ContextMenu, clampMenuAnchor } from './contextMenu';
 import type { ContextMenuItem } from './contextMenu';
@@ -170,8 +170,15 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
 function TableHeader({ table, configurable, headerStyle, recordCount }: { table: Table; configurable?: boolean; headerStyle?: Record<string, string>; recordCount?: number }) {
   const [popup, setPopup] = useState<{ x: number; y: number } | null>(null);
   const existing = store.getState().tableColors.get(table.name);
+  // Snapshotted at open: live preview writes the store before the pick commits.
+  const hadLayoutColor = useRef(false);
 
   const applyColor = (c: string) => {
+    // The host explains (once) that the layout color now wins over the DBML headercolor (spec 18).
+    if (table.headerColor && !hadLayoutColor.current && !isCanvasReadOnly(store.getState())) {
+      hadLayoutColor.current = true;
+      postToHost({ type: 'notify:headerColorOverride', payload: { table: table.name } });
+    }
     store.getState().setTableColor(table.name, c);
     schedulePersist();
   };
@@ -185,6 +192,7 @@ function TableHeader({ table, configurable, headerStyle, recordCount }: { table:
     // Anchor popup to the outer table bounding box so it opens right-beside the table, not the tiny gear.
     const tableEl = (e.currentTarget as HTMLElement).closest('.ddd-table') as HTMLElement | null;
     const anchorRect = tableEl?.getBoundingClientRect() ?? (e.currentTarget as HTMLElement).getBoundingClientRect();
+    hadLayoutColor.current = store.getState().tableColors.has(table.name);
     setPopup(popupAnchorFor(anchorRect));
   };
 

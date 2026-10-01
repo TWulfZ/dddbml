@@ -32,9 +32,13 @@ Open a `.dbml` file and run **`dddbml: Open Diagram`** (command palette or the e
 - Edit an edge by sliding a segment or dragging a ghost handle to add a notch; flip the port side by dragging an endpoint; recolor; "Reset line" to tidy.
 - **Auto-arrange** (whole diagram, new tables only, or the selection) with an obstacle-avoiding edge router, cancelable with real progress.
 
+**DBML `records` and `Dep`**
+- Tables with sample `records` show a row-count badge; click it for a read-only grid of the values.
+- `Dep` blocks (`Dep: a -> b`, `Dep: a.col -> b.col`) draw as dashed curved arrows, separate from FK refs. Select one to add, move (drag) or delete (double-click) bend points; toggle them in **Diagram Views → Dependencies**.
+
 **Bounded contexts (`TableGroup`)**
 - Dashed container per group; collapse to a single node with aggregated edges; hide a group or a single table.
-- Per-group and per-table colors from a palette or a custom hex.
+- Per-group, per-table and per-edge colors from a palette, or any color via the eyedropper chip.
 - **Diagram Views** panel: search, hide/show all, collapse/expand all, per-table visibility.
 
 **Git, from the canvas**
@@ -70,6 +74,10 @@ For `schema.dbml` the extension writes `schema.dbml.layout.json` next to it:
 ```
 
 Only shared design goes into this file. Your camera position and which groups you hid or collapsed are per-user view state, stored in VS Code's global storage, so pan/zoom never dirties the repo. The writer sorts keys, rounds coordinates to integers, omits defaults, uses LF + trailing newline and writes atomically. Moving three tables changes three lines.
+
+## Design vs data
+
+Keep the `.dbml` about **data** (tables, columns, refs, `records`, `Dep`) and let the layout file carry **design** (positions, colors, bend points). A DBML `headercolor` is honored as a fallback, but it is never copied into the layout file: the moment you pick a table color in the diagram, the layout color wins and dddbml shows a one-time notice. Choosing colors in the UI keeps diagram tweaks out of your schema diffs and lets several people restyle the diagram without touching the source of truth.
 
 ## Commands
 

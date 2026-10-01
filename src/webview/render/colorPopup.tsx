@@ -34,10 +34,12 @@ const PRESETS: BcPreset[] = Array.from({ length: BC_PALETTE_SIZE }, (_, i) => ({
  * Color picker overlay rendered at fixed screen coords so it escapes any parent
  * `overflow: hidden` (table headers, panel lists, group containers).
  *
- * Presets are the 12 BC palette colors. Custom hex input remains as escape hatch.
+ * Presets are the 12 BC palette colors; the last chip (eyedropper icon, no text) opens the native
+ * color picker for a custom value. Shared by tables, groups and edges.
  */
 export function ColorPopup({ current, x, y, onPick, onPreview, onClose, onReset }: ColorPopupProps) {
   const popupRef = useRef<HTMLDivElement>(null);
+  const isCustom = current.startsWith('#') && !PRESETS.some((p) => p.border === current);
   const inputRef = useRef<HTMLInputElement>(null);
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
@@ -112,13 +114,16 @@ export function ColorPopup({ current, x, y, onPick, onPreview, onClose, onReset 
             onClick={() => { pick(preset.border); onClose(); }}
           />
         ))}
-      </div>
-      <div class="ddd-color-popup__custom">
-        <label class="ddd-color-popup__custom-label">
-          <span class="ddd-color-chip" style={{ background: current }} />
+        <label
+          class={`ddd-color-chip ddd-color-chip--custom${isCustom ? ' is-active' : ''}`}
+          style={isCustom ? { background: current } : undefined}
+          title="Custom color"
+        >
+          <IconEyedropper />
           <input
             type="color"
             class="ddd-color-popup__input"
+            aria-label="Custom color"
             value={toHex(current)}
             ref={inputRef}
             onInput={(e) => {
@@ -128,12 +133,13 @@ export function ColorPopup({ current, x, y, onPick, onPreview, onClose, onReset 
               onPreview(value);
             }}
           />
-          <span>Custom…</span>
         </label>
-        {reset ? (
-          <button class="ddd-color-popup__reset" onClick={() => { reset(); onClose(); }}>Reset</button>
-        ) : null}
       </div>
+      {reset ? (
+        <div class="ddd-color-popup__custom">
+          <button class="ddd-color-popup__reset" onClick={() => { reset(); onClose(); }}>Reset</button>
+        </div>
+      ) : null}
     </div>
   , document.body);
 }
@@ -185,4 +191,14 @@ export function popupAnchorFor(rect: DOMRect, popupWidth = 240, popupHeight = 22
     y = Math.max(8, window.innerHeight - popupHeight - 8);
   }
   return { x, y };
+}
+
+/** Codicons ship no eyedropper glyph; inline SVG keeps it themable via currentColor. */
+function IconEyedropper() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10.5 2.5a1.8 1.8 0 0 1 2.5 2.5L11.5 6.5l-2-2z" />
+      <path d="M9.5 4.5l2 2-6 6H3.5v-2z" />
+    </svg>
+  );
 }

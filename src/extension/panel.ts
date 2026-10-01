@@ -18,6 +18,7 @@ const PERSIST_DEBOUNCE_MS = 200;
 const SCHEMA_DEBOUNCE_MS = 150;
 /** Each git status spawns 2-3 processes; a drag+save burst used to spawn ~6 of them. */
 const GIT_STATUS_DEBOUNCE_MS = 200;
+const DESIGN_VS_DATA_DOC_URL = 'https://github.com/TWulfZ/dddbml#design-vs-data';
 
 const MERGE_UNREADABLE = 'The layout file has git conflict markers, but the conflict could not be read from git. Resolve the markers in the layout file manually; layout changes are not saved until then.';
 
@@ -69,6 +70,8 @@ export class DiagramPanel {
   }
 
   private readonly webviewPanel: vscode.WebviewPanel;
+  /** Tables already told that the layout color overrides their DBML headercolor (once per session). */
+  private readonly headerColorNotified = new Set<QualifiedName>();
   private readonly disposables: vscode.Disposable[] = [];
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
   /** Whether the latest read of the .dbml parsed; lastValidSchema may be stale (or the empty
@@ -323,6 +326,9 @@ export class DiagramPanel {
         return;
       case 'settings:update':
         void applySettingsPatch(msg.payload as Partial<FlatSettingsPatch>);
+        return;
+      case 'notify:headerColorOverride':
+        void this.notifyHeaderColorOverride(msg.payload.table);
         return;
       case 'merge:resolve':
         void this.resolveMerge(msg.payload.decisions);
@@ -1213,6 +1219,17 @@ export class DiagramPanel {
       vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.HighContrast
       ? 'dark'
       : 'light';
+  }
+
+  private async notifyHeaderColorOverride(table: QualifiedName): Promise<void> {
+    if (this.headerColorNotified.has(table)) return;
+    this.headerColorNotified.add(table);
+    const choice = await vscode.window.showWarningMessage(
+      `dddbml: "${table}" now uses the layout color instead of the headercolor in ${this.shortName(this.dbmlUri)}. ` +
+        'Colors and positions live in the layout file so the .dbml stays data-only.',
+      'Learn more',
+    );
+    if (choice === 'Learn more') void vscode.env.openExternal(vscode.Uri.parse(DESIGN_VS_DATA_DOC_URL));
   }
 
   private shortName(uri: vscode.Uri): string {
