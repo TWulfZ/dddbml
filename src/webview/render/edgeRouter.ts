@@ -497,7 +497,7 @@ export function slideSegment(
     const pinLvl = axis === 'h' ? C[j - 1]!.y : C[j - 1]!.x;
     if (Math.abs(newLvl - pinLvl) <= NOTCH_MERGE_SNAP) newLvl = pinLvl;
   }
-  if (newLvl === lvl) return C.slice(1, -1);
+  if (newLvl === lvl) return fallback();
 
   const atLevel = (pt: { x: number; y: number }): { x: number; y: number } =>
     axis === 'h' ? { x: pt.x, y: newLvl } : { x: newLvl, y: pt.y };
@@ -540,7 +540,7 @@ export function notchAtQuarter(
   if (!p1 || !p2) return fallback();
   const axis: 'h' | 'v' = runAxis(p1, p2);
   const d = axis === 'h' ? snap(p1.y + dyWorld) - p1.y : snap(p1.x + dxWorld) - p1.x;
-  if (d === 0) return corners.slice(1, -1);
+  if (d === 0) return fallback();
 
   corners.splice(j + 1, 0, ...localNotchCorners(p1, p2, axis, d, quarter));
   return corners.slice(1, -1);
