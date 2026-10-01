@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,5 +147,28 @@ describe('external reloads (watchers)', () => {
     await fake.fireFsEvent('change', h.sidecar);
     await new Promise((r) => setTimeout(r, 500));
     expect(h.readSidecar()).toBe(external);
+  });
+});
+
+function gitIn(dir: string) {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+  git('init', '-q'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+  return git;
+}
+
+describe('git panel ops', () => {
+  it('reverts a modified .dbml even when the sidecar is staged-new, leaving the sidecar untracked', async () => {
+    const h = await open();
+    const git = gitIn(h.dir);
+    git('add', 'd.dbml'); git('commit', '-q', '-m', 'v1');
+    git('add', 'd.dbml.layout.json');
+    h.writeSidecar(sidecarText({ 'public.a': { x: 1, y: 1 } })); // `AM`: rewritten after staging
+    writeFileSync(join(h.dir, 'd.dbml'), `${DBML}\nTable z {\n  id int\n}\n`);
+    h.mark();
+    await h.web.receive({ type: 'git:restore' });
+    await vi.waitFor(() => expect(h.since('git:opResult')).toHaveLength(1));
+    expect((h.since('git:opResult')[0]!.payload as { ok: boolean }).ok).toBe(true);
+    expect(readFileSync(join(h.dir, 'd.dbml'), 'utf8')).toBe(DBML);
+    expect(git('status', '--porcelain', '--', 'd.dbml.layout.json')).toBe('?? d.dbml.layout.json\n');
   });
 });

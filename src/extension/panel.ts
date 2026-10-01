@@ -7,7 +7,7 @@ import { applyViewState, extractViewState, readViewState, writeViewState } from 
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
 import type { MergeConflict } from './mergeThreeWay';
-import { getCurrentBranch, getRepoRoot, gitAdd, gitCommit, gitLog, gitRestore, gitStashApply, gitStashList, gitStashPop, gitStashPush, gitStatusPorcelain, showBlob, toRepoRelative } from './gitStages';
+import { getCurrentBranch, getRepoRoot, gitAdd, gitCommit, gitLog, gitRestore, gitStashApply, gitStashList, gitUnstageNew, gitStashPop, gitStashPush, gitStatusPorcelain, showBlob, toRepoRelative } from './gitStages';
 import type { GitOp } from '../shared/types';
 import { getExporter, listExporters } from './exporters';
 import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
@@ -639,19 +639,22 @@ export class DiagramPanel {
   }
 
   /** Discard uncommitted changes to the diagram files (restore to HEAD). DESTRUCTIVE — the webview
-   *  already confirmed. Untracked files have no HEAD version, so they're left as-is. */
+   *  already confirmed. Untracked files have no HEAD version, so they're left as-is; staged-new
+   *  files have none either, so they're only unstaged (left untracked, same rule). */
   private async handleGitRestore(): Promise<void> {
     const scope = await this.diagramScope();
     if (!scope) { this.postOpResult('restore', false, 'Not a git repository'); return; }
-    const restorable = (await gitStatusPorcelain(scope.repoRoot, scope.relpaths))
-      .filter((f) => f.status !== 'untracked')
-      .map((f) => f.relpath);
-    if (restorable.length === 0) { this.postOpResult('restore', false, 'No tracked changes to revert'); return; }
+    const status = await gitStatusPorcelain(scope.repoRoot, scope.relpaths);
+    const restorable = status.filter((f) => f.status !== 'untracked' && f.status !== 'added').map((f) => f.relpath);
+    const stagedNew = status.filter((f) => f.status === 'added').map((f) => f.relpath);
+    const count = restorable.length + stagedNew.length;
+    if (count === 0) { this.postOpResult('restore', false, 'No tracked changes to revert'); return; }
     try {
-      await gitRestore(scope.repoRoot, restorable);
+      if (restorable.length > 0) await gitRestore(scope.repoRoot, restorable);
+      await gitUnstageNew(scope.repoRoot, stagedNew);
       await this.reloadFromDisk();
       this.postOpResult('restore', true);
-      void vscode.window.showInformationMessage(`dddbml: reverted ${restorable.length} diagram file(s) to HEAD.`);
+      void vscode.window.showInformationMessage(`dddbml: reverted ${count} diagram file(s) to HEAD.`);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       this.postOpResult('restore', false, m);

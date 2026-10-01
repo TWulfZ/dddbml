@@ -76,7 +76,9 @@ del diagrama: `git add -- <paths>` y `git commit -m <msg> -- <paths>` (el orden 
 "Revertir cambios" abre un `<Modal>` de confirmación (botón `danger`) que avisa que
 **no se podrá deshacer** y ofrece *"Usar Stash en su lugar"*. Restore =
 `git checkout HEAD -- <paths>` sobre los archivos **trackeados** sucios (los
-untracked no tienen versión en HEAD → se omiten). Stash = `git stash push -- <paths>`
+untracked no tienen versión en HEAD → se omiten; los staged-new `A` tampoco la tienen →
+sólo se des-stagean con `git rm --cached -f`, quedan untracked en disco; incluirlos en el
+checkout hacía fallar el revert entero). Stash = `git stash push -- <paths>`
 sobre los trackeados; la sección **Stash** lista los stashes (`git stash list`) con
 *Aplicar* (`apply`) y *Pop* (`pop`). Tras restaurar/stash/pop el host re-lee el
 diagrama del disco (`reloadFromDisk`) y un `pop` con conflicto cae en el resolver de

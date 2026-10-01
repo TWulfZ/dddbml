@@ -178,12 +178,20 @@ export async function gitCommit(repoRoot: string, relpaths: string[], message: s
   await runGit(['commit', '-m', message, '--', ...relpaths], repoRoot);
 }
 
-/** Discard working-tree changes to the given (tracked) paths, restoring them to HEAD. DESTRUCTIVE —
- *  uncommitted edits are lost. Untracked paths have no HEAD version; the caller filters those out.
- *  Throws on git failure. */
+/** Discard working-tree changes to the given paths, restoring them to HEAD. DESTRUCTIVE —
+ *  uncommitted edits are lost. Every path must exist at HEAD: untracked and staged-new ('added')
+ *  paths have no HEAD version and make git reject the whole call. Throws on git failure. */
 export async function gitRestore(repoRoot: string, relpaths: string[]): Promise<void> {
   if (relpaths.length === 0) throw new Error('no paths to restore');
   await runGit(['checkout', 'HEAD', '--', ...relpaths], repoRoot);
+}
+
+/** Remove staged-new paths from the index, keeping the working-tree file (it becomes untracked).
+ *  `-f` only skips the "staged content differs from file" check (an `AM` sidecar the extension
+ *  rewrote after staging); with `--cached` the working tree is never touched. */
+export async function gitUnstageNew(repoRoot: string, relpaths: string[]): Promise<void> {
+  if (relpaths.length === 0) return;
+  await runGit(['rm', '--cached', '-f', '-q', '--', ...relpaths], repoRoot);
 }
 
 /** Stash the working-tree changes to the given paths (scoped — never the whole repo). Throws on
