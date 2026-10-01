@@ -112,7 +112,8 @@ Los edges se dibujan a opacidad completa (sin el fade de hover del canvas).
 ## Protocolo host↔webview
 
 - `WebviewToHost`: `{ type: 'command:saveImage'; payload: { dataBase64; mime:
-  'image/png' | 'image/svg+xml'; suggestedName } }`.
+  'image/png' | 'image/svg+xml'; suggestedName; reducedScale? } }` (`reducedScale` sólo si el
+  PNG se recortó por `fitScale`).
 - `HostToWebview`: `{ type: 'exportImage:prompt' }` (abre el modal desde la paleta) y
   `{ type: 'image:result'; payload: { ok; path?; message? } }`.
 - Host (`panel.ts` `saveImage`): `vscode.window.showSaveDialog` (defaultUri junto al
@@ -134,7 +135,9 @@ Los edges se dibujan a opacidad completa (sin el fade de hover del canvas).
   no se propagan solos → mitigado con geometría desde `densityMetrics()` y tests de
   snapshot estructural.
 - **Tamaño de canvas**: un diagrama enorme a 3× supera el tope del navegador →
-  `fitScale` reduce la escala y el modal avisa; **SVG** es vectorial e ileso
+  `fitScale` reduce la escala y se avisa siempre: al **copiar**, el modal queda abierto con
+  "Copied at N× (reduced from M×)" (sólo cierra si no hubo clamp); en **PNG** el modal cierra
+  al guardar, así que el aviso va en la notificación del host (`reducedScale`). **SVG** es vectorial e ileso
   (recomendado para diagramas grandes). Tope de área **64 Mpx** (~256 MB RGBA): el
   anterior (256 Mpx ≈ 1 GB + la `<img>` decodificada) podía matar el renderer.
 - **Build síncrono**: `buildImageSvg` corre en el hilo principal. El modal pone `busy`

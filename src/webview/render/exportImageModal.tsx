@@ -91,12 +91,15 @@ export function ExportImageModal({ derived }: ExportImageModalProps) {
         postToHost({ type: 'command:saveImage', payload: { dataBase64: base64, mime: 'image/svg+xml', suggestedName: `${safeName()}.svg` } });
         return;
       }
-      const { blob, clamped } = await svgToPng(built.svg, built.width, built.height, SCALE[scale]);
+      const { blob, clamped, scale: effective } = await svgToPng(built.svg, built.width, built.height, SCALE[scale]);
+      const reducedScale = Number(effective.toFixed(2));
       if (clamped) setNote('Diagram too large at this scale — exported at a reduced scale. Use SVG for full resolution.');
       if (kind === 'copy') {
         try {
           await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          store.getState().setExportImagePromptOpen(false);
+          // Closing would hide the clamp warning, leaving a silently downscaled image on the clipboard.
+          if (clamped) setNote(`Copied at ${reducedScale}× (reduced from ${SCALE[scale]}×). Use SVG for full resolution.`);
+          else store.getState().setExportImagePromptOpen(false);
         } catch {
           // Clipboard image write unsupported/blocked → fall back to a host save.
           const base64 = await blobToBase64(blob);
@@ -106,7 +109,11 @@ export function ExportImageModal({ derived }: ExportImageModalProps) {
         return;
       }
       const base64 = await blobToBase64(blob);
-      postToHost({ type: 'command:saveImage', payload: { dataBase64: base64, mime: 'image/png', suggestedName: `${safeName()}.png` } });
+      // The dialog closes on a successful save, so the host's save notification carries the warning.
+      postToHost({
+        type: 'command:saveImage',
+        payload: { dataBase64: base64, mime: 'image/png', suggestedName: `${safeName()}.png`, ...(clamped ? { reducedScale } : {}) },
+      });
     } catch (err) {
       setNote(err instanceof Error ? err.message : String(err));
     } finally {

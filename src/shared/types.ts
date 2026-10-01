@@ -315,7 +315,7 @@ export type WebviewToHost =
   | { type: 'command:reveal'; payload: { tableName: QualifiedName } }
   | { type: 'command:pruneOrphans' }
   | { type: 'command:export'; payload: ExportCommandPayload }
-  | { type: 'command:saveImage'; payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string } }
+  | { type: 'command:saveImage'; payload: { dataBase64: string; mime: 'image/png' | 'image/svg+xml'; suggestedName: string; reducedScale?: number } }
   | { type: 'settings:update'; payload: Partial<FlatSettingsPatch> }
   | { type: 'merge:resolve'; payload: { decisions: Record<string, 'ours' | 'theirs'> } }
   | { type: 'git:requestStatus' }

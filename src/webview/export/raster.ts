@@ -47,13 +47,13 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-/** Rasterize `svg` (with intrinsic `width`/`height`) to a PNG blob at `scale` (clamped). */
+/** Rasterize `svg` (with intrinsic `width`/`height`) to a PNG blob at `scale` (clamped to `scale` out). */
 export async function svgToPng(
   svg: string,
   width: number,
   height: number,
   scale: number,
-): Promise<{ blob: Blob; clamped: boolean }> {
+): Promise<{ blob: Blob; clamped: boolean; scale: number }> {
   const { scale: s, clamped } = fitScale(width, height, scale);
   // Ensure webfonts are ready so <text> rasterizes with the intended glyphs, not fallbacks.
   if (document.fonts?.ready) {
@@ -69,7 +69,7 @@ export async function svgToPng(
   if (!ctx) throw new Error('could not acquire a 2D canvas context');
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const blob = await canvasToBlob(canvas);
-  return { blob, clamped };
+  return { blob, clamped, scale: s };
 }
 
 /** Base64 (no data-URL prefix) of a blob — for sending image bytes to the host over postMessage. */
