@@ -106,7 +106,9 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
   Las tablas cambiadas llevan además un borde (`is-diff-*`). Las **eliminadas** (sin nodo vivo)
   se dibujan como ghosts (`DiffGhosts`) en su posición base, con sus columnas en rojo `−`.
 - **Navegación:** la barra (`GitBanner`) trae botones prev/next + contador que enfocan la
-  cámara en cada cambio (`fitToBbox`, store `diffCursor`).
+  cámara en cada cambio (`fitToBbox`, store `diffCursor`). Al abrir el diff la cámara **no**
+  se mueve: `diffCursor = -1` y el contador muestra `– / N`; el primer *next* enfoca el
+  cambio 1 y el primer *prev* el último (`diffNavIndex`).
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
   layer); eliminadas → conector punteado en `DiffGhosts`. Los edges con cambio quedan a
   opacidad llena (auto-focus) mientras los demás siguen el fade global (ver abajo).

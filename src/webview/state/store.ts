@@ -111,7 +111,7 @@ export interface AppState {
   /** When true (default), tables NOT in the active diff / merge are dimmed + blurred to focus the
    *  changes/conflicts. Shared by the diff overlay and the merge resolver (spec 14/16). */
   focusDimming: boolean;
-  /** Index into the change list for the banner's prev/next camera navigation. */
+  /** Index into the change list for the banner's prev/next camera navigation; -1 = none focused yet. */
   diffCursor: number;
   /** Table currently hovered on the canvas — reveals its (otherwise faded) connected edges. */
   hoveredTable: QualifiedName | null;
@@ -244,7 +244,7 @@ const initial: AppState = {
   diffRemovedRefs: null,
   diffBaseByTable: null,
   focusDimming: true,
-  diffCursor: 0,
+  diffCursor: -1,
   hoveredTable: null,
 };
 
@@ -508,7 +508,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   beginMerge(conflicts) {
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
     // A host merge always wins over a git overlay, so clear gitView too.
-    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: 0 });
+    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: -1 });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -601,7 +601,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       diffGhosts: ghosts,
       refDiff,
       diffRemovedRefs: removedRefs,
-      diffCursor: 0,
+      diffCursor: -1,
       selection: new Set(),
       selectedEdgeId: null,
     });
@@ -615,7 +615,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       diffGhosts: null,
       refDiff: null,
       diffRemovedRefs: null,
-      diffCursor: 0,
+      diffCursor: -1,
     });
   },
   setFocusDimming(on) {

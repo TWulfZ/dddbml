@@ -13,6 +13,13 @@ export interface DiffTarget {
   h: number;
 }
 
+/** Next/prev change index. A cursor outside [0, n) means "nothing focused yet" (fresh diff, or the
+ *  target list shrank), so Next starts at the first change and Prev at the last. */
+export function diffNavIndex(cursor: number, n: number, dir: 1 | -1): number {
+  if (cursor < 0 || cursor >= n) return dir === 1 ? 0 : n - 1;
+  return (cursor + dir + n) % n;
+}
+
 /**
  * Canvas-level read-only bar (spec 16), shown while a git overlay is active (`gitView != null`).
  * Like the merge bar it floats over the diagram (not a modal); the canvas behind it is read-only.
@@ -46,8 +53,8 @@ export function GitBanner({ diffTargets = [] }: { diffTargets?: DiffTarget[] }) 
     fitToBbox({ x: t.x, y: t.y, w: t.w, h: t.h });
   };
   const n = diffTargets.length;
-  const next = () => n && focus((cursor + 1) % n);
-  const prev = () => n && focus((cursor - 1 + n) % n);
+  const next = () => n && focus(diffNavIndex(cursor, n, 1));
+  const prev = () => n && focus(diffNavIndex(cursor, n, -1));
 
   return (
     <div class="ddd-git-bar" role="status" aria-label="Diff view (read-only)">
@@ -60,7 +67,7 @@ export function GitBanner({ diffTargets = [] }: { diffTargets?: DiffTarget[] }) 
           <Button variant="history" size="tool" onClick={prev} title="Previous change" aria-label="Previous change">
             <IconChevronRight flipX size={14} />
           </Button>
-          <span class="ddd-git-bar__count" aria-live="polite">{Math.min(cursor + 1, n)} / {n}</span>
+          <span class="ddd-git-bar__count" aria-live="polite">{cursor >= 0 && cursor < n ? cursor + 1 : '–'} / {n}</span>
           <Button variant="history" size="tool" onClick={next} title="Next change" aria-label="Next change">
             <IconChevronRight size={14} />
           </Button>
