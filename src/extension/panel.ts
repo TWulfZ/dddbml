@@ -55,6 +55,8 @@ export class DiagramPanel {
    *  sentinel) when it did not. */
   private lastParseOk = false;
   private layoutLoaded = false;
+  /** The past revision on screen while time-travelling; null on the working state. */
+  private timeTravelSchema: Schema | null = null;
   private currentLayout: Layout = emptyLayout();
   /** Exact sidecar text last seen on disk — adopted by a read or produced by our own write (null =
    *  no file). A watcher event whose file still matches it is an echo or a no-op; anything else is
@@ -298,9 +300,11 @@ export class DiagramPanel {
       return;
     }
 
+    // Export what is on screen: during time travel that is the past revision, not the working tree.
+    const source = this.timeTravelSchema ?? this.lastValidSchema;
     const filtered = payload.scope === 'selected'
-      ? filterSchemaBySelection(this.lastValidSchema, new Set(payload.selection))
-      : this.lastValidSchema;
+      ? filterSchemaBySelection(source, new Set(payload.selection))
+      : source;
 
     if (filtered.tables.length === 0) {
       const message = payload.scope === 'selected'
@@ -402,6 +406,7 @@ export class DiagramPanel {
   }
 
   private async hydrate(): Promise<void> {
+    this.timeTravelSchema = null; // a fresh webview always starts on the working state
     // Send layout first so that when the schema arrives, positions are already in the
     // store and the auto-layout effect skips tables that already have a saved position.
     await this.sendLayout();
@@ -553,6 +558,7 @@ export class DiagramPanel {
       void vscode.window.showWarningMessage('dddbml: the layout changed on disk — the conflict list was refreshed.');
     }
     this.lastPostedMergeSig = sig;
+    this.timeTravelSchema = null; // beginMerge drops the webview out of any git view
     this.post({ type: 'merge:begin', payload: { conflicts } });
   }
 
@@ -785,11 +791,13 @@ export class DiagramPanel {
     const shared = sidecarSrc != null ? parseLayout(sidecarSrc) : emptyLayout();
     const vs = await readViewState(this.context, this.dbmlUri);
     const layout = applyViewState(shared, vs);
+    this.timeTravelSchema = schema;
     this.post({ type: 'git:timeTravel:enter', payload: { rev: sha, label, schema, layout } });
   }
 
   /** Leave time-travel: flip the webview out of read-only mode, then re-send the working state. */
   private async exitTimeTravel(): Promise<void> {
+    this.timeTravelSchema = null;
     this.post({ type: 'git:timeTravel:exit' });
     await this.sendSchema();
     await this.sendLayout();
@@ -1027,8 +1035,10 @@ function splitQualified(qn: string): [string, string] {
 
 function filterSchemaBySelection(schema: Schema, selection: Set<QualifiedName>): Schema {
   const tables = schema.tables.filter((t) => selection.has(t.name));
+  // A ref with one selected end is kept so the exporter sees the cut and warns (spec 09); refs with
+  // both ends outside the selection are dropped, or every unrelated relation would warn.
   const refs: Ref[] = schema.refs.filter(
-    (r) => selection.has(r.source.table) && selection.has(r.target.table),
+    (r) => selection.has(r.source.table) || selection.has(r.target.table),
   );
   const groups = schema.groups
     .map((g) => ({ ...g, tables: g.tables.filter((t) => selection.has(t)) }))

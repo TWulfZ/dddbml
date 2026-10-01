@@ -213,6 +213,36 @@ describe('git panel ops', () => {
   });
 });
 
+describe('schema export', () => {
+  const exportedText = () => (fake.shownDocuments.at(-1)!.doc as { getText(): string }).getText();
+
+  it('keeps refs with one selected endpoint so the cut relation is warned about (F78)', async () => {
+    const h = await open({ dbml: `Table users {\n  id int [pk]\n}\n\nTable orders {\n  id int [pk]\n  user_id int [ref: > users.id]\n}\n`, sidecar: null });
+    h.mark();
+    await h.web.receive({ type: 'command:export', payload: { formatId: 'typeorm', scope: 'selected', selection: ['public.orders'], options: {} } });
+    await vi.waitFor(() => expect(h.since('export:result')).toHaveLength(1));
+    const result = h.since('export:result')[0]!.payload as { ok: boolean; warnings?: string[] };
+    expect(result.ok).toBe(true);
+    expect(result.warnings?.some((w) => w.includes('outside the export scope'))).toBe(true);
+  });
+
+  it('exports the revision on screen during time travel (F79)', async () => {
+    const h = await open();
+    const git = gitIn(h.dir);
+    writeFileSync(join(h.dir, 'd.dbml'), `Table old_only {\n  id int\n}\n`);
+    git('add', '-A'); git('commit', '-q', '-m', 'v0');
+    const sha = git('rev-parse', 'HEAD').trim();
+    writeFileSync(join(h.dir, 'd.dbml'), DBML);
+    await h.web.receive({ type: 'git:timeTravel:enter', payload: { sha, label: 'v0' } });
+    await vi.waitFor(() => expect(h.web.posted.some((m) => m.type === 'git:timeTravel:enter')).toBe(true));
+    h.mark();
+    await h.web.receive({ type: 'command:export', payload: { formatId: 'typeorm', scope: 'all', selection: [], options: {} } });
+    await vi.waitFor(() => expect(h.since('export:result')).toHaveLength(1));
+    expect(exportedText()).toContain('OldOnly');
+    expect(exportedText()).not.toMatch(/class A\b/);
+  });
+});
+
 describe('Prune orphan layout entries (F23)', () => {
   it('refuses while the .dbml has not parsed, instead of pruning every entry', async () => {
     const h = await open({ dbml: 'Table a {\n  id int\n' });

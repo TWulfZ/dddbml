@@ -94,7 +94,10 @@ La sección **Historial** lista los commits que tocan el diagrama (`git log --
 `git show <rev>:<path>`, los parsea **en memoria** y re-viste el layout compartido
 con el view-state actual (pan/zoom/oculto se mantienen). Se renderiza en un overlay
 de solo lectura (`gitView.kind === 'timeTravel'`). **No** se ejecuta `git checkout`
-real. "Salir" pide al host re-enviar el estado de trabajo.
+real. "Salir" pide al host re-enviar el estado de trabajo. Mientras dura, el host guarda
+el schema de la revisión (`timeTravelSchema`) y **Export Schema** exporta esa revisión (lo
+que está en pantalla, igual que Export image), no el working tree; se limpia al salir, al
+re-hidratar y al entrar en merge.
 
 ### Diff (lo más pesado) — framing Previous/Current
 "Diff against HEAD" compara el working tree contra HEAD. El host parsea HEAD
