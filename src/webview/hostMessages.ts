@@ -12,7 +12,12 @@ export function handleHostMessage(msg: HostToWebview): void {
       state.setSchema(msg.payload.schema, msg.payload.parseError);
       return;
     case 'layout:loaded':
+      state.setLayout(msg.payload);
+      return;
     case 'layout:external-change':
+      // Disk changed (also: a reload deferred by an overlay, applied at its exit): undo history
+      // recorded against the old layout no longer applies, stashed or not (spec 11).
+      state.dropHistoryStash();
       state.setLayout(msg.payload);
       return;
     case 'theme:change':
@@ -87,10 +92,11 @@ export function handleHostMessage(msg: HostToWebview): void {
       state.setGitCommits(msg.payload.commits);
       return;
     case 'git:timeTravel:enter':
-      // Swap in the past revision's schema + layout, then flip to read-only time-travel mode.
+      // Read-only first: entering stashes the working history, which swapping in the past
+      // revision's schema + layout would otherwise wipe (F76).
+      state.enterTimeTravel(msg.payload.rev, msg.payload.label);
       state.setSchema(msg.payload.schema, null);
       state.setLayout(msg.payload.layout);
-      state.enterTimeTravel(msg.payload.rev, msg.payload.label);
       return;
     case 'git:timeTravel:exit':
     case 'git:diff:exit':

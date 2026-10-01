@@ -528,11 +528,16 @@ export class DiagramPanel {
     }, GIT_STATUS_DEBOUNCE_MS);
   }
 
-  private async sendLayout(isExternal = false): Promise<void> {
+  /** `'ifChanged'` (overlay exit / diff entry): external only when the sidecar text moved since it
+   *  was last seen. The webview drops its stashed undo history on an external change (F76), and a
+   *  peek that changed nothing on disk must not cost it. */
+  private async sendLayout(isExternal: boolean | 'ifChanged' = false): Promise<void> {
+    const seen = this.diskSidecarText;
     this.currentLayout = await this.loadFullLayout();
     this.layoutLoaded = true;
+    const external = isExternal === 'ifChanged' ? this.diskSidecarText !== seen : isExternal;
     this.post({
-      type: isExternal ? 'layout:external-change' : 'layout:loaded',
+      type: external ? 'layout:external-change' : 'layout:loaded',
       payload: this.currentLayout,
     });
   }
@@ -936,7 +941,7 @@ export class DiagramPanel {
     if (wasTimeTravel || this.reloadDeferred) {
       this.reloadDeferred = false;
       await this.sendSchema();
-      await this.sendLayout(!wasTimeTravel);
+      await this.sendLayout('ifChanged');
       this.maybePostMerge();
     }
     this.post({ type: exit });
@@ -974,7 +979,7 @@ export class DiagramPanel {
       // unlocks for editing (F05).
       this.reloadDeferred = false;
       await this.sendSchema();
-      await this.sendLayout(true);
+      await this.sendLayout('ifChanged');
       if (this.readOnly === 'merge') { this.maybePostMerge(); return; }
     }
     this.post({ type: 'git:diff:enter', payload: diff });

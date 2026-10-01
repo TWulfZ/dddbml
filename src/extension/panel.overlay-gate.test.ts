@@ -75,6 +75,18 @@ describe('time travel', () => {
     expect(tableNames(h.since('schema:update').at(-1))).toContain('public.c');
   });
 
+  it('marks the exit layout as an external change only when the sidecar changed during the peek (F76)', async () => {
+    const { h, oldSha } = await withHistory();
+    await enterTimeTravel(h, oldSha);
+    h.writeSidecar(sidecarText({ 'public.a': { x: 777, y: 0 }, 'public.b': { x: 400, y: 0 } }));
+    await fake.fireFsEvent('change', h.sidecar);
+    await settle();
+    await h.web.receive({ type: 'git:timeTravel:exit' });
+    await vi.waitFor(() => expect(h.since('git:timeTravel:exit')).toHaveLength(1));
+    expect(h.since('layout:loaded')).toHaveLength(0);
+    expect(h.since('layout:external-change')).toHaveLength(1);
+  });
+
   it('re-posts the time-travel view to a webview that reloads (F02 sibling)', async () => {
     const { h, oldSha } = await withHistory();
     await enterTimeTravel(h, oldSha);
@@ -101,8 +113,8 @@ describe('time travel', () => {
     h.mark();
     await h.web.receive({ type: 'git:timeTravel:exit' });
     await vi.waitFor(() => expect(h.since('git:timeTravel:exit')).toHaveLength(1));
-    expect(flow(h, ['schema:update', 'layout:loaded', 'merge:begin', 'git:timeTravel:exit']).slice(-4))
-      .toEqual(['schema:update', 'layout:loaded', 'merge:begin', 'git:timeTravel:exit']);
+    expect(flow(h, ['schema:update', 'layout:external-change', 'merge:begin', 'git:timeTravel:exit']).slice(-4))
+      .toEqual(['schema:update', 'layout:external-change', 'merge:begin', 'git:timeTravel:exit']);
     expect(tableNames(h.since('schema:update').at(-1))).toEqual(['public.a', 'public.b']);
   });
 });
@@ -115,7 +127,8 @@ describe('diff against HEAD', () => {
     h.mark();
     await h.web.receive({ type: 'git:diff:enter' });
     await vi.waitFor(() => expect(h.since('git:diff:enter')).toHaveLength(1));
-    expect(flow(h, ['schema:update', 'layout:external-change', 'git:diff:enter']).slice(-3)).toEqual(['schema:update', 'layout:external-change', 'git:diff:enter']);
+    // `layout:loaded`, not external-change: nothing changed on disk, so the webview keeps its stashed undo history (F76).
+    expect(flow(h, ['schema:update', 'layout:loaded', 'layout:external-change', 'git:diff:enter']).slice(-3)).toEqual(['schema:update', 'layout:loaded', 'git:diff:enter']);
     expect(tableNames(h.since('schema:update').at(-1))).toContain('public.c');
   });
 

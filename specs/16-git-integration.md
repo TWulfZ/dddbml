@@ -189,7 +189,10 @@ pendiente (postea cada edición al instante). Diff desde time-travel: el host re
 luego `git:diff:enter` (el diff siempre cubre el working tree). Un reload del watcher o de una
 operación git (stash/revert) durante un overlay se marca `reloadDeferred` y se aplica al salir;
 el host postea el `exit` **al final** (schema → layout → `merge:begin` si apareció → exit), así el
-webview nunca queda editable con la revisión pasada. Un webview recargado durante un diff recibe
+webview nunca queda editable con la revisión pasada. Ese layout (y el que precede a un diff abierto
+desde time-travel) va como `layout:external-change` sólo si el texto del sidecar cambió desde la
+última vez que el host lo vio; si no, `layout:loaded` — el webview conserva el historial de undo
+guardado al entrar (spec 11, F76). Un webview recargado durante un diff recibe
 el diff **recalculado** (el working tree pudo cambiar).
 
 ## Modelo de datos / tipos afectados

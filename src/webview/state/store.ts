@@ -72,6 +72,9 @@ export interface AppState {
   future: EditCommand[];
   /** Hard cap for `past`; oldest entries drop FIFO when exceeded. */
   historyCapacity: number;
+  /** Working undo/redo set aside while a git overlay is up, with the table set it was recorded
+   *  against (spec 11: looking at a revision is not editing; F76). */
+  historyStash: { past: EditCommand[]; future: EditCommand[]; tables: Set<QualifiedName> } | null;
   /** Active layout-merge conflicts (spec 14). Non-null ⇒ the diagram is in blocking
    *  conflict-resolution mode: pan/zoom only, no select/drag/edit/persist until resolved. */
   mergeConflicts: SerializableMergeConflict[] | null;
@@ -170,6 +173,8 @@ export interface AppActions {
   undo(): void;
   redo(): void;
   clearHistory(): void;
+  /** The working layout changed under a git overlay: its stashed history no longer applies. */
+  dropHistoryStash(): void;
   beginMerge(conflicts: SerializableMergeConflict[], error?: string | null): void;
   setMergeDecision(id: string, side: 'ours' | 'theirs'): void;
   setMergeDecisionsBulk(side: 'ours' | 'theirs'): void;
@@ -231,6 +236,7 @@ const initial: AppState = {
   past: [],
   future: [],
   historyCapacity: 200,
+  historyStash: null,
   mergeConflicts: null,
   mergeError: null,
   mergeDecisions: {},
@@ -276,10 +282,8 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   ...initial,
   setSchema(schema, parseError) {
     set((s) => {
-      const oldNames = new Set(s.schema.tables.map((t) => t.name));
       const newNames = new Set(schema.tables.map((t) => t.name));
-      const sameTableSet =
-        oldNames.size === newNames.size && [...oldNames].every((n) => newNames.has(n));
+      const sameTableSet = sameNames(newNames, s.schema.tables.map((t) => t.name));
       const patch: Partial<AppState> = { schema, parseError, ready: true };
       if (!sameTableSet) {
         patch.past = [];
@@ -533,11 +537,14 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   clearHistory() {
     set({ past: [], future: [] });
   },
+  dropHistoryStash() {
+    set((s) => (s.historyStash === null ? s : { historyStash: null }));
+  },
   beginMerge(conflicts, error = null) {
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
     // A host merge always wins over a git overlay, so clear gitView too.
     const mergeDecisions = keepUnchangedDecisions(get(), conflicts);
-    set({ mergeConflicts: conflicts, mergeError: error, mergeDecisions, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, ...NO_DIFF });
+    set({ mergeConflicts: conflicts, mergeError: error, mergeDecisions, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, historyStash: null, ...NO_DIFF });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -597,7 +604,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   enterTimeTravel(rev, label) {
     // Read-only preview of a past commit; drop selection so nothing edits behind the gate. Diff maps
     // are only valid under a diff view: kept, they would tint the past revision (F63).
-    set({ ...NO_DIFF, gitView: { kind: 'timeTravel', rev, label }, selection: new Set(), selectedEdgeId: null });
+    set((s) => ({ ...NO_DIFF, ...stashHistory(s), gitView: { kind: 'timeTravel', rev, label }, selection: new Set(), selectedEdgeId: null }));
   },
   enterDiff(baseLabel, headLabel, diff) {
     const diffByTable = new Map<QualifiedName, TableDiffStatus>();
@@ -622,6 +629,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       if (r.status === 'removed') removedRefs.push(r);
     }
     set({
+      ...stashHistory(s),
       gitView: { kind: 'diff', baseLabel, headLabel },
       diffByTable,
       columnDiffByTable,
@@ -635,7 +643,12 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     });
   },
   exitGitView() {
-    set({ ...NO_DIFF, gitView: null });
+    set((s) => {
+      const stash = s.historyStash;
+      // Same rule as setSchema: commands recorded against tables that no longer exist cannot undo.
+      const restore = stash !== null && sameNames(stash.tables, s.schema.tables.map((t) => t.name));
+      return { ...NO_DIFF, gitView: null, historyStash: null, ...(restore ? { past: stash.past, future: stash.future } : {}) };
+    });
   },
   setFocusDimming(on) {
     set({ focusDimming: on });
@@ -693,6 +706,18 @@ function keepUnchangedDecisions(s: AppState, next: SerializableMergeConflict[]):
     if (decision && prev.get(c.id) === JSON.stringify(c)) kept[c.id] = decision;
   }
   return kept;
+}
+
+/** Moving into a git overlay sets the working history aside; a diff opened from time travel keeps
+ *  the stash taken when the first overlay opened. */
+function stashHistory(s: AppState): Partial<AppState> {
+  if (s.historyStash !== null) return {};
+  return { historyStash: { past: s.past, future: s.future, tables: new Set(s.schema.tables.map((t) => t.name)) }, past: [], future: [] };
+}
+
+function sameNames(a: Set<QualifiedName>, b: QualifiedName[]): boolean {
+  const bs = new Set(b);
+  return a.size === bs.size && [...a].every((n) => bs.has(n));
 }
 
 function pushHistory(s: AppState, cmd: EditCommand): Partial<AppState> {

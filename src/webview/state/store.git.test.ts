@@ -40,7 +40,8 @@ describe('git view slice (spec 16)', () => {
     store.getState().enterTimeTravel('abc', 'abc');
     store.getState().undo();
     expect(store.getState().positions.get('public.t')).toEqual({ x: 5, y: 5 });
-    expect(store.getState().past).toHaveLength(1);
+    store.getState().exitGitView();
+    expect(store.getState().past).toEqual([move]);
   });
 
   it('enterDiff builds the per-table / column / ref maps and ghosts', () => {

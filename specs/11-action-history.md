@@ -95,8 +95,8 @@ Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor
 | `undo()` / `redo()` con stack vacío | No-op silencioso. |
 | `setLayout` (load inicial o `layout:external-change`) | `past = [], future = []`. |
 | `dddbml: Reset Layout` (spec 03) | `past = [], future = []` (sin undo hasta el memento v2). |
-| Entrar a un overlay git (time-travel / diff) | `past`/`future` se guardan aparte; undo/redo son no-op mientras dure (gate de solo lectura). |
-| Salir del overlay git | Se restauran `past`/`future` guardados, salvo que el set de tablas del schema de trabajo haya cambiado mientras tanto (misma regla que `setSchema`). Decisión 2026-10-01: mirar una revisión no es editar. |
+| Entrar a un overlay git (time-travel / diff) | `past`/`future` se mueven a `historyStash` (con el set de tablas de trabajo) **antes** de cargar la revisión; undo/redo son no-op mientras dure (gate de solo lectura y stacks vacíos). Un diff abierto desde time-travel conserva el stash del primero. |
+| Salir del overlay git | Se restauran `past`/`future` guardados, salvo que el set de tablas del schema de trabajo haya cambiado mientras tanto (misma regla que `setSchema`). Decisión 2026-10-01: mirar una revisión no es editar. También se descartan si el sidecar cambió en disco durante el overlay (el host lo re-envía como `layout:external-change`, misma regla que esa fila) o si se abrió un merge. |
 | `setSchema` con set de nombres de tabla **distinto** al anterior | `past = [], future = []`. Previene undo a tabla que ya no existe. |
 | `setSchema` con mismo set de tablas (solo columnas cambiaron) | History preservado. |
 
