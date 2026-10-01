@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import type { Column, ColumnDiffEntry, Table, TableDiffStatus } from '../../shared/types';
+import { renderedRows, type DiffKind } from '../layout/tableRows';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag } from '../drag/dragController';
@@ -32,56 +33,9 @@ interface TableNodeProps {
   columnDiff?: Map<string, ColumnDiffEntry>;
 }
 
-/** A column row tagged for the inline git-style unified diff. `context` = unchanged. */
-type DiffKind = 'context' | 'added' | 'removed' | 'changed-old' | 'changed-new';
-interface DiffRow { key: string; kind: DiffKind; col: Column; isFk: boolean }
-
-/**
- * Build git-unified-diff rows for a table's columns: removed (`-`) then added (`+`), changed columns
- * as a `-`old / `+`new pair, interleaved in the base column order so it reads like an editor diff.
- * `base` undefined ⇒ a newly-added table (every column is `+`).
- */
-function buildDiffRows(current: Column[], base: Column[] | undefined, changed: Set<string>, fk?: Set<string>): DiffRow[] {
-  const isFk = (n: string) => fk?.has(n) ?? false;
-  if (!base) return current.map((c) => ({ key: `+${c.name}`, kind: 'added' as const, col: c, isFk: isFk(c.name) }));
-  const baseByName = new Map(base.map((c) => [c.name, c]));
-  const curByName = new Map(current.map((c) => [c.name, c]));
-  const rows: DiffRow[] = [];
-  let bi = 0;
-  const flushRemovedBefore = (target: number) => {
-    while (bi < target) {
-      const bc = base[bi]!;
-      if (!curByName.has(bc.name)) rows.push({ key: `-${bc.name}`, kind: 'removed', col: bc, isFk: false });
-      bi++;
-    }
-  };
-  for (const cc of current) {
-    const bc = baseByName.get(cc.name);
-    if (bc) {
-      // Never rewind: a kept column that moved ahead of an already-flushed range would otherwise
-      // make the final flush re-emit a removed column (duplicate `-` row and duplicate key).
-      const idx = base.indexOf(bc);
-      if (idx >= bi) {
-        flushRemovedBefore(idx);
-        bi = idx + 1;
-      }
-      if (changed.has(cc.name)) {
-        rows.push({ key: `-${cc.name}`, kind: 'changed-old', col: bc, isFk: false });
-        rows.push({ key: `+${cc.name}`, kind: 'changed-new', col: cc, isFk: isFk(cc.name) });
-      } else {
-        rows.push({ key: cc.name, kind: 'context', col: cc, isFk: isFk(cc.name) });
-      }
-    } else {
-      rows.push({ key: `+${cc.name}`, kind: 'added', col: cc, isFk: isFk(cc.name) });
-    }
-  }
-  flushRemovedBefore(base.length);
-  return rows;
-}
-
 function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff }: TableNodeProps) {
-  const size = estimateSize(table.columns.length);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const rowOpts = { showOnlyPkFk, fkColumns, diffStatus, diffBase, columnDiff };
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   const onPointerDown = (e: PointerEvent) => {
@@ -154,6 +108,7 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
     : {};
 
   if (lod === 'rect') {
+    const size = estimateSize(renderedRows(table, rowOpts).length);
     return (
       <>
         <div
@@ -178,18 +133,7 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
     );
   }
 
-  const visibleCols = showOnlyPkFk
-    ? table.columns.filter((c) => c.pk || (fkColumns && fkColumns.has(c.name)))
-    : table.columns;
-
-  // In diff mode show the full inline unified diff (bypasses the PK/FK-only filter).
-  const isDiff = diffStatus === 'added' || diffStatus === 'modified';
-  let diffRows: DiffRow[] | null = null;
-  if (isDiff) {
-    const changed = new Set<string>();
-    if (columnDiff) for (const [n, e] of columnDiff) if (e.status === 'changed') changed.add(n);
-    diffRows = buildDiffRows(table.columns, diffStatus === 'modified' ? diffBase?.columns : undefined, changed, fkColumns);
-  }
+  const rows = renderedRows(table, rowOpts);
 
   return (
     <>
@@ -209,9 +153,7 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
       >
         <TableHeader table={table} configurable headerStyle={headerStyle} />
         <ul class="ddd-table__cols">
-          {diffRows
-            ? diffRows.map((r) => <ColumnRow key={r.key} col={r.col} isFk={r.isFk} diffKind={r.kind} />)
-            : visibleCols.map((c) => <ColumnRow key={c.name} col={c} isFk={fkColumns?.has(c.name) ?? false} />)}
+          {rows.map((r) => <ColumnRow key={r.key} col={r.col} isFk={r.isFk} diffKind={r.kind} />)}
         </ul>
       </div>
       {ctxMenuEl}

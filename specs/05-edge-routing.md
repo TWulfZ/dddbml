@@ -98,7 +98,8 @@ segmentos completos.
 7. **Stub RÍGIDO de longitud fija en ambos extremos (`MIN_STUB = 24` world units).**
    El tramo `source → sourceStub` y `targetStub → target` es **inmutable**: nunca
    arrastrable, nunca subdividible, **nunca colapsado** (son los segmentos
-   `rigid` primero/último, siempre horizontales, de largo exacto 24). Mantienen
+   `rigid` primero/último, de largo exacto 24, saliendo **perpendiculares a su lado**:
+   horizontales en `left`/`right`, verticales en `top`/`bottom` — `STUB_DIR`). Mantienen
    coherente el punto de conexión (el marcador `1`/pata de gallo nunca queda
    pegado a la tabla). **Toda la edición vive estrictamente entre `sourceStub` y
    `targetStub`**, que actúan como los extremos fijos del polígono editable
@@ -106,11 +107,15 @@ segmentos completos.
    sin waypoints usa `defaultEditableCorners`; luego envuelve con los dos stubs).
    `slideSegment`/`notchAtQuarter`/`isDipRun`/`deleteNotch` materializan las esquinas
    (`editableCornersOf`) entre `sourceStub`/`targetStub`, así editar una sección no toca el resto.
-   **Clamp anti-spike:** la longitud del stub se limita a la mitad de la
-   distancia horizontal entre puertos, así los dos stubs **se encuentran en vez de
-   cruzarse** cuando las tablas están a < `2*MIN_STUB`. Consecuencia: una arista
-   misma-fila muy cercana queda como conector recto rígido sin sección editable;
-   una arista offset cercana conserva su trunk vertical editable.
+   **Clamp anti-spike:** sólo para stubs **opuestos sobre el mismo eje** (der↔izq,
+   abajo↔arriba), la longitud se limita a la mitad de la distancia entre puertos en
+   ese eje, así los dos stubs **se encuentran en vez de cruzarse** cuando las tablas
+   están a < `2*MIN_STUB`. Stubs en la **misma dirección** (p. ej. tras un flip, ambos
+   `left`) o perpendiculares nunca se cruzan y conservan el largo completo — antes
+   el clamp los colapsaba a 0 y la arista corría pegada al borde, sin sección
+   editable (auditoría F52). Consecuencia: una arista misma-fila muy cercana queda
+   como conector recto rígido sin sección editable; una arista offset cercana
+   conserva su trunk vertical editable.
 8. **Animación de flujo en hover/selected.** Una `<path>` overlay (clon de `r.d`,
    `pointer-events: none`) con puntos redondos (`stroke-dasharray`) y
    `@keyframes ddd-edge-flow` animando `stroke-dashoffset` negativo → los puntos
@@ -120,6 +125,16 @@ segmentos completos.
    `prefers-reduced-motion` (se oculta con `display:none`).
 
 ### Preguntas abiertas restantes
+
+- **¿Cómo distinguir la salida de A* de una forma manual? (auditoría F20, bloqueante para el
+  resto del fix).** Hoy `hasManualShape` trata como manual cualquier waypoint o lado persistido, así
+  que una arista ruteada por A* con desvío o con lado `top`/`bottom` nunca se re-ordena con
+  "preservar manuales", y `computeEdgeResets` conserva sus lados aunque una tabla se mueva (quedan
+  apuntando a la geometría vieja). Opciones: (a) marcador `auto: true` en `EdgeLayout`, persistido
+  en el sidecar (cambio de schema del spec 03, aditivo) y borrado por toda edición de usuario;
+  (b) heurística sin cambio de schema: como el flip manual es sólo L/R (decisión 4), tratar
+  `top`/`bottom` como automáticos — no distingue waypoints de A* de waypoints del usuario;
+  (c) aceptar el comportamiento actual. Pendiente de decidir con el usuario.
 
 - **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
   forma en `WaypointCommand`. "Reset line" emite **un solo** `ArrangeCommand` de sólo
@@ -154,12 +169,29 @@ mismo schema ⇒ mismos puertos). Asignar `ratio = (i+1)/(n+1)` (equidistante, s
 esquinas; clamp `[0.05, 0.95]`). Alinear `y` del puerto a la fila de la columna PK/FK vía
 `columnYResolver` (`columnCenterY`).
 
+**Filas renderizadas, no columnas del schema.** El índice de fila y el alto del bbox salen
+de `buildRowGeometry` (`layout/tableRows.ts`), el mismo helper (`renderedRows`) con el que
+`TableNode` dibuja: con "PK/FK columns only" cuentan sólo las filas PK/FK, y una tabla
+added/modified en diff cuenta sus filas de diff inline (el puerto va a la fila viva —
+context/added/`+`new—, nunca a la `-`old/removed). App lo memoiza en `rowGeometry` y lo usa
+también para contenedores de grupo, spatial index, `worldBbox` y objetivos de diff; antes
+todo usaba la lista completa y con el filtro el puerto FK quedaba filas por debajo de la
+tabla y el contenedor de grupo sobresalía (auditoría F08). El export de imagen sigue con
+todas las columnas (spec 17), con sus propios contenedores (`exportContainers`). El pase A*
+on-demand (§9) sigue midiendo columnas completas: lo que persiste no depende del filtro de
+vista.
+
 **Computar path** (`buildPath`): polilínea ortogonal de ejes alternados. El
 **polígono editable** se rutea entre los extremos fijos `aStub`/`bStub` (decisión
 7) conectando las **esquinas literales** del usuario directamente (`cornersThrough`,
-sin colapsar — un codo de seguridad sólo para un par no-alineado v1); sin waypoints
-⇒ `defaultEditableCorners` (recta misma-fila, o H-V-H con `midX` centrado entre los
-stubs). Luego se **envuelve** con los stubs rígidos: `corners = [a, ...editable, b]`,
+sin colapsar — un codo de seguridad sólo para un par no-alineado v1, que junto a un
+stub avanza primero sobre el eje de ese stub, así tras un stub `top`/`bottom` nunca
+corre plano sobre el borde); sin waypoints ⇒ `defaultEditableCorners`: stubs
+horizontales ⇒ recta misma-fila o H-V-H con `midX` centrado (+ `dx` legacy); stubs
+verticales ⇒ el espejo V-H-V con `midY` centrado (el `dx` legacy no aplica); uno de
+cada ⇒ una sola L; stubs en la **misma dirección** ⇒ ruta en C cuyo trunk queda más
+allá del stub que más sobresale (`max`/`min`), nunca de vuelta sobre un stub ni a
+través de una tabla. Luego se **envuelve** con los stubs rígidos: `corners = [a, ...editable, b]`,
 así `a→aStub` y `bStub→b` sobreviven como segmentos propios. `buildSegments` marca
 `rigid` el primero y el último. (Las ops de edición usan `cleanCorners` —quita sólo
 puntos coincidentes/colineales redundantes— tras un *slide*; el ruteo base no
@@ -167,7 +199,8 @@ canonicaliza.) Migración legacy `dx`/`dy` conservada. `routeRefs` expone
 `sourceStub`/`targetStub` en el `EdgeRoute`.
 
 > **Invariante:** todo segmento es estrictamente H o V; ejes alternan. Los stubs
-> primero/último son `rigid` (inmutables) y de largo fijo `MIN_STUB`.
+> primero/último son `rigid` (inmutables), de largo fijo `MIN_STUB` y perpendiculares
+> a su lado.
 
 ### 2. Puertos flotantes + waypoints fijados (semántica de ports flotantes)
 
@@ -367,6 +400,11 @@ top/bottom). Resolución acordada:
   `chooseSides4` en `astar.ts`) cuando reduce cruces/obstáculos, y persiste
   `sourceSide`/`targetSide ∈ 'left'|'right'|'top'|'bottom'` (E3 **se usa de verdad**). El render path
   luego dibuja fielmente ese lado persistido vía `portPoint` (que ya soporta los 4 lados).
+  **Sólo se persisten lados que aportan información** (auditoría F20): si el par coincide con lo que
+  `chooseSides` del render elegiría (todo L/R) no se escribe, y un fallback (`ok:false`) no escribe
+  lados provisionales — un lado persistido cuenta como forma manual (`hasManualShape`) y excluiría
+  la arista de toda corrida posterior con "preservar manuales". Los lados `top`/`bottom` sí se
+  persisten y hoy siguen contando como manuales (ver Preguntas abiertas).
 - **`columnY` ancla sólo en `left`/`right`**; un puerto `top`/`bottom` usa un x-ratio sin ancla de
   fila. Ambas reglas ya estaban gateadas a L/R en `routeRefs` (líneas ~153-162).
 - Sin contradicción: A* **rutea entre los stubs** (decisión 7 se mantiene) — pero el **adaptador**
@@ -495,7 +533,13 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
   (smart-delete, queda sólo el trunk); `deleteNotch` quita las 4 esquinas.
 - **Stub rígido:** primer y último segmento `rigid===true`, horizontales y de
   largo exacto `MIN_STUB`; los interiores `rigid===false`; existe ≥ 1 sección
-  editable. `slideSegment`/`notchAtQuarter` sobre un `rigid` es no-op.
+  editable. `slideSegment`/`notchAtQuarter` sobre un `rigid` es no-op. Ambos extremos en el
+  mismo lado (`left`/`left`, `right`/`right`) ⇒ stubs completos de 24 + ruta en C editable, sin
+  retroceso ni tramos dentro de una tabla. Lados `top`/`bottom` persistidos ⇒ stubs verticales
+  fuera del borde, ningún tramo sobre el borde de la tabla; puertos alineados conservan un tramo
+  medio editable; par mixto (`right`→`top`) ⇒ L sin retroceso (`edgeRouter.stub.test.ts`).
+- **Deslizar sin movimiento neto** perpendicular devuelve los waypoints guardados (una ruta
+  automática sigue automática, sin entrada de undo).
 - **Esquinas redondeadas** (`edgeRouter.rounding.test.ts`): `roundedPathString` deja recta
   una polilínea colineal (sin `Q`); redondea una esquina interior con un `Q` cuyo punto de
   control es el vértice; clampa `r` a media-sección adyacente; descarta puntos coincidentes;
@@ -516,8 +560,11 @@ delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`mov
   independiente entre celdas).
 - **Motor A* (`edgeOrder/astar.test.ts`):** una arista cuya recta cruzaría una tabla intermedia se
   rutea rodeándola (**ningún segmento intersecta el bbox-obstáculo**); ruta ortogonal con ejes
-  **alternados**; bends enteros; **entre `sourceStub`/`targetStub`** (los puertos no son waypoints; el
-  primer/último bend conserva la Y del stub L/R ⇒ ancla columnY intacta); corredor limpio ⇒ `[]`
+  **alternados**; bends enteros; **entre `sourceStub`/`targetStub`** (los puertos no son waypoints; los
+  stubs conectan con los waypoints por tramos ortogonales ⇒ ancla columnY intacta; `anchorEndpoint`
+  nunca deja el extremo del lado-tabla del stub — lo lleva al extremo del stub junto con su vecino,
+  así no hay espolón de retroceso sobre el stub; e2e `computeEdgeOrdering → routeRefs` sin
+  retrocesos en `smartLayout/edgeOrdering.test.ts`); corredor limpio ⇒ `[]`
   waypoints; `chooseSides4` elige top/bottom apilado vertical, L/R lado-a-lado, y rutea un edge
   top/bottom rodeando un obstáculo lateral; **fallback** a `[]` (sin throw) al exceder `MAX_EXPLORED`;
   batch **determinista** (dos corridas byte-iguales; independiente del orden del array de entrada para

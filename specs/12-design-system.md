@@ -172,6 +172,8 @@ Contrato: el componente `TableNode` lee estos tokens vía CSS. El JSX no inspecc
 
 **Decisión**: TS mirror en `src/webview/layout/density.ts` exportando `densityMetrics('compact'|'cozy'|'comfortable')`. Es el único lugar fuera del CSS donde aparecen estos números. `estimateSize()` lo consume.
 
+El mirror incluye también los bordes exteriores de `.ddd-table` (`borderTop: 3` = franja de acento, `borderBottom: 1`): con `box-sizing: border-box` y alto automático suman al alto real, así que `estimateSize()` = `borderTop + header + 2·pad-cols + n·row + borderBottom` y `columnCenterY()` arranca en `borderTop`. Sin ellos los puertos quedaban 3px por encima del centro de su fila y todo el tamaño derivado (rect LOD, contenedores de grupo, marquee) 4px corto. `autoLayout.test.ts` deriva estos valores de `style.css` para detectar deriva; el export de imagen dibuja la banda de header con el mismo `borderTop`.
+
 ---
 
 ## Bounded-context palette

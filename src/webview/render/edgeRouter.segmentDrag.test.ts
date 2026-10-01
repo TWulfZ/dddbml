@@ -66,6 +66,13 @@ describe('slideSegment — move a whole run perpendicular (real centre handle)',
     const trunk = firstEditable(r, 'v');
     expect(slideSegment(r, trunk, -40, 0)).toEqual(slideSegment(r, trunk, -40, 0));
   });
+
+  it('no net perpendicular movement keeps the stored waypoints (an auto route stays auto)', () => {
+    const trunk = firstEditable(routeWith(), 'v');
+    expect(slideSegment(routeWith(), trunk, 0, 50)).toEqual([]);
+    const explicit = routeWith({ waypoints: [{ x: 300, y: 150 }] });
+    expect(slideSegment(explicit, firstEditable(explicit, 'v'), 0, 50)).toEqual([{ x: 300, y: 150 }]);
+  });
 });
 
 describe('notchAtQuarter — carve a local symmetric notch (ghost handle)', () => {
@@ -105,7 +112,7 @@ describe('notchAtQuarter — carve a local symmetric notch (ghost handle)', () =
   it('a zero-depth drag adds no notch (route shape unchanged)', () => {
     const r = routeWith();
     const top = firstEditable(r, 'h');
-    const w = notchAtQuarter(r, top, 0.25, 0, 0); // materialized corners, no dip
+    const w = notchAtQuarter(r, top, 0.25, 0, 0);
     expect(w.some((p) => p.y === 90)).toBe(false);
     expect(routeWith({ waypoints: w }).d).toBe(r.d); // renders identically to the default
   });

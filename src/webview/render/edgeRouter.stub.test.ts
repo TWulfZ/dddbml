@@ -101,3 +101,101 @@ describe('routeRefs — minimum end stub (MIN_STUB = 24)', () => {
     expect(len(lastSeg(r))).toBeGreaterThanOrEqual(24);
   });
 });
+
+const segLen = (s: { x1: number; y1: number; x2: number; y2: number }) => Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1);
+
+/** Two consecutive segments on the same axis pointing in opposite directions (a spur/backtrack). */
+const hasBacktrack = (r: EdgeRoute): boolean =>
+  r.segments.some((s, i) => {
+    const prev = r.segments[i - 1];
+    if (!prev || prev.axis !== s.axis) return false;
+    return s.axis === 'h'
+      ? Math.sign(s.x2 - s.x1) * Math.sign(prev.x2 - prev.x1) < 0
+      : Math.sign(s.y2 - s.y1) * Math.sign(prev.y2 - prev.y1) < 0;
+  });
+
+/** Any segment running inside `b` or along one of its horizontal borders (not just touching a port). */
+const runsAlongOrInside = (r: EdgeRoute, b: Bbox): boolean =>
+  r.segments.some((s) => {
+    if (s.axis === 'h') {
+      const lo = Math.min(s.x1, s.x2);
+      const hi = Math.max(s.x1, s.x2);
+      return s.y1 >= b.y && s.y1 <= b.y + b.h && hi > b.x && lo < b.x + b.w;
+    }
+    const lo = Math.min(s.y1, s.y2);
+    const hi = Math.max(s.y1, s.y2);
+    return s.x1 > b.x && s.x1 < b.x + b.w && hi > b.y && lo < b.y + b.h;
+  });
+
+describe('routeRefs — same-direction ports (F52)', () => {
+  const A = bbox(0, 0);
+  const C = bbox(0, 300);
+  const stacked = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? C : undefined);
+
+  for (const side of ['left', 'right'] as const) {
+    it(`both ends on '${side}' keep full rigid stubs and an editable C-route`, () => {
+      const r = routeWith({ sourceSide: side, targetSide: side }, stacked);
+      const first = r.segments[0]!;
+      const last = r.segments[r.segments.length - 1]!;
+      expect(first.axis).toBe('h');
+      expect(last.axis).toBe('h');
+      expect(first.rigid && last.rigid).toBe(true);
+      expect(segLen(first)).toBe(24);
+      expect(segLen(last)).toBe(24);
+      expect(r.segments.some((s) => !s.rigid)).toBe(true);
+      expect(hasBacktrack(r)).toBe(false);
+      expect(runsAlongOrInside(r, A)).toBe(false);
+      expect(runsAlongOrInside(r, C)).toBe(false);
+    });
+  }
+
+  it('C-route trunk clears the wider-reaching stub when the tables are x-offset', () => {
+    const offset = (n: string): Bbox | undefined => (n === 'public.a' ? bbox(0, 0) : n === 'public.b' ? bbox(80, 300) : undefined);
+    const r = routeWith({ sourceSide: 'left', targetSide: 'left' }, offset);
+    expect(hasBacktrack(r)).toBe(false);
+    expect(runsAlongOrInside(r, bbox(0, 0))).toBe(false);
+    expect(runsAlongOrInside(r, bbox(80, 300))).toBe(false);
+  });
+});
+
+describe('routeRefs — persisted top/bottom sides (F51)', () => {
+  const A = bbox(0, 0);
+  const B = bbox(60, 400);
+  const stacked = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? B : undefined);
+  const layouts: EdgeLayout[] = [
+    { sourceSide: 'bottom', targetSide: 'top' },
+    { sourceSide: 'bottom', targetSide: 'top', waypoints: [{ x: 100, y: 250 }, { x: 160, y: 250 }] },
+  ];
+
+  it('stubs leave the border vertically and the path never runs along a table border', () => {
+    for (const layout of layouts) {
+      const r = routeWith(layout, stacked);
+      const first = r.segments[0]!;
+      const last = r.segments[r.segments.length - 1]!;
+      expect(first.axis).toBe('v');
+      expect(last.axis).toBe('v');
+      expect(segLen(first)).toBe(24);
+      expect(segLen(last)).toBe(24);
+      expect(first.y2).toBeGreaterThan(A.y + A.h);
+      expect(last.y1).toBeLessThan(B.y);
+      expect(hasBacktrack(r)).toBe(false);
+      expect(runsAlongOrInside(r, A)).toBe(false);
+      expect(runsAlongOrInside(r, B)).toBe(false);
+    }
+  });
+
+  it('aligned ports still leave an editable middle segment', () => {
+    const aligned = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? bbox(0, 400) : undefined);
+    const r = routeWith({ sourceSide: 'bottom', targetSide: 'top' }, aligned);
+    expect(r.segments.some((s) => !s.rigid)).toBe(true);
+    expect(r.segments.every((s) => s.axis === 'v')).toBe(true);
+  });
+
+  it('a mixed side pair (right -> top) renders an L without backtracking', () => {
+    const mixed = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? bbox(400, 300) : undefined);
+    const r = routeWith({ sourceSide: 'right', targetSide: 'top' }, mixed);
+    expect(r.segments[0]!.axis).toBe('h');
+    expect(r.segments[r.segments.length - 1]!.axis).toBe('v');
+    expect(hasBacktrack(r)).toBe(false);
+  });
+});

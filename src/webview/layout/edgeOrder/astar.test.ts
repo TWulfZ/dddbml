@@ -107,11 +107,16 @@ describe('routeOneEdge — between stubs / columnY anchoring', () => {
     const r = routeWithObstacles(ep, []);
     expect(r.ok).toBe(true);
     expect(ep.sourceStub.y).toBe(ep.targetStub.y);
-    // With an obstacle forcing a bend, the segment leaving the source still departs horizontally
-    // (the first waypoint shares the source-stub Y), so the port row anchor is intact.
+    // With an obstacle forcing a bend, the stubs connect to the waypoints with orthogonal legs
+    // (no renderer safety elbow), so the port row anchor is intact.
     const bent = routeWithObstacles(ep, [bbox(300, 20, 100, 60)]);
-    expect(bent.waypoints[0]!.y).toBe(ep.sourceStub.y);
-    expect(bent.waypoints[bent.waypoints.length - 1]!.y).toBe(ep.targetStub.y);
+    expect(bent.waypoints.length).toBeGreaterThan(0);
+    const poly = [ep.sourceStub, ...bent.waypoints, ep.targetStub];
+    for (let i = 1; i < poly.length; i++) {
+      const p = poly[i - 1]!;
+      const q = poly[i]!;
+      expect(p.x === q.x || p.y === q.y).toBe(true);
+    }
   });
 
   it('returns [] waypoints for a clear straight corridor', () => {

@@ -3,6 +3,7 @@ import { store, useAppStore, isCanvasReadOnly } from './state/store';
 import { autoLayout, estimateSize } from './layout/autoLayout';
 import { GROUP_CONTAINER_HEADER, GROUP_CONTAINER_PADDING } from './layout/density';
 import { smartLayout } from './layout/smartLayout/layout';
+import { buildRowGeometry } from './layout/tableRows';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
 import { MergeGhosts } from './render/mergeGhosts';
@@ -68,6 +69,7 @@ export function App(_props: AppProps) {
   const diffGhosts = useAppStore((s) => s.diffGhosts);
   const diffRemovedRefs = useAppStore((s) => s.diffRemovedRefs);
   const focusDimming = useAppStore((s) => s.focusDimming);
+  const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
   const diffActive = gitView?.kind === 'diff';
   // `viewport` itself is deliberately NOT selected here: it changes on every pan/zoom frame and
   // would re-render the whole tree (spec 04). Only its LOD projection (a stable string) is.
@@ -136,11 +138,20 @@ export function App(_props: AppProps) {
     return m;
   }, [schema]);
 
+  // Rows each table actually draws (PK/FK filter, inline diff): every on-canvas size and port must
+  // count these, not the full column list, or edges and group boxes drift off the nodes.
+  const rowGeometry = useMemo(
+    () => buildRowGeometry({ tables: schema.tables, showOnlyPkFk, fkColumnsByTable, diffByTable, diffBaseByTable, columnDiffByTable }),
+    [schema, showOnlyPkFk, fkColumnsByTable, diffByTable, diffBaseByTable, columnDiffByTable],
+  );
+
   const derived = useMemo(() => {
     const hiddenTables = new Set<QualifiedName>(individuallyHidden);
     const collapsedTables = new Set<QualifiedName>();
     const collapsedNodes: Array<{ name: string; x: number; y: number; w: number; h: number; color: string; count: number }> = [];
     const containers: Array<{ name: string; x: number; y: number; w: number; h: number; color: string }> = [];
+    // The image export always draws every column (spec 17), so its group boxes use full heights.
+    const exportContainers: typeof containers = [];
 
     for (const g of schema.groups) {
       const st = groupState[g.name];
@@ -149,28 +160,32 @@ export function App(_props: AppProps) {
         continue;
       }
       if (!st?.collapsed) {
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, maxYFull = -Infinity;
         let n = 0;
         for (const t of g.tables) {
           if (hiddenTables.has(t)) continue;
           const pos = positions.get(t);
           if (!pos) continue;
-          const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
+          const size = estimateSize(rowGeometry.count(t));
+          const fullHeight = estimateSize(tablesByName.get(t)?.columns.length ?? 0).height;
           if (pos.x < minX) minX = pos.x;
           if (pos.y < minY) minY = pos.y;
           if (pos.x + size.width > maxX) maxX = pos.x + size.width;
           if (pos.y + size.height > maxY) maxY = pos.y + size.height;
+          if (pos.y + fullHeight > maxYFull) maxYFull = pos.y + fullHeight;
           n++;
         }
         if (n > 0) {
-          containers.push({
+          const box = (bottom: number) => ({
             name: g.name,
             x: Math.round(minX - GROUP_CONTAINER_PADDING),
             y: Math.round(minY - GROUP_CONTAINER_PADDING - GROUP_CONTAINER_HEADER),
             w: Math.round(maxX - minX + GROUP_CONTAINER_PADDING * 2),
-            h: Math.round(maxY - minY + GROUP_CONTAINER_PADDING * 2 + GROUP_CONTAINER_HEADER),
+            h: Math.round(bottom - minY + GROUP_CONTAINER_PADDING * 2 + GROUP_CONTAINER_HEADER),
             color: st?.color ?? colorForGroup(g.name),
           });
+          containers.push(box(maxY));
+          exportContainers.push(box(maxYFull));
         }
         continue;
       }
@@ -214,8 +229,10 @@ export function App(_props: AppProps) {
     // refKeyByStableId lets the diff overlay tint a newly-added ref by its stable id (spec 16).
     const { refs: effectiveRefs, keyByStableId: refKeyByStableId } = edgeKeyedRefs(schema.refs, mapEndpoint);
 
-    return { hiddenTables, collapsedTables, collapsedNodes, containers, effectiveRefs, refKeyByStableId };
-  }, [schema, tablesByName, positions, groupState, individuallyHidden, density]);
+    return { hiddenTables, collapsedTables, collapsedNodes, containers, exportContainers, effectiveRefs, refKeyByStableId };
+  }, [schema, tablesByName, positions, groupState, individuallyHidden, density, rowGeometry]);
+
+  const exportDerived = useMemo(() => ({ ...derived, containers: derived.exportContainers }), [derived]);
 
   const spatialIndex = useMemo(() => {
     const idx = new SpatialIndex();
@@ -223,7 +240,7 @@ export function App(_props: AppProps) {
       if (derived.hiddenTables.has(t.name) || derived.collapsedTables.has(t.name)) continue;
       const pos = positions.get(t.name);
       if (!pos) continue;
-      const size = estimateSize(t.columns.length);
+      const size = estimateSize(rowGeometry.count(t.name));
       idx.insert(t.name, { x: pos.x, y: pos.y, w: size.width, h: size.height });
     }
     for (const g of derived.collapsedNodes) {
@@ -233,7 +250,7 @@ export function App(_props: AppProps) {
       idx.insert(containerId(c.name), { x: c.x, y: c.y, w: c.w, h: c.h });
     }
     return idx;
-  }, [schema, positions, derived, density]);
+  }, [schema, positions, derived, density, rowGeometry]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -486,7 +503,7 @@ export function App(_props: AppProps) {
       if (derived.hiddenTables.has(t.name) || derived.collapsedTables.has(t.name)) continue;
       const pos = positions.get(t.name);
       if (!pos) continue;
-      const size = estimateSize(t.columns.length);
+      const size = estimateSize(rowGeometry.count(t.name));
       if (pos.x < minX) minX = pos.x;
       if (pos.y < minY) minY = pos.y;
       if (pos.x + size.width > maxX) maxX = pos.x + size.width;
@@ -507,7 +524,7 @@ export function App(_props: AppProps) {
     if (!Number.isFinite(minX)) return { x: 0, y: 0, w: 800, h: 600 };
     const P = 400;
     return { x: Math.round(minX - P), y: Math.round(minY - P), w: Math.round(maxX - minX + P * 2), h: Math.round(maxY - minY + P * 2) };
-  }, [schema, positions, derived, density]);
+  }, [schema, positions, derived, density, rowGeometry]);
 
   // Tables in a position conflict (spec 14): render ghosts for these, hide their normal node.
   const mergeTableKeys = new Set<QualifiedName>();
@@ -573,7 +590,7 @@ export function App(_props: AppProps) {
               visibleRefIds={visibleRefIds}
               lod={lod}
               positions={positionsEffective}
-              tablesByName={tablesByName}
+              rows={rowGeometry}
               groupSizes={derived.collapsedNodes}
               worldBbox={worldBbox}
               refDiff={edgeRefDiff}
@@ -669,7 +686,7 @@ export function App(_props: AppProps) {
       <ErrorBoundary scope="overlays">
         <Tooltip />
         <ExportModal />
-        <ExportImageModal derived={derived} />
+        <ExportImageModal derived={exportDerived} />
         <SettingsPanel />
         <GitPanel />
         <EdgeOrderProgress />

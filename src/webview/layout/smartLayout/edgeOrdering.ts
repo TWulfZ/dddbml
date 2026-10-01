@@ -1,7 +1,7 @@
 import type { EdgeLayout, EdgeSide, QualifiedName, Schema, Table } from '../../../shared/types';
 import type { Bbox } from '../../render/spatialIndex';
 import { SpatialIndex } from '../../render/spatialIndex';
-import { routeRefs, type ColumnYResolver } from '../../render/edgeRouter';
+import { chooseSides, routeRefs, type ColumnYResolver } from '../../render/edgeRouter';
 import { columnCenterY, estimateSize } from '../autoLayout';
 import { chooseSides4, orderEdges, type OrderEdgeInput, type RoutedEdge } from '../edgeOrder';
 import { hasManualShape } from './edgeReset';
@@ -129,16 +129,25 @@ export async function computeEdgeOrdering(input: EdgeOrderingInput): Promise<Edg
 
   const routed: RoutedEdge[] = await orderEdges(inputs, { obstaclesFor, signal, onProgress });
 
-  // Map RoutedEdge[] → EdgeLayout SET pairs. Persist the chosen sides always (the render path's
-  // chooseSides never picks top/bottom, so the side is the source of truth); preserve color.
+  // Map RoutedEdge[] → EdgeLayout SET pairs, preserving color. Sides persist only when they differ
+  // from what the render path's chooseSides would pick (i.e. top/bottom): a persisted side counts as
+  // a manual shape, which would exclude the edge from every later "preserve manual" run. A fallback
+  // (ok:false) gets the plain default route, so its provisional sides are dropped too.
+  const inputById = new Map(inputs.map((ep) => [ep.refId, ep]));
   const resets: Array<[string, EdgeLayout]> = [];
   for (const r of routed) {
     const existing = existingLayouts.get(r.refId);
     const next: EdgeLayout = {};
     if (existing?.color) next.color = existing.color;
-    next.sourceSide = r.sourceSide;
-    next.targetSide = r.targetSide;
-    if (r.ok && r.waypoints.length > 0) next.waypoints = r.waypoints;
+    const ep = inputById.get(r.refId);
+    if (r.ok && ep) {
+      const auto = chooseSides(ep.sourceTable, ep.targetTable);
+      if (auto.sourceSide !== r.sourceSide || auto.targetSide !== r.targetSide) {
+        next.sourceSide = r.sourceSide;
+        next.targetSide = r.targetSide;
+      }
+      if (r.waypoints.length > 0) next.waypoints = r.waypoints;
+    }
     resets.push([r.refId, next]);
   }
   return { resets };
