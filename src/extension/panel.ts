@@ -1074,7 +1074,7 @@ export class DiagramPanel {
   private onViewportPersist(viewport: ViewportLayout): void {
     this.currentLayout = { ...this.currentLayout, viewport };
     if (this.pendingPersist) this.pendingPersist = { ...this.pendingPersist, viewport };
-    void this.trackFlush(this.writeViewStateDelta(this.currentLayout));
+    void this.trackFlush(this.writeViewStateDelta());
   }
 
   /** Every shared write goes through here: what we just wrote is valid, so a stale corrupt flag
@@ -1108,18 +1108,19 @@ export class DiagramPanel {
       const message = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(`dddbml: failed to write layout file — ${message}`);
     }
-    await this.writeViewStateDelta(layout);
+    await this.writeViewStateDelta();
     // Only a real shared-layout write flips the sidecar dirty/clean — refresh the Git panel's status
     // then (NOT on pure pan/zoom, which would spawn `git status` on every frame's debounced flush).
     if (sharedChanged) this.scheduleGitStatus();
   }
 
-  /** Local view-state: never tracked by git, so failures here are non-fatal. Writes are chained:
-   *  a camera write and a layout flush in flight together could land out of order. */
-  private writeViewStateDelta(layout: Layout): Promise<void> {
+  /** Local view-state: never tracked by git, so failures here are non-fatal. Writes are chained
+   *  (a camera write and a layout flush could land out of order) and read the layout when they run:
+   *  a flush's snapshot predates a camera saved while its shared write was in flight. */
+  private writeViewStateDelta(): Promise<void> {
     const write = this.viewStateWrites.then(async () => {
       try {
-        const next = extractViewState(layout);
+        const next = extractViewState(this.currentLayout);
         const base = this.viewStateBaseline;
         if (base === null || !sameViewState(base, next)) {
           const disk = (await readViewState(this.context, this.dbmlUri)) ?? emptyViewState();
