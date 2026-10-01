@@ -1095,8 +1095,14 @@ export class DiagramPanel {
       if (this.sidecarCorrupt || this.readOnly === 'merge') {
         // Never clobber a corrupt or conflict-marked sidecar; the watcher re-reads on fix.
       } else if (sharedSerialized !== this.diskSharedSerialized) {
-        await this.writeShared(layout);
-        sharedChanged = true;
+        // The watcher can lag a `git merge`/`pull` past our debounce: writing now would rename over
+        // its result (conflict markers included), and the reload would then take it for our echo.
+        if ((await readSidecarText(this.dbmlUri)) !== this.diskSidecarText) {
+          this.scheduleExternalReload(true);
+        } else {
+          await this.writeShared(layout);
+          sharedChanged = true;
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1166,6 +1172,7 @@ export class DiagramPanel {
    * edit wrote those phantom entries into the new branch's sidecar.
    */
   private scheduleExternalReload(sidecarTouched: boolean): void {
+    if (this.disposed) return;
     if (sidecarTouched) this.sidecarEventPending = true;
     this.scheduleGitStatus();
     if (this.schemaTimer) clearTimeout(this.schemaTimer);

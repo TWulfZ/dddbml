@@ -6,7 +6,7 @@ vi.mock('vscode', () => import('./testing/vscodeFake'));
 
 import { fake } from './testing/vscodeFake';
 import { DiagramPanel } from './panel';
-import { cleanupDirs, conflictedRepo, openPanel, persistPayload, settle, sidecarText, tablesOf } from './testing/panelHarness';
+import { cleanupDirs, conflictedRepo, divergedRepo, openPanel, persistPayload, settle, sidecarText, tablesOf } from './testing/panelHarness';
 import type { SerializableMergeConflict } from '../shared/types';
 
 /** Host half of the two-layer read-only gate while a sidecar merge is pending (spec 16, spec 14). */
@@ -131,6 +131,22 @@ describe('pending merge: changes made outside the diagram', () => {
     expect(h.since('merge:applyFailed')).toHaveLength(1);
     expect(h.since('merge:begin')).toHaveLength(0);
     expect(h.readSidecar()).toContain(MARKER);
+  });
+});
+
+describe('a merge that lands while a persist is debounced (F27)', () => {
+  it('keeps the conflict markers and opens the merge instead of writing over them', async () => {
+    const { dir, git } = divergedRepo();
+    const h = await openPanel({ reuseDir: dir });
+    h.mark();
+    await h.web.receive(persistPayload(h, { 'public.a': { x: 111, y: 0 }, 'public.b': { x: 500, y: 0 } }));
+    try { git('merge', '-q', 'other'); } catch { /* conflict expected */ }
+    await settle(300); // the watcher event arrives only after the host's persist debounce ran out
+    await fake.fireFsEvent('change', h.sidecar);
+    await settle(400);
+    await DiagramPanel.settle();
+    expect(h.readSidecar()).toContain(MARKER);
+    expect(h.since('merge:begin')).toHaveLength(1);
   });
 });
 

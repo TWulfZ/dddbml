@@ -85,8 +85,8 @@ export function gitIn(dir: string): Git {
   return git;
 }
 
-/** A diagram whose sidecar is mid-merge: `main` moved a to x=111, `other` moved it to x=222. */
-export function conflictedRepo(): { dir: string; git: Git } {
+/** `main` moved a to x=111 and `other` moved it to x=222; `main` is checked out, not merged yet. */
+export function divergedRepo(): { dir: string; git: Git } {
   const dir = newDir();
   writeFileSync(join(dir, 'd.dbml'), DBML);
   writeFileSync(join(dir, 'd.dbml.layout.json'), sidecarText({ 'public.a': { x: 0, y: 0 }, 'public.b': { x: 400, y: 0 } }));
@@ -98,8 +98,14 @@ export function conflictedRepo(): { dir: string; git: Git } {
   git('checkout', '-q', 'main');
   writeFileSync(join(dir, 'd.dbml.layout.json'), sidecarText({ 'public.a': { x: 111, y: 0 }, 'public.b': { x: 400, y: 0 } }));
   git('commit', '-q', '-am', 'main moved a');
-  try { git('merge', '-q', 'other'); } catch { /* the layout conflict is expected */ }
   return { dir, git };
+}
+
+/** A diagram whose sidecar is mid-merge: {@link divergedRepo} with `other` merged into `main`. */
+export function conflictedRepo(): { dir: string; git: Git } {
+  const repo = divergedRepo();
+  try { repo.git('merge', '-q', 'other'); } catch { /* the layout conflict is expected */ }
+  return repo;
 }
 
 export function persistPayload(h: Harness, tables: Layout['tables']): { type: 'layout:persist'; payload: Layout } {
