@@ -45,6 +45,10 @@ const containerId = (name: string) => CONTAINER_PREFIX + name;
 /** Synthetic index entries (collapsed groups, containers) — never selectable, never counted. */
 const isSynthetic = (name: string) => name.startsWith('__');
 
+/** Fields that consume Space/typing themselves (zoom %, group search, color popup hex input). */
+const isTextField = (t: HTMLElement | null): boolean =>
+  t != null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+
 export function App(_props: AppProps) {
   const schema = useAppStore((s) => s.schema);
   const parseError = useAppStore((s) => s.parseError);
@@ -272,6 +276,11 @@ export function App(_props: AppProps) {
     // its scrollable lists from scrolling.
     const isCanvasTarget = (target: EventTarget | null): boolean =>
       target === el || (target instanceof Element && target.closest('.ddd-world') != null);
+    // Space-pan owns the key only for the viewport (canvas + its toolbars) or when nothing has focus.
+    // Modals and portaled menus live outside it, so their buttons, radios and selects keep native
+    // Space activation for keyboard users.
+    const isSpacePanTarget = (t: HTMLElement | null): boolean =>
+      t == null || t === document.body || t === document.documentElement || el.contains(t);
 
     const onWheel = (e: WheelEvent) => {
       if (!isCanvasTarget(e.target)) return;
@@ -382,13 +391,14 @@ export function App(_props: AppProps) {
         store.getState().setSelectedEdge(null);
         return;
       }
-      // Skip when typing inside an input/textarea/contenteditable (e.g. color popup).
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (isTextField(t)) return;
       // Hold Space → temporary pan (a navigation gesture, so allowed even in read-only overlays).
-      if (e.key === ' ' && !e.repeat) {
+      // Every keydown is cancelled, auto-repeats included: an uncancelled repeat arms the focused
+      // toolbar button and its keyup then clicks it (an extra undo / zoom on release).
+      if (e.key === ' ' && isSpacePanTarget(t)) {
         e.preventDefault();
-        store.getState().setSpacePan(true);
+        if (!e.repeat) store.getState().setSpacePan(true);
         return;
       }
       if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no undo/redo (read-only)
@@ -409,7 +419,9 @@ export function App(_props: AppProps) {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === ' ') store.getState().setSpacePan(false);
+      if (e.key !== ' ') return;
+      if (store.getState().spacePan && !isTextField(e.target as HTMLElement | null)) e.preventDefault();
+      store.getState().setSpacePan(false);
     };
     // Releasing focus while Space is held (alt-tab) would otherwise leave pan stuck on.
     const onBlur = () => store.getState().setSpacePan(false);
@@ -418,7 +430,7 @@ export function App(_props: AppProps) {
     // nothing. Focus the viewport when the pointer enters it — unless a field/dialog owns focus.
     const onPointerEnter = () => {
       const a = document.activeElement as HTMLElement | null;
-      if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+      if (isTextField(a)) return;
       if (a !== el) el.focus({ preventScroll: true });
     };
 

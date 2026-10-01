@@ -117,6 +117,13 @@ Tres formas de paneo, todas vía `panBy` (`render/viewport.ts`):
 - **Mantener `Space`** — override temporal independiente del toggle. Estado:
   `spacePan` (keydown `' '` → `setSpacePan(true)`; keyup / `blur` → `false`). Como es
   navegación (no edición) funciona incluso en overlays read-only (merge/diff).
+  - Sólo reclama la tecla si el foco está en el viewport (canvas + sus toolbars) o en
+    ningún sitio (`body`), y nunca en un campo de texto. Modales (`<dialog>`) y menús
+    portaleados viven fuera del viewport, así que sus botones/radios/selects conservan
+    la activación nativa con Space.
+  - Cuando la reclama, cancela **todos** los keydown (incluidos los auto-repeat) y el
+    keyup final: un repeat sin cancelar arma el botón de toolbar enfocado y el keyup lo
+    clickea (un undo / zoom extra al soltar).
 
 `panActive = panMode || spacePan`. Cuando está activo es una **herramienta mano
 pura** (decisión de UX): arrastrar en cualquier parte panea, los clicks **no**
