@@ -122,8 +122,17 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
   orden de la tabla base. Las filas usan los tokens `--ddd-diff-add/del-*` → `--vscode-diffEditor-*`.
   Las tablas cambiadas llevan además un borde (`is-diff-*`). Las **eliminadas** (sin nodo vivo)
   se dibujan como ghosts (`DiffGhosts`) en su posición base, con sus columnas en rojo `−`.
+  Si el sidecar de HEAD no tiene posición (tabla nunca arrastrada), `enterDiff` usa la última
+  posición del webview (`positions` no se poda al cambiar el schema); si tampoco existe, sintetiza
+  una junto a sus vecinas por refs eliminadas, o apilada a la derecha del diagrama. Una tabla
+  eliminada **nunca** se descarta: sigue siendo objetivo de prev/next y ancla de sus refs eliminadas.
 - **Navegación:** la barra (`GitBanner`) trae botones prev/next + contador que enfocan la
-  cámara en cada cambio (`fitToBbox`, store `diffCursor`).
+  cámara en cada cambio (`fitToBbox`, store `diffCursor`). Al abrir el diff la cámara **no**
+  se mueve: `diffCursor = -1` y el contador muestra `– / N`; el primer *next* enfoca el
+  cambio 1 y el primer *prev* el último (`diffNavIndex`). Los objetivos (`buildDiffTargets`) y
+  los extremos de las refs eliminadas pasan por los filtros de vista (`liveViewBox`): una tabla
+  **oculta** no es objetivo y su línea no se dibuja; una tabla dentro de un grupo **colapsado**
+  apunta al nodo del grupo (un objetivo por grupo), nunca a su posición cruda.
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
   layer); **cambiadas** (`'changed'`: mismo id pero otra cardinalidad, dirección o
   emparejamiento de columnas compuestas; se comparan en orientación canónica, así `a > b` y

@@ -5,6 +5,7 @@ import { defaultSettings, isEdgeSide } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
 import { isEdgeKey } from '../render/edgeKey';
+import { densityMetrics, type DensityMetrics } from '../layout/density';
 
 export interface TooltipState {
   title: string;
@@ -111,7 +112,7 @@ export interface AppState {
   /** When true (default), tables NOT in the active diff / merge are dimmed + blurred to focus the
    *  changes/conflicts. Shared by the diff overlay and the merge resolver (spec 14/16). */
   focusDimming: boolean;
-  /** Index into the change list for the banner's prev/next camera navigation. */
+  /** Index into the change list for the banner's prev/next camera navigation; -1 = none focused yet. */
   diffCursor: number;
   /** Table currently hovered on the canvas — reveals its (otherwise faded) connected edges. */
   hoveredTable: QualifiedName | null;
@@ -244,7 +245,7 @@ const initial: AppState = {
   diffRemovedRefs: null,
   diffBaseByTable: null,
   focusDimming: true,
-  diffCursor: 0,
+  diffCursor: -1,
   hoveredTable: null,
 };
 
@@ -254,7 +255,7 @@ export function isCanvasReadOnly(s: AppState): boolean {
   return s.mergeConflicts !== null || s.gitView !== null;
 }
 
-export const store = createStore<AppState & AppActions>((set, _get) => ({
+export const store = createStore<AppState & AppActions>((set, get) => ({
   ...initial,
   setSchema(schema, parseError) {
     set((s) => {
@@ -511,7 +512,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   beginMerge(conflicts) {
     // Enter blocking conflict mode; drop any stale selection so nothing is editable behind the gate.
     // A host merge always wins over a git overlay, so clear gitView too.
-    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: 0 });
+    set({ mergeConflicts: conflicts, mergeDecisions: {}, mergeApplying: false, mergeView: 'all', mergeCursor: 0, mergeHover: null, selection: new Set(), selectedEdgeId: null, gitView: null, diffByTable: null, columnDiffByTable: null, diffBaseByTable: null, diffGhosts: null, refDiff: null, diffRemovedRefs: null, diffCursor: -1 });
   },
   setMergeDecision(id, side) {
     set((s) => ({ mergeDecisions: { ...s.mergeDecisions, [id]: side } }));
@@ -576,12 +577,10 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
     const diffByTable = new Map<QualifiedName, TableDiffStatus>();
     const columnDiffByTable = new Map<QualifiedName, Map<string, ColumnDiffEntry>>();
     const diffBaseByTable = new Map<QualifiedName, Table>();
-    const ghosts: DiffGhost[] = [];
+    const s = get();
+    const ghosts = placeDiffGhosts(diff, s.positions, densityMetrics(s.settings.ui.density));
     for (const t of diff.tables) {
-      if (t.status === 'removed') {
-        if (t.base && t.pos) ghosts.push({ table: t.base, pos: t.pos });
-        continue;
-      }
+      if (t.status === 'removed') continue;
       diffByTable.set(t.table, t.status);
       if (t.base) diffBaseByTable.set(t.table, t.base); // Previous version for the hover card
       if (t.columns.length > 0) {
@@ -604,7 +603,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       diffGhosts: ghosts,
       refDiff,
       diffRemovedRefs: removedRefs,
-      diffCursor: 0,
+      diffCursor: -1,
       selection: new Set(),
       selectedEdgeId: null,
     });
@@ -618,7 +617,7 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
       diffGhosts: null,
       refDiff: null,
       diffRemovedRefs: null,
-      diffCursor: 0,
+      diffCursor: -1,
     });
   },
   setFocusDimming(on) {
@@ -776,4 +775,62 @@ export function toTableLayoutRecord(
     out[name] = entry;
   }
   return out;
+}
+
+/**
+ * Ghost placement for removed tables. HEAD's sidecar has no entry for a table nobody ever dragged,
+ * so the base position falls back to where this webview last drew it (`positions` is never pruned
+ * on schema change); failing that, the ghost is synthesized next to its removed-ref neighbours or
+ * stacked beside the diagram. A removed table is never dropped: it must stay a banner target and a
+ * line anchor for its removed refs (spec 16).
+ */
+function placeDiffGhosts(
+  diff: SchemaDiff,
+  positions: Map<QualifiedName, { x: number; y: number }>,
+  m: DensityMetrics,
+): DiffGhost[] {
+  const gap = m.headerHeight * 2;
+  const ghosts: DiffGhost[] = [];
+  const placed = new Map<QualifiedName, { x: number; y: number }>();
+  const unplaced: Table[] = [];
+  for (const t of diff.tables) {
+    if (t.status !== 'removed' || !t.base) continue;
+    const pos = t.pos ?? positions.get(t.table);
+    if (pos) {
+      ghosts.push({ table: t.base, pos });
+      placed.set(t.table, pos);
+    } else unplaced.push(t.base);
+  }
+  if (unplaced.length === 0) return ghosts;
+
+  let right = -Infinity;
+  let top = Infinity;
+  for (const p of [...positions.values(), ...placed.values()]) {
+    right = Math.max(right, p.x + m.tableWidth);
+    top = Math.min(top, p.y);
+  }
+  const stackX = Number.isFinite(right) ? Math.round(right + gap) : 0;
+  let stackY = Number.isFinite(top) ? Math.round(top) : 0;
+
+  for (const table of unplaced) {
+    const neighbours: Array<{ x: number; y: number }> = [];
+    for (const r of diff.refs) {
+      if (r.status !== 'removed') continue;
+      const other = r.source === table.name ? r.target : r.target === table.name ? r.source : null;
+      const p = other != null && other !== table.name ? (positions.get(other) ?? placed.get(other)) : undefined;
+      if (p) neighbours.push(p);
+    }
+    let pos: { x: number; y: number };
+    if (neighbours.length > 0) {
+      const x = Math.max(...neighbours.map((p) => p.x)) + m.tableWidth + gap;
+      const y = neighbours.reduce((acc, p) => acc + p.y, 0) / neighbours.length;
+      pos = { x: Math.round(x), y: Math.round(y) };
+    } else {
+      pos = { x: stackX, y: stackY };
+      stackY += m.headerHeight + table.columns.length * m.rowHeight + m.colsPad + gap;
+    }
+    ghosts.push({ table, pos });
+    placed.set(table.name, pos);
+  }
+  return ghosts;
 }

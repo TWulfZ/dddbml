@@ -26,7 +26,7 @@ import { ExportImageModal } from './render/exportImageModal';
 import { SettingsPanel } from './render/settingsPanel';
 import { GitPanel } from './render/gitPanel';
 import { EdgeOrderProgress } from './render/edgeOrderProgress';
-import { GitBanner, type DiffTarget } from './render/gitBanner';
+import { GitBanner, buildDiffTargets } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import type { QualifiedName, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
@@ -526,27 +526,12 @@ export function App(_props: AppProps) {
     return m;
   }, [refDiff, derived.refKeyByStableId]);
 
-  // Diff change targets (changed live tables + removed ghosts) — feed the hover hit-layer and the
-  // banner's prev/next camera navigation. Sorted for a stable step order.
-  const diffTargets: DiffTarget[] = [];
-  if (diffActive) {
-    if (diffByTable) {
-      for (const [name] of diffByTable) {
-        const p = positions.get(name);
-        const t = tablesByName.get(name);
-        if (!p || !t) continue;
-        const s = estimateSize(t.columns.length);
-        diffTargets.push({ name, x: p.x, y: p.y, w: s.width, h: s.height });
-      }
-    }
-    if (diffGhosts) {
-      for (const g of diffGhosts) {
-        const s = estimateSize(g.table.columns.length);
-        diffTargets.push({ name: g.table.name, x: g.pos.x, y: g.pos.y, w: s.width, h: s.height });
-      }
-    }
-    diffTargets.sort((a, b) => a.name.localeCompare(b.name));
-  }
+  // Diff change targets (changed live tables + removed ghosts) for the banner's prev/next camera
+  // navigation, resolved through the view filters so a step never lands on a hidden/collapsed table.
+  const diffTargets = useMemo(
+    () => (diffActive ? buildDiffTargets(diffByTable, diffGhosts, positions, tablesByName, derived) : []),
+    [diffActive, diffByTable, diffGhosts, positions, tablesByName, derived],
+  );
 
   const renderedTables = schema.tables.filter(
     (t) => !derived.hiddenTables.has(t.name) && !derived.collapsedTables.has(t.name),
@@ -632,13 +617,14 @@ export function App(_props: AppProps) {
                 />
               );
             })}
-            {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} /> : null}
+            {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} viewportRect={viewportRect} lod={lod} /> : null}
             {diffActive ? (
               <DiffGhosts
                 ghosts={diffGhosts ?? []}
                 removedRefs={diffRemovedRefs ?? []}
                 positions={positions}
                 tablesByName={tablesByName}
+                filters={derived}
               />
             ) : null}
           </div>
