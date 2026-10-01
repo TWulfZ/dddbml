@@ -122,7 +122,9 @@ segmentos completos.
 ### Preguntas abiertas restantes
 
 - **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
-  forma en `WaypointCommand`. Un reset emite ambos comandos.
+  forma en `WaypointCommand`. "Reset line" emite **un solo** `ArrangeCommand` de sólo
+  aristas (`buildEdgesResetCommand`, snapshot completo del `EdgeLayout`): un Ctrl+Z
+  restaura waypoints, sides y `dx/dy` legacy. Sin forma manual → no-op (no limpia redo).
 - **Ruteo del flip "contra-natura"** (puerto forzado al lado opuesto del target)
   no dibuja un lazo de salida hacia afuera; usa el `midX` simple y puede cruzar
   la tabla. Pulido a futuro (relacionado con obstacle avoidance, v2).

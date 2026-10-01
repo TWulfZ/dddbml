@@ -1,8 +1,9 @@
 import { store, isCanvasReadOnly } from '../state/store';
-import { buildEdgeStyleCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle } from '../state/history';
+import { buildEdgeStyleCommand, buildEdgesResetCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle } from '../state/history';
 import { schedulePersist } from '../persistence';
 import { slideSegment, notchAtQuarter, deleteNotch, type EdgeRoute } from '../render/edgeRouter';
 import { gridSnapper } from '../layout/grid';
+import { hasManualShape } from '../layout/smartLayout/edgeReset';
 import type { Waypoint } from '../../shared/types';
 
 /**
@@ -220,17 +221,20 @@ export function deleteEdgeNotch(route: EdgeRoute, segIndex: number): void {
   schedulePersist();
 }
 
-/** Reset an edge's shape (waypoints + side overrides) and push history. Keeps color. */
+/**
+ * Reset an edge's shape (waypoints, side overrides, legacy dx/dy) as ONE undo entry. Keeps color.
+ * Uses the composite edges-reset command because it snapshots the full EdgeLayout, which is the
+ * only command that can restore a legacy dx/dy offset.
+ */
 export function resetEdgeWaypoints(refId: string): void {
-  if (isCanvasReadOnly(store.getState())) return;
-  const fromWps = snapshotWaypoints(refId);
-  const fromStyle = readEdgeStyle(refId);
-  store.getState().resetEdgeShape(refId);
-  const wpCmd = buildWaypointCommand(refId, fromWps, [], 'clear');
-  if (wpCmd) store.getState().pushWaypointCommand(wpCmd);
-  // Reset also drops side overrides — capture that as a style command so undo restores them.
-  const styleCmd = buildEdgeStyleCommand(refId, fromStyle, readEdgeStyle(refId), 'Reset edge port sides');
-  if (styleCmd) store.getState().pushEdgeStyleCommand(styleCmd);
+  const state = store.getState();
+  if (isCanvasReadOnly(state)) return;
+  const before = state.edgeLayouts.get(refId);
+  if (!before || !hasManualShape(before)) return; // nothing to reset: don't clear the redo stack
+  state.resetEdgeShape(refId);
+  const after = store.getState().edgeLayouts.get(refId) ?? null;
+  const cmd = buildEdgesResetCommand(new Map([[refId, before]]), [[refId, after]], 'Reset line');
+  if (cmd) store.getState().pushArrangeCommand(cmd);
   schedulePersist();
 }
 

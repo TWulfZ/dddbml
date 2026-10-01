@@ -33,4 +33,27 @@ describe('edge edits', () => {
     expect(store.getState().edgeLayouts.get('k')).toEqual(shaped);
     expect(store.getState().past).toHaveLength(0);
   });
+
+  it('a reset is one undo entry that restores waypoints and sides', () => {
+    store.setState({ edgeLayouts: new Map([['k', shaped]]) });
+    resetEdgeWaypoints('k');
+    expect(store.getState().edgeLayouts.get('k')).toEqual({ color: '#ff0000' });
+    expect(store.getState().past).toHaveLength(1);
+    store.getState().undo();
+    expect(store.getState().edgeLayouts.get('k')).toEqual(shaped);
+  });
+
+  it('a reset of a legacy dx/dy offset can be undone', () => {
+    store.setState({ edgeLayouts: new Map([['k', { dx: 40 }]]) });
+    resetEdgeWaypoints('k');
+    expect(store.getState().edgeLayouts.has('k')).toBe(false);
+    store.getState().undo();
+    expect(store.getState().edgeLayouts.get('k')).toEqual({ dx: 40 });
+  });
+
+  it('a reset of an edge with no shape adds no undo entry', () => {
+    store.setState({ edgeLayouts: new Map([['k', { color: '#ff0000' }]]) });
+    resetEdgeWaypoints('k');
+    expect(store.getState().past).toHaveLength(0);
+  });
 });

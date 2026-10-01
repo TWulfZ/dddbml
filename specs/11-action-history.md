@@ -89,7 +89,7 @@ Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor
 | `pointerup` de waypoint drag con cambio neto en `waypoints[]` | Push `WaypointCommand` con `op = 'move'` (o `'remove'` si la operación colapsó a un vecino). |
 | `pointerup` de click-en-segmento (agregar) | Push `WaypointCommand` con `op = 'add'`. |
 | `dblclick` sobre círculo de waypoint | Remueve waypoint, push `WaypointCommand` con `op = 'remove'`. |
-| Context menu "Reset edge waypoints" | Limpia el array, push `WaypointCommand` con `op = 'clear'` y `to: []`. |
+| Toolbar "Reset line" | Limpia la forma (waypoints + sides + `dx/dy` legacy, conserva color) y push **un** `ArrangeCommand` de sólo aristas (`buildEdgesResetCommand`, label `Reset line`) con el `EdgeLayout` completo antes/después. Sin forma manual → no-op. |
 | Llamada `undo()` con `past` no vacío | Pop tail. Switch por `cmd.kind`: `'move'` → restaura `positions`; `'waypoint'` → restaura `edgeLayouts[refId].waypoints`. Push cmd a `future`. Llamador dispara `schedulePersist()`. |
 | Llamada `redo()` con `future` no vacío | Simétrico. |
 | `undo()` / `redo()` con stack vacío | No-op silencioso. |
