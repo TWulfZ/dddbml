@@ -12,17 +12,117 @@ function parse(src: string): Schema {
   return res.schema;
 }
 
+const sizeOfCache = new WeakMap<Schema, (n: QualifiedName) => NodeSize>();
 function sizeOfFor(schema: Schema): (n: QualifiedName) => NodeSize {
+  const cached = sizeOfCache.get(schema);
+  if (cached) return cached;
   const cols = new Map<string, number>();
   for (const t of schema.tables) cols.set(t.name, t.columns.length);
-  return (n) => ({ width: 240, height: 28 + (cols.get(n) ?? 0) * 20 + 8 });
+  const fn = (n: QualifiedName): NodeSize => ({ width: 240, height: 28 + (cols.get(n) ?? 0) * 20 + 8 });
+  sizeOfCache.set(schema, fn);
+  return fn;
 }
 
-function layoutOf(schema: Schema): Map<QualifiedName, { x: number; y: number }> {
+function layoutOf(schema: Schema, spacing?: number): Map<QualifiedName, { x: number; y: number }> {
   return smartLayout({
-    tables: schema.tables, refs: schema.refs, groups: schema.groups, sizeOf: sizeOfFor(schema), mode: 'all',
+    tables: schema.tables, refs: schema.refs, groups: schema.groups, sizeOf: sizeOfFor(schema), mode: 'all', spacing,
   });
 }
+
+function fixture(name: string): Schema {
+  return parse(readFileSync(resolve(process.cwd(), 'test/fixtures', name), 'utf8'));
+}
+
+interface Rect { x: number; y: number; w: number; h: number }
+
+const intersects = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+function tableRect(schema: Schema, pos: Map<QualifiedName, { x: number; y: number }>, n: QualifiedName): Rect {
+  const p = pos.get(n)!;
+  const s = sizeOfFor(schema)(n);
+  return { x: p.x, y: p.y, w: s.width, h: s.height };
+}
+
+function extent(schema: Schema, pos: Map<QualifiedName, { x: number; y: number }>): { w: number; h: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of pos.keys()) {
+    const r = tableRect(schema, pos, n);
+    minX = Math.min(minX, r.x);
+    minY = Math.min(minY, r.y);
+    maxX = Math.max(maxX, r.x + r.w);
+    maxY = Math.max(maxY, r.y + r.h);
+  }
+  return { w: maxX - minX, h: maxY - minY };
+}
+
+/** Group container rects exactly as app.tsx derives them (24px padding, 20px header). */
+function containers(schema: Schema, pos: Map<QualifiedName, { x: number; y: number }>): Array<Rect & { name: string }> {
+  const out: Array<Rect & { name: string }> = [];
+  for (const g of schema.groups) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const t of g.tables) {
+      if (!pos.has(t)) continue;
+      const r = tableRect(schema, pos, t);
+      minX = Math.min(minX, r.x);
+      minY = Math.min(minY, r.y);
+      maxX = Math.max(maxX, r.x + r.w);
+      maxY = Math.max(maxY, r.y + r.h);
+    }
+    if (!Number.isFinite(minX)) continue;
+    out.push({ name: g.name, x: minX - 24, y: minY - 44, w: maxX - minX + 48, h: maxY - minY + 68 });
+  }
+  return out;
+}
+
+/** Container overlaps plus tables of one group intruding into another group's container. */
+function groupViolations(schema: Schema, pos: Map<QualifiedName, { x: number; y: number }>): string[] {
+  const boxes = containers(schema, pos);
+  const out: string[] = [];
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      if (intersects(boxes[i]!, boxes[j]!)) out.push(`${boxes[i]!.name} overlaps ${boxes[j]!.name}`);
+    }
+  }
+  for (const t of schema.tables) {
+    if (!t.groupName) continue;
+    const r = tableRect(schema, pos, t.name);
+    for (const b of boxes) {
+      if (b.name !== t.groupName && intersects(r, b)) out.push(`${t.name} inside ${b.name}`);
+    }
+  }
+  return out;
+}
+
+describe('smartLayout — disconnected parts pack near-square (audit F17)', () => {
+  const aspectOk = ({ w, h }: { w: number; h: number }) => w / h >= 1 / 4 && w / h <= 4;
+
+  it('60 tables with no refs', () => {
+    const src = Array.from({ length: 60 }, (_, i) => `Table t${i} { id int [pk]\n  name text }`).join('\n');
+    const schema = parse(src);
+    expect(aspectOk(extent(schema, layoutOf(schema)))).toBe(true);
+  });
+
+  it('small.dbml', () => {
+    const schema = fixture('small.dbml');
+    expect(aspectOk(extent(schema, layoutOf(schema)))).toBe(true);
+  });
+
+  it('huge.dbml, with group containers still disjoint', () => {
+    const schema = fixture('huge.dbml');
+    const pos = layoutOf(schema);
+    expect(aspectOk(extent(schema, pos))).toBe(true);
+    expect(groupViolations(schema, pos)).toEqual([]);
+  });
+});
+
+describe('smartLayout — group containers stay disjoint (audit F18)', () => {
+  for (const spacing of [0.4, 1, 2.5]) {
+    it(`isga.generated.dbml at spacing ${spacing}`, () => {
+      const schema = fixture('isga.generated.dbml');
+      expect(groupViolations(schema, layoutOf(schema, spacing))).toEqual([]);
+    });
+  }
+});
 
 describe('smartLayout — cluster ids with spaces (audit F54)', () => {
   const dbml = (a: string, b: string) => `

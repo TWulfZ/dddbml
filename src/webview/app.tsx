@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, useAppStore, isCanvasReadOnly } from './state/store';
 import { autoLayout, estimateSize } from './layout/autoLayout';
+import { GROUP_CONTAINER_HEADER, GROUP_CONTAINER_PADDING } from './layout/density';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
 import { MergeGhosts } from './render/mergeGhosts';
@@ -34,8 +35,6 @@ interface AppProps {
 
 const GROUP_NODE_W = 220;
 const GROUP_NODE_H = 80;
-const GROUP_CONTAINER_PADDING = 24;
-const GROUP_CONTAINER_HEADER = 20;
 
 const GROUP_PREFIX = '__group__:';
 const groupId = (name: string) => GROUP_PREFIX + name;

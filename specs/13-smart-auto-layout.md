@@ -111,17 +111,30 @@ inline en `layout.ts` (no hay módulo wrapper de motor — dagre no se va a volv
 1. **Nivel interno (`layoutClusterLocal`)** — un grafo dagre por clúster: sus tablas como nodos, los
    refs intra-clúster como aristas (`child→parent`), `rankdir` por clúster (`pickClusterOrientation`:
    clústeres ≤3 → LR; cadenas FK profundas → TB; si no, hereda el global). Se normaliza a un bbox de
-   origen 0 y se devuelve `{positions, bbox}`.
-2. **Nivel externo (`layoutMeta`)** — un grafo dagre sobre los **clústeres como meta-nodos** (tamaño =
-   bbox del clúster + `clusterMargin`·2); los refs cross-clúster se agregan como aristas ponderadas
-   por conteo. dagre da el origen de cada clúster; se **aplana** sumando el origen del clúster a las
-   coords locales de sus tablas.
+   origen 0 y se devuelve `{positions, bbox}`. Si los miembros forman **varias partes conexas** (sin
+   ref entre ellas — islas del clúster `orphans`, sub-grafos independientes de un grupo), dagre no
+   las ordenaría por rango y las alinearía en una tira interminable: cada parte se dispone por separado y
+   las partes se **empaquetan en estantes** (`shelfPack`, más altas primero, fila objetivo
+   `√(área·1.6)`, gap `intraNode`). (auditoría F17)
+2. **Nivel externo (`placeClusters` → `layoutMeta`)** — un grafo dagre sobre los **clústeres como
+   meta-nodos** (tamaño = bbox del clúster + `clusterMargin`·2); los refs cross-clúster se agregan
+   como aristas ponderadas por conteo (peso acumulado sobre la arista `(v,w)` misma: los ids de
+   clúster contienen nombres DBML arbitrarios, nunca se concatenan en una clave). Se corre **por
+   cada conjunto conexo de clústeres** (+ compactación); los conjuntos sin refs entre sí se
+   empaquetan con el mismo `shelfPack` (gap `clusterGap`). Se **aplana** sumando el origen del
+   clúster a las coords locales de sus tablas.
 
 Los clústeres **aggregate** (hub+satélites) saltan el dagre interno y usan `radialPlace` (hub al
 centro, satélites en anillo ordenado por `inDeg` asc, empate por nombre) → su bbox entra al nivel
-externo como cualquier otro meta-nodo. Tras aplanar: `columnAlignPass` (alineación FK determinista) +
-`resolveCollisions` (red AABB). Sólo se consumen posiciones `{x,y}` de tablas; las aristas las rutea
-`edgeRouter.ts` (spec 05).
+externo como cualquier otro meta-nodo. `columnAlignPass` (sólo refs intra-clúster) +
+`resolveCollisions` corren **por clúster en coords locales, antes** del nivel externo, y el bbox se
+recalcula: así el nivel externo coloca la geometría final y ningún nudge posterior saca una tabla de
+su caja hacia el contenedor de otro grupo. Los clústeres `group` reservan además el **chrome del
+contenedor** que dibuja el render (`GROUP_CONTAINER_PADDING` por lado + `GROUP_CONTAINER_HEADER`
+arriba, constantes compartidas en `layout/density.ts`). La compactación prueba el solape del eje
+cruzado con cajas infladas por el gap (vecinos diagonales). Tras aplanar sólo queda
+`resolveCollisions` global como red de seguridad. (auditoría F18) Sólo se consumen posiciones
+`{x,y}` de tablas; las aristas las rutea `edgeRouter.ts` (spec 05).
 
 > **Densidad configurable (`spacing`).** dagre dos-niveles queda ~10% más suelto que ELK compound (un
 > factor constante en las separaciones, no un defecto estructural). En vez de un post-pass de
@@ -131,9 +144,11 @@ externo como cualquier otro meta-nodo. Tras aplanar: `columnAlignPass` (alineaci
 > lo controla vía `dddbml.ui.layoutSpacing` (spec 10). Bajarlo recupera (y supera) la compacidad de
 > ELK; subirlo da diagramas más aireados. Determinista (seps redondeadas a enteros).
 >
-> *Trade-off documentado:* un re-pack 2D de las cajas de clúster sería más compacto aún, pero
-> sacrifica la lectura por niveles (clústeres ordenados por profundidad FK) que hace legible el
-> diagrama. Se prioriza legibilidad + control del usuario sobre densidad máxima automática.
+> *Trade-off documentado:* un re-pack 2D de las cajas de clúster **conectadas** sería más compacto
+> aún, pero sacrifica la lectura por niveles (clústeres ordenados por profundidad FK) que hace
+> legible el diagrama. Se prioriza legibilidad + control del usuario sobre densidad máxima
+> automática. El empaquetado en estantes sólo se aplica **entre partes desconectadas**, que no
+> tienen orden por niveles que preservar.
 
 ### Orquestación (`layout.ts`)
 
@@ -265,6 +280,10 @@ host.
   1000 refs, 20 grupos): `analyze` (classify+cluster) **24ms**, `smartLayout` (ELK + column-align +
   collision guard) **~2.57s** → dentro del presupuesto, sin Web Worker. Si esquemas más densos
   exceden 3s, mover ELK a un **Web Worker** (`elkjs` worker build) y/o bajar exhaustividad.
+  *Actualización 2026-10 (dagre dos niveles + empaquetado de partes desconectadas, F17/F18):*
+  `smartLayout` sobre `huge.dbml` **~0.4s**, extensión ~20.000 × 17.400 px (antes una tira de
+  544 × 912.228 px). Test de regresión: relación de aspecto dentro de `[1/4, 4]` y contenedores de
+  grupo disjuntos (`layout.regressions.test.ts`).
 - El reset de waypoints es O(|aristas|) — despreciable. Payload postMessage < 10MB; escritura de
   sidecar < 50ms (ambos cubiertos por la persistencia existente).
 
