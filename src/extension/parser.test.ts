@@ -31,3 +31,18 @@ describe('parseDbml — TableGroup membership', () => {
     expect(groupOf).toEqual({ 'core.users': 'Mixed', 'public.accounts': 'Mixed' });
   });
 });
+
+describe('parseDbml — index-level primary keys', () => {
+  it('marks every member of a composite pk index as pk', () => {
+    const s = parse(`
+      Table enrollments {
+        student_id int
+        course_id int
+        grade int
+        indexes { (student_id, course_id) [pk] }
+      }
+    `);
+    const pkCols = s.tables[0]!.columns.filter((c) => c.pk).map((c) => c.name);
+    expect(pkCols).toEqual(['student_id', 'course_id']);
+  });
+});

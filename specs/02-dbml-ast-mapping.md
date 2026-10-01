@@ -46,7 +46,7 @@ interface Schema {
 |---|---|---|
 | `name` | `name` | directo |
 | `type` | `type` | si es objeto, usa `type_name` o `name`; fallback `'unknown'` |
-| `pk` | `pk` | `true \| undefined` (omitir si falso para JSON compacto) |
+| `pk` | `pk` | `true \| undefined` (omitir si falso para JSON compacto). También `true` para cada columna miembro de un índice `indexes { (a, b) [pk] }` (PK compuesta); los miembros expresión se ignoran |
 | `not_null` | `notNull` | idem |
 | `unique` | `unique` | idem |
 | `increment` | `increment` | idem |
@@ -81,7 +81,7 @@ También cada `Table.groupName` apunta al group que la contiene (para lookup rá
 ## Fallos conocidos / ignorados en v1
 
 - **Enums**: parseados pero no renderizados. v1.1 candidate.
-- **Indexes**: parseados pero no renderizados (sólo labels en tabla podrían mostrarlos). v1.1.
+- **Indexes**: parseados pero no renderizados (sólo labels en tabla podrían mostrarlos). v1.1. Excepción: los índices `[pk]` marcan `pk` en sus columnas (ver tabla de columnas).
 - **StickyNotes**: ignorados.
 - **Records (seed data)**: ignorados.
 - **TablePartials** (DBML v3): ignorados en v1 (los partials se inyectan al parsear, así que sus campos aparecen igual en la tabla final; no hay AST dedicado).

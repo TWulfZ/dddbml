@@ -45,6 +45,9 @@ export function emitEntity(
     columnBlocks.push(block);
     if (col.pk) seenPk.add(col.name);
   }
+  if (seenPk.size === 0) {
+    warnings.push(`${table.name}: no primary key — TypeORM requires at least one primary column on ${className}.`);
+  }
 
   const relationBlocks: string[] = [];
   for (const rel of relations) {

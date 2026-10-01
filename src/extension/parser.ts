@@ -65,6 +65,7 @@ interface ExportedTable {
   alias: string | null;
   note: string;
   headerColor: string | null;
+  indexes?: Array<{ pk?: boolean; columns: Array<{ type: string; value: string }> }>;
 }
 
 interface ExportedRef {
@@ -144,7 +145,7 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
         name: qn,
         schemaName,
         tableName: cleanName,
-        columns: (t.fields ?? []).map(mapField),
+        columns: markIndexPk((t.fields ?? []).map(mapField), t.indexes),
         note: t.note || null,
         groupName: tableToGroup.get(qn) ?? null,
       });
@@ -176,6 +177,19 @@ function mapField(f: ExportedField): Column {
   const kind = defaultKindOf(f.dbdefault);
   if (kind) col.defaultKind = kind;
   return col;
+}
+
+/** `indexes { (a, b) [pk] }` is how DBML spells a composite primary key; @dbml/core leaves the fields' `pk` false. */
+function markIndexPk(columns: Column[], indexes: ExportedTable['indexes']): Column[] {
+  for (const idx of indexes ?? []) {
+    if (idx.pk !== true) continue;
+    for (const member of idx.columns) {
+      if (member.type !== 'column') continue;
+      const col = columns.find((c) => c.name === unquote(member.value));
+      if (col) col.pk = true;
+    }
+  }
+  return columns;
 }
 
 function defaultKindOf(dbdefault: unknown): ColumnDefaultKind | undefined {

@@ -60,3 +60,23 @@ describe('generateTypeOrm — primary keys keep their DEFAULT', () => {
     expect(propertyLine(content, 'code')).toBe('@PrimaryColumn({ type: "varchar", default: "x" })');
   });
 });
+
+describe('generateTypeOrm — entities without a primary column', () => {
+  it('emits a composite pk index as one @PrimaryColumn per member', () => {
+    const { content, warnings } = exportDbml(`
+      Table enrollments {
+        student_id int
+        course_id int
+        indexes { (student_id, course_id) [pk] }
+      }
+    `);
+    expect(propertyLine(content, 'student_id')).toBe('@PrimaryColumn({ type: "int" })');
+    expect(propertyLine(content, 'course_id')).toBe('@PrimaryColumn({ type: "int" })');
+    expect(warnings ?? []).toEqual([]);
+  });
+
+  it('warns when a table has no primary key, which TypeORM rejects at startup', () => {
+    const { warnings } = exportDbml(`Table logs { msg text }`);
+    expect(warnings).toEqual([expect.stringContaining('public.logs')]);
+  });
+});
