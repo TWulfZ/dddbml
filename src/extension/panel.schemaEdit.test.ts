@@ -67,6 +67,14 @@ async function addRef(h: Harness): Promise<string> {
   return applied(h)[0]!.id;
 }
 
+/**
+ * The sidecar watcher found an unreadable conflict while the worker computed (a reload that started
+ * before the intent). Set directly: every real path to it queues behind the same worker.
+ */
+function lockWhileComputing(h: Harness): void {
+  duringSchemaEdit = () => { (h.panel as unknown as { mergeUnreadable: boolean }).mergeUnreadable = true; };
+}
+
 describe('schema:addTable', () => {
   it('posts layout:place before writing, saves, and leaves the cursor on a new line inside the block', async () => {
     const h = await openPanel({ dbml: DBML });
@@ -132,6 +140,28 @@ describe('the write gate', () => {
     await vi.waitFor(() => expect(warnings().some((w) => w.includes('New table is unavailable'))).toBe(true));
     expect(h.readDbml()).toBe(DBML);
     expect(h.web.posted.some((m) => m.type === 'layout:place')).toBe(false);
+  });
+
+  it('re-checks the gate once the worker computed a new table: no layout:place, no write', async () => {
+    const h = await openPanel({ dbml: DBML });
+    fake.nextInput = 'payments';
+    lockWhileComputing(h);
+    await h.web.receive({ type: 'schema:addTable', payload: { x: 0, y: 0 } });
+    await vi.waitFor(() => expect(warnings().some((w) => w.includes('New table is unavailable'))).toBe(true));
+    await settle(50);
+    expect(h.web.posted.some((m) => m.type === 'layout:place')).toBe(false);
+    expect(fake.events).not.toContain('applyEdit');
+    expect(h.readDbml()).toBe(DBML);
+  });
+
+  it('re-checks the gate once the worker computed an added field line', async () => {
+    const h = await openPanel({ dbml: DBML });
+    lockWhileComputing(h);
+    await h.web.receive({ type: 'schema:addField', payload: { table: 'public.b' } });
+    await vi.waitFor(() => expect(warnings().some((w) => w.includes('Add field is unavailable'))).toBe(true));
+    await settle(50);
+    expect(fake.events).not.toContain('applyEdit');
+    expect((await fake.document(h.dbml)).getText()).toBe(DBML);
   });
 
   it('refuses when the buffer does not parse, touching no file', async () => {

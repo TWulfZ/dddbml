@@ -70,7 +70,9 @@ o si el buffer actual no parsea (no hay rangos fiables).
 Implementación (host, `schemaEditor.ts`): las intenciones de un panel corren **de a una** (cola). Cada
 una lee `document.getText()` + `document.version`, pide la edición al worker (op `schemaEdit`, canal
 `edit:<uri>`) y aplica el `WorkspaceEdit` solo si la versión sigue igual; si cambió, recalcula una
-vez y si vuelve a cambiar avisa ("kept changing") sin tocar nada. El worker además **re-parsea el
+vez y si vuelve a cambiar avisa ("kept changing") sin tocar nada. El gate de solo lectura se vuelve
+a mirar tras **cada** cálculo del worker (segundos en 5000 tablas: un merge o una vista git pudo
+cerrarlo), antes de `layout:place` y de aplicar; si está cerrado, avisa y no toca nada. El worker además **re-parsea el
 resultado** antes de devolverlo: una edición que dejaría el archivo inválido (p. ej. una tabla que
 aún nombra un bloque `Records` o `Dep`, o una ref inline declarada en un `TablePartial`) se rechaza
 con el motivo, nunca se aplica.

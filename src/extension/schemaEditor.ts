@@ -94,6 +94,7 @@ export class SchemaEditor {
       for (let attempt = 0; attempt < 2; attempt++) {
         const c = await this.compute({ kind: 'addField', table }, action);
         if (!c?.result.cursorLine) return;
+        if (this.host.refuseWhileReadOnly(action)) return;
         if (c.doc.version !== c.version) continue;
         await this.insertCursorLine(c.doc, c.result.cursorLine);
         return;
@@ -190,6 +191,8 @@ export class SchemaEditor {
       const c = reuse ?? await this.compute(intent, action);
       reuse = null;
       if (!c) return null;
+      // A merge or a git peek may have locked the canvas while the worker computed (seconds on 5000 tables).
+      if (this.host.refuseWhileReadOnly(action)) return null;
       if (confirmed && confirmed.join('\n') !== c.result.cascade.join('\n')) {
         void vscode.window.showWarningMessage(`dddbml: ${c.result.label} was not applied — the .dbml changed while you confirmed; try again.`);
         return null;
@@ -252,11 +255,15 @@ export class SchemaEditor {
   private async transition(id: string, from: HistoryEntry['state'], to: HistoryEntry['state']): Promise<void> {
     const entry = this.history.get(id);
     const action = from === 'applied' ? 'Undo' : 'Redo';
-    if (!entry || entry.state !== from || this.host.refuseWhileReadOnly(action)) {
+    if (!entry || entry.state !== from) {
       this.discard(id);
       return;
     }
     const doc = await vscode.workspace.openTextDocument(this.host.uri);
+    if (this.host.refuseWhileReadOnly(action)) {
+      this.discard(id);
+      return;
+    }
     if (doc.version !== entry.version) {
       void vscode.window.showWarningMessage(`dddbml: the .dbml changed since "${entry.label}"; use ${action} in the editor.`);
       this.discard(id);
