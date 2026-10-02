@@ -4,7 +4,7 @@ import type { QualifiedName, Ref, RefDiffStatus } from '../../shared/types';
 import { columnCenterY, estimateSize, headerCenterY } from '../layout/autoLayout';
 import type { KeyedDepEdge } from './edgeKey';
 import { DepMarkerDef, DepOverlay, DepPaths } from './depEdges';
-import { depColor, routeDeps } from './depRouter';
+import { DepRouteCache, depColor } from './depRouter';
 import type { RowGeometry } from '../layout/tableRows';
 import { EdgeRouteCache, isDipRun, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
@@ -201,17 +201,22 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
     return routeCache.routeAll(refs, bboxOf, columnY, layoutOf);
   }, [refs, positions, rows, groupSizes, edgeLayouts]);
 
+  const [depRouteCache] = useState(() => new DepRouteCache());
+  const depRoutedRef = useRef<{ deps: KeyedDepEdge[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density } | null>(null);
   const depRoutes = useMemo(() => {
+    const prev = depRoutedRef.current;
+    depRoutedRef.current = { deps, positions, rows, groupSizes, edgeLayouts, density };
     const headerCenter = headerCenterY();
-    return routeDeps(
-      deps,
-      bboxOf,
-      (table, columns, b) => {
-        const y = columns[0] ? columnY(table, columns[0]) : undefined;
-        return b.y + (y ?? headerCenter);
-      },
-      (id) => edgeLayouts.get(id),
-    );
+    const portY = (table: QualifiedName, columns: readonly string[], b: Bbox): number => {
+      const y = columns[0] ? columnY(table, columns[0]) : undefined;
+      return b.y + (y ?? headerCenter);
+    };
+    const layoutOf = (id: string) => edgeLayouts.get(id);
+    if (prev && prev.deps === deps && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts && prev.density === density) {
+      const moved = smallPositionsDelta(prev.positions, positions);
+      if (moved) return depRouteCache.routeMoved(moved, bboxOf, portY, layoutOf);
+    }
+    return depRouteCache.routeAll(deps, bboxOf, portY, layoutOf);
   }, [deps, positions, rows, groupSizes, edgeLayouts, density]);
   const visibleDepRoutes = useMemo(
     () => (visibleRefIds ? depRoutes.filter((r) => visibleRefIds.has(r.id)) : depRoutes),

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { insertDepWaypoint, routeDep } from './depRouter';
+import type { EdgeLayout, QualifiedName } from '../../shared/types';
+import type { KeyedDepEdge } from './edgeKey';
+import { DepRouteCache, insertDepWaypoint, routeDep, routeDeps } from './depRouter';
 import type { Bbox } from './spatialIndex';
 
 const bbox = (x: number, y: number, w = 200, h = 100): Bbox => ({ x, y, w, h });
@@ -78,5 +80,33 @@ describe('insertDepWaypoint', () => {
   it('inserts at the handle index with integer coords for the sidecar', () => {
     const out = insertDepWaypoint([{ x: 1, y: 1 }, { x: 9, y: 9 }], 1, { x: 4.6, y: 5.2 });
     expect(out).toEqual([{ x: 1, y: 1 }, { x: 5, y: 5 }, { x: 9, y: 9 }]);
+  });
+});
+
+describe('DepRouteCache', () => {
+  const edge = (id: string, up: string, down: string): KeyedDepEdge => ({
+    id, upstream: { table: up, columns: [] }, downstream: { table: down, columns: ['c'] }, name: null,
+  });
+  const deps = [edge('dep:a', 'a', 'b'), edge('dep:b', 'b', 'c'), edge('dep:c', 'c', 'd'), edge('dep:x', 'a', 'gone')];
+  const positions = new Map<QualifiedName, { x: number; y: number }>([['a', { x: 0, y: 0 }], ['b', { x: 400, y: 200 }], ['c', { x: 900, y: -100 }], ['d', { x: 1300, y: 50 }]]);
+  const bboxOf = (n: QualifiedName): Bbox | undefined => {
+    const p = positions.get(n);
+    return p ? bbox(p.x, p.y) : undefined;
+  };
+  const portY = (_t: QualifiedName, cols: readonly string[], b: Bbox) => b.y + (cols.length > 0 ? 40 : 14);
+  const layouts = new Map<string, EdgeLayout>([['dep:b', { waypoints: [{ x: 700, y: 400 }] }]]);
+  const layoutOf = (id: string) => layouts.get(id);
+
+  it('re-routes only the deps touching a moved table and matches a full routing', () => {
+    const cache = new DepRouteCache();
+    const first = cache.routeAll(deps, bboxOf, portY, layoutOf);
+    expect(first.map((r) => r.id)).toEqual(['dep:a', 'dep:b', 'dep:c']);
+    positions.set('c', { x: 950, y: 600 });
+    const next = cache.routeMoved(['c'], bboxOf, portY, layoutOf);
+    expect(next[0]).toBe(first[0]);
+    expect(next[1]).not.toBe(first[1]);
+    expect(next[2]).not.toBe(first[2]);
+    expect(next).toEqual(routeDeps(deps, bboxOf, portY, layoutOf));
+    expect(cache.routeMoved(['unrelated'], bboxOf, portY, layoutOf)).toBe(next);
   });
 });
