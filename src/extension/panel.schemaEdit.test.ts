@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('vscode', () => import('./testing/vscodeFake'));
@@ -60,9 +61,9 @@ afterEach(() => {
 const warnings = (): string[] => fake.messages.filter((m) => m.level === 'warning').map((m) => m.text);
 const applied = (h: Harness) => h.since('schema:applied').map((m) => m.payload as { id: string; label: string });
 
-async function addRef(h: Harness): Promise<string> {
+async function addRef(h: Harness, column = 'a_id', op: '>' | '-' = '>'): Promise<string> {
   h.mark();
-  await h.web.receive({ type: 'schema:addRef', payload: { from: { table: 'public.b', column: 'a_id' }, to: { table: 'public.a', column: 'id' }, op: '>' } });
+  await h.web.receive({ type: 'schema:addRef', payload: { from: { table: 'public.b', column }, to: { table: 'public.a', column: 'id' }, op } });
   await vi.waitFor(() => expect(applied(h)).toHaveLength(1));
   return applied(h)[0]!.id;
 }
@@ -246,6 +247,55 @@ describe('schema:undo / schema:redo', () => {
     await vi.waitFor(() => expect(h.readDbml()).toBe(DBML));
     await h.web.receive({ type: 'schema:redo', payload: { id } });
     await vi.waitFor(() => expect(h.readDbml()).toBe(edited));
+    await h.web.receive({ type: 'schema:undo', payload: { id } });
+    await vi.waitFor(() => expect(h.readDbml()).toBe(DBML));
+    expect(h.since('schema:discarded')).toHaveLength(0);
+  });
+
+  it('undoes consecutive edits in order and redoes them back', async () => {
+    const h = await openPanel({ dbml: DBML });
+    const first = await addRef(h);
+    const once = h.readDbml();
+    const second = await addRef(h, 'id', '-');
+    const twice = h.readDbml();
+    for (const [type, id, text] of [
+      ['schema:undo', second, once], ['schema:undo', first, DBML], ['schema:redo', first, once], ['schema:redo', second, twice],
+    ] as const) {
+      await h.web.receive({ type, payload: { id } });
+      await vi.waitFor(() => expect(h.readDbml()).toBe(text));
+    }
+    expect(h.since('schema:discarded')).toHaveLength(0);
+    expect(warnings().some((w) => w.includes('changed since'))).toBe(false);
+  });
+
+  it('refuses an undo when the document was reopened with other text at the same version', async () => {
+    const h = await openPanel({ dbml: DBML });
+    const id = await addRef(h);
+    const recorded = fake.openDocument(h.dbml).version;
+    fake.closeDocument(h.dbml);
+    const other = DBML.replace('// orders domain', '// pulled');
+    await writeFile(h.dbml.fsPath, other);
+    const reopened = await fake.document(h.dbml);
+    while (reopened.version < recorded) reopened.edit(reopened.getText());
+    await reopened.save();
+    await h.web.receive({ type: 'schema:undo', payload: { id } });
+    await vi.waitFor(() => expect(h.since('schema:discarded')).toEqual([{ type: 'schema:discarded', payload: { id } }]));
+    expect(h.readDbml()).toBe(other);
+  });
+
+  it('redoes a new table without saving the cursor line', async () => {
+    const h = await openPanel({ dbml: DBML });
+    fake.nextInput = 'c';
+    h.mark();
+    await h.web.receive({ type: 'schema:addTable', payload: { x: 0, y: 0 } });
+    await vi.waitFor(() => expect(applied(h)).toHaveLength(1));
+    const clean = h.readDbml();
+    const id = applied(h)[0]!.id;
+    await h.web.receive({ type: 'schema:undo', payload: { id } });
+    await vi.waitFor(() => expect(h.readDbml()).toBe(DBML));
+    await h.web.receive({ type: 'schema:redo', payload: { id } });
+    await vi.waitFor(() => expect(h.readDbml()).toBe(clean));
+    expect((await fake.document(h.dbml)).getText()).toBe(clean);
     await h.web.receive({ type: 'schema:undo', payload: { id } });
     await vi.waitFor(() => expect(h.readDbml()).toBe(DBML));
     expect(h.since('schema:discarded')).toHaveLength(0);

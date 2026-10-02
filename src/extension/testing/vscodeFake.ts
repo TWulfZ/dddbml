@@ -206,6 +206,10 @@ export const fake = {
     if (!doc) throw new Error(`not open: ${uri.toString()}`);
     return doc;
   },
+  /** VS Code disposing an unreferenced clean model: the next open builds a new one at version 1. */
+  closeDocument(uri: Uri): void {
+    documents.delete(uri.toString());
+  },
   /** Answer returned by the next modal/choice message (e.g. a confirmation button label). */
   nextChoice: undefined as string | undefined,
   activeEditorUri: null as Uri | null,

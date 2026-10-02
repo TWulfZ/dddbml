@@ -39,6 +39,8 @@ tiene que ser explícita.
   diagrama la revierte: el host guarda la edición inversa y la versión del documento tras
   aplicarla; el undo aplica la inversa solo si el documento no cambió desde entonces; si cambió,
   avisa y remite al Ctrl+Z del editor (el comando sale del historial sin aplicarse). (2026-10-01.)
+  *Implementación:* "no cambió" se compara por contenido (hash del texto), no por versión; ver
+  §Undo, detalles fijados.
 - [ ] **Borrar un campo que participa en un índice compuesto.** Opciones: quitar el campo del
   índice (y el índice si queda vacío) / rechazar con aviso. *No bloqueante* (default propuesto:
   rechazar con aviso). **Implementado el default** (rechazar); un índice de **una sola** columna
@@ -164,8 +166,8 @@ la primera intención de la sesión muestra un `showWarningMessage` no modal: "d
 ### Undo
 
 Cada intención aplicada produce un `SchemaEditCommand` en el historial del diagrama (spec 11) con
-un id; el host guarda `{ id, uri, versionAfter, inverse: TextEdit[], placed?: tabla }`. Ctrl+Z en el
-diagrama envía `schema:undo { id }`: el host aplica `inverse` si `document.version === versionAfter`
+un id; el host guarda `{ id, uri, textAfter, inverse: TextEdit[] }`. Ctrl+Z en el diagrama envía
+`schema:undo { id }`: el host aplica `inverse` si el texto del documento sigue siendo `textAfter`
 y guarda; si no, avisa ("the .dbml changed since; use Undo in the editor") y descarta el comando.
 Redo análogo con la edición directa. Deshacer "crear tabla" no borra su posición del sidecar
 (queda huérfana, spec 03), así un redo la vuelve a colocar en el mismo punto.
@@ -173,15 +175,26 @@ Redo análogo con la edición directa. Deshacer "crear tabla" no borra su posici
 Detalles fijados:
 - El **host** genera el id y lo informa con `schema:applied { id, label }` tras guardar; el webview
   empuja entonces el `SchemaEditCommand`. El host guarda por panel `{ label, estado, edits
-  pendientes, versión }` (sin `placed`: el sidecar no se toca), con tope de 200 entradas como el
-  historial (spec 11).
-- Si el host no ejecuta un `schema:undo`/`schema:redo` (versión cambiada, id desconocido, estado que
+  pendientes, hash (SHA-1) del texto }` (sin `placed`: el sidecar no se toca), con tope de 200
+  entradas como el historial (spec 11).
+- "El documento no cambió desde entonces" (Preguntas abiertas) se comprueba **por contenido**, no
+  por `document.version`: deshacer una edición posterior mueve la versión pero deja exactamente el
+  texto que dejó la anterior (si no, el segundo Ctrl+Z seguido siempre se rechazaría), y un
+  documento que VS Code cerró y reabrió vuelve a la versión 1 con otro texto (la versión podría
+  coincidir y aplicar offsets viejos). Cada transición guarda el hash del texto resultante.
+- Redo de "crear tabla": rehace la edición limpia (`edits` del worker), no el texto previo al undo,
+  que incluía la línea del cursor sin guardar; el archivo guardado queda limpio también tras redo.
+- Si el host no ejecuta un `schema:undo`/`schema:redo` (texto cambiado, id desconocido, estado que
   no corresponde, solo lectura, edición rechazada por VS Code) responde `schema:discarded { id }` y
   el webview saca el comando del historial sin aplicarlo.
 - Tras cada guardado se compara el texto con el esperado: si un participante de guardado (formato,
   `trimTrailingWhitespace`, …) reescribió más que la edición, la inversa pasa a ser el diff mínimo
   entre el texto actual y el anterior, así el undo restaura exactamente el texto previo igual.
 - La inversa la calcula el worker junto con la edición (`inverse` en offsets del texto editado).
+- Límite conocido: el host no distingue un participante de guardado de otro cambio que llegue
+  mientras `save()` está pendiente (el usuario tecleando en el editor, otra extensión). Ambos
+  quedan en el diff de respaldo, así que un Ctrl+Z del diagrama también revierte ese cambio
+  concurrente (el Ctrl+Z del editor lo recupera, la reversión es un `WorkspaceEdit`).
 
 ### Webview (implementación)
 

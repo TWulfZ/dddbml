@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import type { ColumnRef, HostToWebview, QualifiedName, RefOp, SchemaDeleteTarget } from '../shared/types';
 import { parseRequest } from './parseService';
@@ -27,13 +28,16 @@ interface Computed {
 /**
  * A diagram edit the webview may undo/redo (spec 19 §Undo). `pending` are the edits the next
  * transition applies — the inverse while applied, the redo while undone — valid only while the
- * document is still at `version`.
+ * document text still hashes to `textHash`. Not the version: undoing a later edit moves it without
+ * changing the text this entry left, and a reopened document restarts it at 1 with other text.
  */
 interface HistoryEntry {
   label: string;
   state: 'applied' | 'undone';
   pending: OffsetEdit[];
-  version: number;
+  textHash: string;
+  /** The direct edit, for the first redo of an intent that left an unsaved cursor line: a redo saves. */
+  cleanRedo?: OffsetEdit[];
 }
 
 /** Same as the webview history capacity (spec 11): older entries can no longer be asked for. */
@@ -238,16 +242,18 @@ export class SchemaEditor {
     let current = c.doc.getText();
     // A save participant (format, trim whitespace) may have rewritten more than our edit.
     let hint: OffsetEdit[] | null = current === expected ? c.result.inverse : null;
+    let cleanRedo: OffsetEdit[] | undefined;
     const line = c.result.cursorLine;
     if (opts.revealCursor && line && hint && (await this.insertCursorLine(c.doc, line))) {
       hint = growOverInsertion(hint, line.offset, line.text.length);
+      cleanRedo = c.result.edits;
       current = c.doc.getText();
     } else if (opts.revealCursor) {
       await vscode.window.showTextDocument(c.doc, { viewColumn: vscode.ViewColumn.One, preserveFocus: false });
     }
     const inverse = hint && applyEdits(current, hint) === c.source ? hint : diffEdit(current, c.source);
     const id = `e${this.nextId++}`;
-    this.history.set(id, { label: c.result.label, state: 'applied', pending: inverse, version: c.doc.version });
+    this.history.set(id, { label: c.result.label, state: 'applied', pending: inverse, textHash: textHash(current), ...(cleanRedo ? { cleanRedo } : {}) });
     if (this.history.size > HISTORY_CAP) this.history.delete(this.history.keys().next().value!);
     this.host.post({ type: 'schema:applied', payload: { id, label: c.result.label } });
   }
@@ -264,12 +270,12 @@ export class SchemaEditor {
       this.discard(id);
       return;
     }
-    if (doc.version !== entry.version) {
+    const before = doc.getText();
+    if (textHash(before) !== entry.textHash) {
       void vscode.window.showWarningMessage(`dddbml: the .dbml changed since "${entry.label}"; use ${action} in the editor.`);
       this.discard(id);
       return;
     }
-    const before = doc.getText();
     if (!(await this.applyOffsetEdits(doc, entry.pending))) {
       void vscode.window.showWarningMessage(`dddbml: ${action} of "${entry.label}" was not applied — VS Code rejected the edit.`);
       this.discard(id);
@@ -277,10 +283,12 @@ export class SchemaEditor {
     }
     await doc.save();
     const after = doc.getText();
-    const hint = invertEdits(before, entry.pending);
-    entry.pending = applyEdits(after, hint) === before ? hint : diffEdit(after, before);
+    const target = entry.cleanRedo ? applyEdits(applyEdits(before, entry.pending), entry.cleanRedo) : before;
+    const hint = entry.cleanRedo ?? invertEdits(before, entry.pending);
+    entry.pending = applyEdits(after, hint) === target ? hint : diffEdit(after, target);
+    delete entry.cleanRedo;
     entry.state = to;
-    entry.version = doc.version;
+    entry.textHash = textHash(after);
   }
 
   private discard(id: string): void {
@@ -309,6 +317,10 @@ export class SchemaEditor {
       else if (choice === "Don't show again") void memento.update(AUTO_SAVE_DISMISSED_KEY, true);
     });
   }
+}
+
+function textHash(text: string): string {
+  return createHash('sha1').update(text).digest('base64');
 }
 
 function errorText(err: unknown): string {
