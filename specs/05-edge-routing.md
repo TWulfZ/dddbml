@@ -486,10 +486,12 @@ viaja por todo el camino de persistencia (sidecar `edges.*.auto`, spec 03; `pers
 - **Drag de tablas** (`computeDragEdgeChanges`, decisión 2026-10-01): toda arista — ref (manual o
   `auto`) o dep (`rawLayoutDeps`) — con **ambos** extremos en el set arrastrado traslada sus
   waypoints por el delta **realmente commiteado** (con snap, el delta ya redondeado de la tabla
-  `source`/`upstream`; si los orígenes están fuera de grilla cada tabla puede moverse distinto y la
-  arista viaja con su `source`). Lados, color y `auto` no cambian; una forma `auto` sin waypoints
-  (sólo lados) queda intacta porque la geometría relativa no cambió. Las self-refs de una tabla
-  arrastrada cuentan como ambos extremos. Todo en el mismo `ArrangeCommand` del movimiento (label
+  `source`/`upstream`; si los orígenes están fuera de grilla cada tabla puede moverse distinto, o
+  quedarse quieta, y la arista viaja con su `source`: sigue siendo "interna" aunque el snap deje un
+  extremo en su lugar, así una forma `auto` no se descarta por eso). Lados, color y `auto` no
+  cambian; una forma `auto` sin waypoints (sólo lados) queda intacta porque la geometría relativa no
+  cambió. Las self-refs no se dibujan (spec 19) y `rawLayoutRefs` las omite: no tienen forma que
+  trasladar. Todo en el mismo `ArrangeCommand` del movimiento (label
   `Move …`, spec 11): un Ctrl+Z devuelve tablas y waypoints, el redo los re-aplica. Se calcula una
   vez en el commit (no por frame: durante el arrastre los waypoints quedan fijos y el drag
   incremental del spec 04 no cambia); en solo lectura no se aplica nada.

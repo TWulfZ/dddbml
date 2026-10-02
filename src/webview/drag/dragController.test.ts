@@ -309,6 +309,22 @@ describe('table drag over A* auto edges (F20)', () => {
     expect(store.getState().edgeLayouts.get(ac)).toEqual({ waypoints: [{ x: 310, y: 320 }] });
   });
 
+  it('with snap on, an A* shape inside the selection survives a drag that snaps one end back in place', () => {
+    const settings = store.getState().settings;
+    store.setState({
+      selection: new Set(['a', 'b']),
+      positions: new Map([['a', { x: 0, y: 0 }], ['b', { x: 515, y: 0 }], ['c', { x: 500, y: 500 }]]),
+      settings: { ...settings, ui: { ...settings.ui, snapToGrid: true, gridSize: 20 } },
+    });
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(108, 100);
+    up(108, 100);
+    expect(store.getState().positions.get('a')).toEqual({ x: 0, y: 0 });
+    expect(store.getState().positions.get('b')).toEqual({ x: 520, y: 0 });
+    expect(store.getState().edgeLayouts.get(ab)).toEqual({ ...autoShape, color: '#ff0000' });
+    expect(store.getState().edgeLayouts.has(bc)).toBe(false);
+  });
+
   it('"Reset line" still resets an auto shape', () => {
     resetEdgeWaypoints(bc);
     expect(store.getState().edgeLayouts.has(bc)).toBe(false);

@@ -103,10 +103,11 @@ type Pos = { x: number; y: number };
 
 /**
  * Edge changes at a table-drag commit (spec 05 "Arrastre de tablas"). A drag moves every dragged
- * table by the same delta, so an edge (ref, auto or not, or dep) with BOTH endpoints dragged keeps
- * its relative geometry: its absolute waypoints are translated, sides and `auto` untouched. Edges
- * with one endpoint dragged follow {@link computeAutoShapeDrops} as before. `refs`/`deps` must carry
- * raw layout keys (a dragged table is always rendered as itself).
+ * table by the same delta (up to snapping), so an edge (ref, auto or not, or dep) with BOTH endpoints
+ * dragged keeps its relative geometry: its absolute waypoints are translated by its source's delta,
+ * sides and `auto` untouched. Edges with one endpoint dragged follow {@link computeAutoShapeDrops}
+ * as before. `before`/`after` are the drag's MoveCommand from/to, so their keys are exactly the
+ * dragged set. `refs`/`deps` must carry raw layout keys (a dragged table is always rendered as itself).
  */
 export function computeDragEdgeChanges(
   refs: readonly Ref[],
@@ -117,27 +118,29 @@ export function computeDragEdgeChanges(
 ): Array<[string, EdgeLayout | null]> {
   const moved = movedNames(before, after);
   // Per table, not one pointer delta: snapping an off-grid origin shifts each table by a different
-  // amount, and the edge then rides with its source end.
+  // amount (possibly zero), and the edge then rides with its source end.
   const delta = (name: QualifiedName): Pos | null => {
-    if (!moved.has(name)) return null;
     const b = before.get(name);
     const a = after.get(name);
     return a && b ? { x: a.x - b.x, y: a.y - b.y } : null;
   };
   const out: Array<[string, EdgeLayout | null]> = [];
-  const translate = (id: string, from: QualifiedName, to: QualifiedName): void => {
+  const translate = (id: string, from: QualifiedName): void => {
     const d = delta(from);
     const existing = edgeLayouts.get(id);
-    if (!d || !moved.has(to) || !existing?.waypoints?.length) return;
+    if (!d || (d.x === 0 && d.y === 0) || !existing?.waypoints?.length) return;
     out.push([id, { ...existing, waypoints: existing.waypoints.map((w) => ({ x: w.x + d.x, y: w.y + d.y })) }]);
   };
+  // Membership in the dragged set, not "moved": a snap that leaves one dragged end in place must not
+  // turn an inside edge into a one-end edge whose A* shape is dropped.
+  const dragged = (name: QualifiedName): boolean => before.has(name) && after.has(name);
   const oneEnd: Ref[] = [];
   for (const r of refs) {
-    if (moved.has(r.source.table) && moved.has(r.target.table)) translate(r.id, r.source.table, r.target.table);
+    if (dragged(r.source.table) && dragged(r.target.table)) translate(r.id, r.source.table);
     else oneEnd.push(r);
   }
   for (const d of deps) {
-    if (moved.has(d.upstream.table) && moved.has(d.downstream.table)) translate(d.id, d.upstream.table, d.downstream.table);
+    if (dragged(d.upstream.table) && dragged(d.downstream.table)) translate(d.id, d.upstream.table);
   }
   out.push(...computeAutoShapeDrops(oneEnd, moved, edgeLayouts));
   return out;
