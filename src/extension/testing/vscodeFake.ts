@@ -190,6 +190,8 @@ export const fake = {
   /** Answer of the next `showInputBox` (validated like the real box: invalid input never resolves). */
   nextInput: undefined as string | undefined,
   inputBoxes: [] as InputBoxOptions[],
+  /** While set, `showInputBox` answers only once it resolves (the user is still typing). */
+  inputBoxHold: null as Promise<void> | null,
   /** Runs inside `save()`, like a save participant (e.g. trim trailing whitespace). */
   onSave: null as ((text: string) => string) | null,
   /** Runs right before `applyEdit` applies, to simulate a concurrent change. */
@@ -219,6 +221,7 @@ export const fake = {
     this.events = [];
     this.nextInput = undefined;
     this.inputBoxes = [];
+    this.inputBoxHold = null;
     this.onSave = null;
     this.beforeApplyEdit = null;
     this.config = {};
@@ -275,8 +278,8 @@ export const window = {
     fake.inputBoxes.push(options);
     const answer = fake.nextInput;
     fake.nextInput = undefined;
-    if (answer === undefined || options.validateInput?.(answer)) return Promise.resolve(undefined);
-    return Promise.resolve(answer);
+    const result = answer === undefined || options.validateInput?.(answer) ? undefined : answer;
+    return (fake.inputBoxHold ?? Promise.resolve()).then(() => result);
   },
   showSaveDialog: () => Promise.resolve(undefined),
   showQuickPick: (items: Array<{ label: string }>) => {

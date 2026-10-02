@@ -69,6 +69,8 @@ export class SchemaEditor {
         },
       });
       if (input === undefined) return;
+      // A merge or git peek may have locked the canvas while the box was open.
+      if (this.host.refuseWhileReadOnly(action)) return;
       const name = parseTableNameInput(input, existing);
       if (typeof name === 'string') return;
       const intent: SchemaEditIntent = { kind: 'addTable', schema: name.schema, table: name.table, ...(at.group !== undefined ? { group: at.group } : {}) };

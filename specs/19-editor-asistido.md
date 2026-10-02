@@ -94,7 +94,8 @@ con el motivo, nunca se aplica.
 ### Crear tabla (click derecho en el canvas vacío)
 
 1. Menú "New table here" → el host pide el nombre (`showInputBox`, valida identificador, permite
-   `schema.tabla`, rechaza duplicados).
+   `schema.tabla`, rechaza duplicados). Al cerrarse el input vuelve a mirar el gate de solo lectura
+   (un merge o una vista git pudo abrirse mientras se escribía).
 2. Host → webview `layout:place { table, x, y }` (coords world del click, snap a grilla si está
    activo). El webview guarda la posición aunque la tabla aún no exista en el schema.
 3. Host inserta al final del archivo `Table <nombre> {\n  id int [pk]\n}`; si el click cayó dentro

@@ -8,7 +8,7 @@ import { runParseJob } from './parseOps';
 import { setParseWorkerFactory } from './parseService';
 import type { ParseJob, ParseReply, WorkerLike } from './parseClient';
 import { AUTO_SAVE_DISMISSED_KEY } from './schemaEditor';
-import { cleanupDirs, conflictedRepo, openPanel, settle, type Harness } from './testing/panelHarness';
+import { cleanupDirs, conflictedRepo, gitIn, openPanel, settle, type Harness } from './testing/panelHarness';
 
 /** Host half of spec 19: intents → minimal, version-checked, saved edits of the .dbml. */
 
@@ -113,6 +113,25 @@ describe('the write gate', () => {
     expect(fake.inputBoxes).toHaveLength(0);
     expect(fake.events).not.toContain('applyEdit');
     expect(h.readDbml()).toBe(before);
+  });
+
+  it('refuses a new table whose name was typed while a read-only view opened', async () => {
+    const h = await openPanel({ dbml: DBML });
+    const git = gitIn(h.dir);
+    git('add', '-A'); git('commit', '-q', '-m', 'v0');
+    const sha = git('rev-parse', 'HEAD').trim();
+    let typed!: () => void;
+    fake.inputBoxHold = new Promise((resolve) => { typed = resolve; });
+    fake.nextInput = 'payments';
+    await h.web.receive({ type: 'schema:addTable', payload: { x: 0, y: 0 } });
+    await vi.waitFor(() => expect(fake.inputBoxes).toHaveLength(1));
+    h.mark();
+    await h.web.receive({ type: 'git:timeTravel:enter', payload: { sha, label: 'v0' } });
+    await vi.waitFor(() => expect(h.since('git:timeTravel:enter')).toHaveLength(1));
+    typed();
+    await vi.waitFor(() => expect(warnings().some((w) => w.includes('New table is unavailable'))).toBe(true));
+    expect(h.readDbml()).toBe(DBML);
+    expect(h.web.posted.some((m) => m.type === 'layout:place')).toBe(false);
   });
 
   it('refuses when the buffer does not parse, touching no file', async () => {
