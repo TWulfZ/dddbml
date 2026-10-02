@@ -12,9 +12,10 @@ import { GroupContainer } from './render/groupContainer';
 import { ZoomButtons } from './render/zoomButtons';
 import { ActionsPanel } from './render/actionsPanel';
 import { AppMenu } from './render/appMenu';
-import { schedulePersist } from './persistence';
+import { undoLatest, redoLatest } from './state/historyActions';
 import { isGestureActive } from './drag/dragController';
 import { panBy, zoomAt } from './render/viewport';
+import { Notice } from './render/notice';
 import { SceneCache, CONTAINER_PREFIX, containerNodeId as containerId, groupNodeId as groupId } from './render/sceneCache';
 import { lodForZoom } from './render/lod';
 import { useVisibleEdgeIds, useVisibleNames } from './render/useVisibleNames';
@@ -360,14 +361,10 @@ export function App(_props: AppProps) {
       }
       if (k === 'z' && !e.shiftKey) {
         e.preventDefault();
-        if (store.getState().past.length === 0) return;
-        store.getState().undo();
-        schedulePersist();
+        undoLatest();
       } else if ((k === 'z' && e.shiftKey) || k === 'y') {
         e.preventDefault();
-        if (store.getState().future.length === 0) return;
-        store.getState().redo();
-        schedulePersist();
+        redoLatest();
       }
     };
 
@@ -596,6 +593,7 @@ export function App(_props: AppProps) {
         <RecordsModal />
         <GitPanel />
         <EdgeOrderProgress />
+        <Notice />
       </ErrorBoundary>
     </>
   );

@@ -19,7 +19,8 @@ Permitir `Ctrl+Z` / `Ctrl+Shift+Z` (también `Ctrl+Y`) sobre cambios de **posici
 - Undo de cambios en `groups` (collapse, hidden, color).
 - Undo de `tableColors`, `hiddenTables`.
 - Undo de viewport (pan, zoom). Convención: navegación no es edición.
-- Undo de `Reset Layout` y `Prune Orphans` (operaciones masivas que requieren memento).
+- Undo de `Prune Orphans` (operación masiva que requiere memento). `Reset Layout` sí es deshacible
+  (un `ArrangeCommand`, spec 03, decisión 2026-10-01).
 - Persistencia del historial entre sesiones (history vive en memoria del webview; reload o cierre = limpio).
 - Coalescing temporal de drags consecutivos sobre la misma tabla/waypoint.
 - Restaurar selection junto con posiciones.
@@ -59,8 +60,21 @@ interface WaypointCommand {
 }
 
 // Además (ya en código): `EdgeStyleCommand` (color/port-side) y `ArrangeCommand`.
-type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand | ArrangeCommand;
+interface SchemaEditCommand {            // edición del .dbml hecha desde el diagrama (spec 19)
+  kind: 'schema';
+  id: string;                            // lo genera el host en `schema:applied`
+  label: string;
+  timestamp: number;
+}
+type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand | ArrangeCommand | SchemaEditCommand;
 ```
+
+**`SchemaEditCommand` (spec 19).** El texto del `.dbml` lo escribe sólo el host, que guarda la
+inversa bajo `id`. El webview empuja el comando al recibir `schema:applied`; su undo/redo no toca
+estado local: `historyActions.ts` (`undoLatest`/`redoLatest`, el único punto de entrada de los
+atajos y botones) postea `schema:undo`/`schema:redo { id }` en vez de `schedulePersist()`. Si el
+host no lo ejecuta responde `schema:discarded { id }` y el comando sale de `past` o `future` (donde
+esté) sin aplicarse. Convive con los comandos de layout en la misma pila.
 
 **`ArrangeCommand` (compuesto, smart auto-layout).** Un solo Ctrl+Z revierte el reordenamiento
 completo: posiciones de tablas **y** los reseteos de waypoints que el arrange disparó (los waypoints
@@ -95,15 +109,24 @@ Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor
 | Llamada `redo()` con `future` no vacío | Simétrico. |
 | `undo()` / `redo()` con stack vacío | No-op silencioso. |
 | `setLayout` (load inicial o `layout:external-change`) | `past = [], future = []`. |
-| `dddbml: Reset Layout` (spec 03) | `past = [], future = []` (sin undo hasta el memento v2). |
+| `dddbml: Reset Layout` (spec 03) | Push de **un** `ArrangeCommand` (`Reset layout`) con posiciones y `EdgeLayout` previos; el historial anterior se conserva. |
+| `schema:applied { id, label }` (spec 19) | Push `SchemaEditCommand`; `future` limpio. |
+| `schema:discarded { id }` | El comando `id` sale de `past`/`future` sin aplicarse. |
 | Entrar a un overlay git (time-travel / diff) | `past`/`future` se mueven a `historyStash` (con el set de tablas de trabajo) **antes** de cargar la revisión; undo/redo son no-op mientras dure (gate de solo lectura y stacks vacíos). Un diff abierto desde time-travel conserva el stash del primero. |
 | Salir del overlay git | Se restauran `past`/`future` guardados, salvo que el set de tablas del schema de trabajo haya cambiado mientras tanto (misma regla que `setSchema`). Decisión 2026-10-01: mirar una revisión no es editar. También se descartan si el sidecar cambió en disco durante el overlay (el host lo re-envía como `layout:external-change`, misma regla que esa fila) o si se abrió un merge. |
-| `setSchema` con set de nombres de tabla **distinto** al anterior | `past = [], future = []`. Previene undo a tabla que ya no existe. |
+| `setSchema` con set de nombres de tabla **distinto** al anterior | `past = [], future = []`. Previene undo a tabla que ya no existe. **Excepción:** si hay ediciones propias del diagrama en vuelo (`schemaEchoes`: ids con `schema:applied` recibido o `schema:undo`/`redo` posteado, sin `schema:discarded`), el cambio es su eco y la pila se conserva; cada `setSchema` vacía `schemaEchoes`. |
 | `setSchema` con mismo set de tablas (solo columnas cambiaron) | History preservado. |
+
+Límite conocido del eco: el host postea `schema:applied` tras guardar y el schema llega por el
+watcher (debounce 150 ms + parse). Si el schema llegara **antes** que `schema:applied`, ese cambio
+de tablas vacía la pila previa (el comando nuevo sí entra) y el id queda como eco pendiente hasta el
+próximo `setSchema`; un cambio externo de tablas en ese intervalo no vaciaría la pila. Los comandos
+de layout sobre tablas ausentes son inocuos (`positions` no se poda) y los de schema los descarta el
+host por versión.
 
 ## Contrato de persistencia
 
-`undo()` y `redo()` son **pure state transitions** dentro del store. El llamador (botones en `actionsPanel`, keyboard handler en `app.tsx`) dispara `schedulePersist()` desde `src/webview/persistence.ts` después de invocarlos.
+`undo()` y `redo()` son **pure state transitions** dentro del store. El llamador (botones de la barra de zoom, keyboard handler en `app.tsx`) pasa por `state/historyActions.ts`, que tras invocarlos dispara `schedulePersist()` desde `src/webview/persistence.ts` (o, para un `SchemaEditCommand`, postea `schema:undo`/`schema:redo`).
 
 Razón de separar: el store es data layer pure, sin acoplamiento a `postMessage`. `schedulePersist()` es side effect explícito. Esta separación evita el ciclo `store ↔ persistence` y mantiene undo/redo testables sin mock de `postToHost`.
 

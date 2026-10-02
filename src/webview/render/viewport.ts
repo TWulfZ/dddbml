@@ -1,6 +1,6 @@
-import { store } from '../state/store';
-import { deriveSceneGeometry, sceneBounds } from './sceneGeometry';
-import { buildRowGeometry, fkColumnsByTable } from '../layout/tableRows';
+import { store, type AppState } from '../state/store';
+import { deriveSceneGeometry, sceneBounds, type SceneGeometry } from './sceneGeometry';
+import { buildRowGeometry, fkColumnsByTable, type RowGeometry } from '../layout/tableRows';
 import type { Bbox } from './spatialIndex';
 
 export interface Point { x: number; y: number }
@@ -57,9 +57,8 @@ export function resetView(): void {
   store.getState().setViewport({ x: 0, y: 0, zoom: 1 });
 }
 
-export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
-  const state = store.getState();
-  const { zoomMin, zoomMax } = state.settings;
+/** What is drawn right now, computed from the store (the camera helpers run outside App's memos). */
+export function liveScene(state: AppState): { scene: SceneGeometry; rows: RowGeometry } {
   const { schema, positions } = state;
   const tablesByName = new Map(schema.tables.map((t) => [t.name, t]));
   const rows = buildRowGeometry({
@@ -70,7 +69,14 @@ export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
     diffBaseByTable: state.diffBaseByTable,
     columnDiffByTable: state.columnDiffByTable,
   });
-  const scene = deriveSceneGeometry(schema, positions, state.groups, state.hiddenTables, tablesByName, rows.count);
+  return { scene: deriveSceneGeometry(schema, positions, state.groups, state.hiddenTables, tablesByName, rows.count), rows };
+}
+
+export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
+  const state = store.getState();
+  const { zoomMin, zoomMax } = state.settings;
+  const { schema, positions } = state;
+  const { scene, rows } = liveScene(state);
   const bounds = sceneBounds(schema, positions, scene, rows.count);
   if (!bounds) return;
   const rect = viewportEl.getBoundingClientRect();
@@ -134,7 +140,7 @@ export function animateViewport(target: { x: number; y: number; zoom: number }, 
 
 /** Center + zoom-to-fit a world bbox. Below the comfort floor it stops zooming out and just centers
  *  the midpoint at a fixed comfortable zoom (so a far-apart diff doesn't shrink to nothing). */
-export function fitToBbox(bbox: Bbox, opts?: { padding?: number; animate?: boolean }): void {
+export function fitToBbox(bbox: Bbox, opts?: { padding?: number; animate?: boolean; maxZoom?: number }): void {
   const size = viewportSize();
   if (!size) return;
   const padding = opts?.padding ?? FOCUS_PADDING;
@@ -143,6 +149,7 @@ export function fitToBbox(bbox: Bbox, opts?: { padding?: number; animate?: boole
   const availH = Math.max(1, size.height - padding * 2);
   let zoom = clamp(Math.min(availW / Math.max(1, bbox.w), availH / Math.max(1, bbox.h)), zoomMin, zoomMax);
   if (zoom < COMFORTABLE_FLOOR) zoom = clamp(COMFORTABLE_ZOOM, zoomMin, zoomMax);
+  if (opts?.maxZoom !== undefined) zoom = Math.max(zoomMin, Math.min(zoom, opts.maxZoom));
   const cx = bbox.x + bbox.w / 2;
   const cy = bbox.y + bbox.h / 2;
   const target = { x: size.width / 2 - cx * zoom, y: size.height / 2 - cy * zoom, zoom };

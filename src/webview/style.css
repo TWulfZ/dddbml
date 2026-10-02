@@ -2126,6 +2126,24 @@
     .ddd-edge-order-overlay__fill { transition: none; }
   }
 
+  /* Transient canvas notice (why an action did nothing). Sits above the bottom-centre actions bar. */
+  .ddd-notice {
+    position: fixed;
+    left: 50%;
+    bottom: calc(var(--ddd-space-8) + var(--ddd-space-7));
+    transform: translateX(-50%);
+    z-index: 40;
+    padding: var(--ddd-space-3) var(--ddd-space-5);
+    background: var(--ddd-surface-overlay);
+    border: 1px solid var(--ddd-border-subtle);
+    border-radius: var(--ddd-radius-md);
+    box-shadow: var(--ddd-shadow-md);
+    color: var(--ddd-fg);
+    font-size: var(--ddd-text-base);
+    pointer-events: none;
+    animation: ddd-fade-in var(--ddd-duration-fast) var(--ddd-ease-out);
+  }
+
   /* Step-view dot rail — clickable per-conflict jump + status mirror. The orb is the small visible
      circle; the <button> around it carries transparent hit padding and the rail gap is 0, so the
      whole slot is clickable (no need to land on the 8px circle). Unresolved = hollow grey; resolved =

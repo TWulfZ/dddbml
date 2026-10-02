@@ -179,6 +179,20 @@ Detalles fijados:
   entre el texto actual y el anterior, así el undo restaura exactamente el texto previo igual.
 - La inversa la calcula el worker junto con la edición (`inverse` en offsets del texto editado).
 
+### Webview (implementación)
+
+- **`layout:place`** → `placeTable` en el store: fija la posición aunque la tabla no esté en el
+  schema, quita un `hidden` huérfano con ese nombre (si no, la tabla recién creada sería invisible) y
+  persiste. Se ignora en solo lectura. `setSchema` no poda `positions` y el auto-placement sólo
+  coloca tablas sin posición, así que la tabla aparece donde se hizo click.
+- **Undo** (spec 11): `SchemaEditCommand { id, label }`; ver allí el eco de `setSchema` que evita
+  vaciar la pila cuando el cambio de tablas lo causó la propia edición.
+- **`diagram:focusTable`** (`render/focusTable.ts`): `fitToBbox` con zoom máximo 100 % (una tabla
+  sola no se agranda más) y la selecciona. Miembro de grupo colapsado → encuadra el nodo del grupo
+  sin seleccionar. Tabla oculta → aviso "X is hidden." y, si su grupo está expandido y visible,
+  encuadra el contenedor; si no, la cámara no se mueve. Tabla ausente del schema (buffer sin
+  guardar) → aviso, sin mover la cámara. Los avisos usan la nota transitoria del webview (spec 13).
+
 ## Modelo de datos / tipos afectados
 
 - `WebviewToHost`: `schema:addTable { x, y, group? }`, `schema:addField { table }`,

@@ -69,7 +69,18 @@ export interface ArrangeCommand {
   timestamp: number;
 }
 
-export type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand | ArrangeCommand;
+/**
+ * A `.dbml` edit made from the diagram (spec 19 §Undo). The text lives on the host, which keeps the
+ * inverse under `id`: undo/redo post `schema:undo` / `schema:redo` instead of touching local state.
+ */
+export interface SchemaEditCommand {
+  kind: 'schema';
+  id: string;
+  label: string;
+  timestamp: number;
+}
+
+export type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand | ArrangeCommand | SchemaEditCommand;
 
 /**
  * Build a MoveCommand from a drag's origins map and the post-drag positions.

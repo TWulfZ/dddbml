@@ -1,9 +1,9 @@
 import { createStore } from 'zustand/vanilla';
 import { useEffect, useReducer, useRef } from 'preact/hooks';
-import type { AppSettings, ColumnDiffEntry, EdgeLayout, EdgeSide, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
+import type { AppSettings, ColumnDiffEntry, ColumnRef, EdgeLayout, EdgeSide, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
 import { defaultSettings, hasAutoShape, isEdgeSide } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
-import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
+import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, SchemaEditCommand, WaypointCommand } from './history';
 import { isEdgeKey } from '../render/edgeKey';
 import { densityMetrics, type DensityMetrics } from '../layout/density';
 import { recordPositionsDelta } from './positionsDelta';
@@ -140,6 +140,15 @@ export interface AppState {
    * route memo, so pumping it never re-routes edges.
    */
   edgeOrderProgress: { pct: number } | null;
+  /**
+   * Ids of diagram `.dbml` edits (applied, or asked to undo/redo) whose schema push may still be on
+   * its way: that push changes the table set without invalidating the history (spec 11, spec 19).
+   */
+  schemaEchoes: ReadonlySet<string>;
+  /** Transient canvas notice (no-op explanations); `seq` restarts its timer on a repeat. */
+  notice: { text: string; seq: number } | null;
+  /** FK dropped on a column, waiting for its cardinality pick (spec 19 §Crear FK). */
+  refDraft: { from: ColumnRef; to: ColumnRef; x: number; y: number } | null;
 }
 
 export interface AppActions {
@@ -177,6 +186,14 @@ export interface AppActions {
   pushWaypointCommand(cmd: WaypointCommand): void;
   pushEdgeStyleCommand(cmd: EdgeStyleCommand): void;
   pushArrangeCommand(cmd: ArrangeCommand): void;
+  pushSchemaCommand(id: string, label: string): void;
+  /** The host did not undo/redo `id`: remove it from either stack without applying it. */
+  dropSchemaCommand(id: string): void;
+  /** Host-chosen spot of a table it is about to write; the table may not be in the schema yet. */
+  placeTable(name: QualifiedName, x: number, y: number): void;
+  showNotice(text: string): void;
+  clearNotice(seq: number): void;
+  setRefDraft(draft: AppState['refDraft']): void;
   undo(): void;
   redo(): void;
   clearHistory(): void;
@@ -234,6 +251,9 @@ const initial: AppState = {
   panMode: false,
   spacePan: false,
   edgeOrderProgress: null,
+  schemaEchoes: new Set(),
+  notice: null,
+  refDraft: null,
   settings: defaultSettings(),
   exporters: [],
   exportPromptOpen: false,
@@ -293,10 +313,13 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     set((s) => {
       const newNames = new Set(schema.tables.map((t) => t.name));
       const sameTableSet = sameNames(newNames, s.schema.tables.map((t) => t.name));
-      const patch: Partial<AppState> = { schema, parseError, ready: true };
-      if (!sameTableSet) {
+      const patch: Partial<AppState> = { schema, parseError, ready: true, schemaEchoes: NO_ECHOES };
+      // A diagram edit's own echo keeps the stack: the change is on it and undoes through the host.
+      if (!sameTableSet && s.schemaEchoes.size === 0) {
         patch.past = [];
         patch.future = [];
+      }
+      if (!sameTableSet) {
         patch.selection = withoutSelected(s.selection, [...s.selection].filter((n) => !newNames.has(n)));
       }
       return patch;
@@ -532,6 +555,37 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   pushArrangeCommand(cmd) {
     set((s) => pushHistory(s, cmd));
   },
+  pushSchemaCommand(id, label) {
+    const cmd: SchemaEditCommand = { kind: 'schema', id, label, timestamp: Date.now() };
+    set((s) => ({ ...pushHistory(s, cmd), schemaEchoes: withEcho(s.schemaEchoes, id) }));
+  },
+  dropSchemaCommand(id) {
+    set((s) => {
+      const keep = (c: EditCommand) => c.kind !== 'schema' || c.id !== id;
+      const echoes = new Set(s.schemaEchoes);
+      echoes.delete(id);
+      return { past: s.past.filter(keep), future: s.future.filter(keep), schemaEchoes: echoes };
+    });
+  },
+  placeTable(name, x, y) {
+    set((s) => {
+      if (isCanvasReadOnly(s)) return s;
+      const positions = new Map(s.positions);
+      positions.set(name, { x: Math.round(x), y: Math.round(y) });
+      recordPositionsDelta(s.positions, positions, [name]);
+      // A hidden orphan entry of the same name would make the table the user just created invisible.
+      return { positions, hiddenTables: s.hiddenTables.has(name) ? withoutName(s.hiddenTables, name) : s.hiddenTables };
+    });
+  },
+  showNotice(text) {
+    set((s) => ({ notice: { text, seq: (s.notice?.seq ?? 0) + 1 } }));
+  },
+  clearNotice(seq) {
+    set((s) => (s.notice?.seq === seq ? { notice: null } : s));
+  },
+  setRefDraft(draft) {
+    set({ refDraft: draft });
+  },
   undo() {
     set((s) => {
       if (isCanvasReadOnly(s)) return s; // read-only during conflict resolution / git overlay (spec 14/16)
@@ -542,6 +596,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
         ...patch,
         past: s.past.slice(0, -1),
         future: [...s.future, cmd],
+        ...(cmd.kind === 'schema' ? { schemaEchoes: withEcho(s.schemaEchoes, cmd.id) } : {}),
       };
     });
   },
@@ -555,6 +610,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
         ...patch,
         future: s.future.slice(0, -1),
         past: [...s.past, cmd],
+        ...(cmd.kind === 'schema' ? { schemaEchoes: withEcho(s.schemaEchoes, cmd.id) } : {}),
       };
     });
   },
@@ -739,6 +795,18 @@ function stashHistory(s: AppState): Partial<AppState> {
   return { historyStash: { past: s.past, future: s.future, tables: new Set(s.schema.tables.map((t) => t.name)) }, past: [], future: [] };
 }
 
+const NO_ECHOES: ReadonlySet<string> = new Set();
+
+function withEcho(echoes: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  return new Set(echoes).add(id);
+}
+
+function withoutName(set: Set<QualifiedName>, name: QualifiedName): Set<QualifiedName> {
+  const next = new Set(set);
+  next.delete(name);
+  return next;
+}
+
 function sameNames(a: Set<QualifiedName>, b: QualifiedName[]): boolean {
   const bs = new Set(b);
   return a.size === bs.size && [...a].every((n) => bs.has(n));
@@ -755,6 +823,8 @@ function applyCommand(
   cmd: EditCommand,
   direction: 'undo' | 'redo',
 ): Partial<AppState> {
+  // The host owns the text: the caller posts schema:undo / schema:redo (historyActions.ts).
+  if (cmd.kind === 'schema') return {};
   if (cmd.kind === 'move') {
     const positions = new Map(s.positions);
     const entries = direction === 'undo' ? cmd.from : cmd.to;

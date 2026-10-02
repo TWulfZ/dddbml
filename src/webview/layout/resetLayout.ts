@@ -2,6 +2,7 @@ import type { EdgeLayout, QualifiedName } from '../../shared/types';
 import { store, isCanvasReadOnly } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { autoLayout, estimateSize } from './autoLayout';
+import { buildArrangeCommand } from '../state/history';
 
 /**
  * `dddbml: Reset Layout` (spec 03, F24). Runs here, not on the host: only the webview can lay
@@ -18,9 +19,12 @@ export function resetLayout(): void {
   const edgeResets: Array<[string, EdgeLayout | null]> = [];
   for (const [id, e] of s.edgeLayouts) edgeResets.push([id, e.color ? { color: e.color } : null]);
 
+  const before = new Map(s.positions);
+  const edgesBefore = new Map(s.edgeLayouts);
   s.setPositionsBatch([...placed]);
   s.applyEdgeLayouts(edgeResets);
-  // Not undoable (spec 11: a memento command is future work); the old moves no longer apply.
-  s.clearHistory();
+  // Undoable instead of confirmed (spec 03): one command carries the old positions and shapes.
+  const cmd = buildArrangeCommand(before, store.getState().positions, edgesBefore, edgeResets, 'Reset layout');
+  if (cmd) s.pushArrangeCommand(cmd);
   schedulePersist();
 }

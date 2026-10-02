@@ -198,7 +198,8 @@ extremos en el conjunto movido (conservando `color`/sides) y descarta la forma e
 de A\* (`auto`, spec 05 §9) con **cualquier** extremo movido (conservando `color`, F20); aplica posiciones + reseteos; arma un
 `ArrangeCommand` compuesto y lo empuja al historial; agenda persistencia. `selection` con selección
 vacía es un **no-op con aviso** ("Select tables first"): no mueve tablas ni re-rutea aristas
-(decisión 2026-10-01, F89). `runSmartLayout` sólo acepta los modos de usuario (`AutoArrangeMode`);
+(decisión 2026-10-01, F89). El aviso es una nota transitoria del webview (`notice` en el store,
+`render/notice.tsx`, ~3.5 s, `role="status"`), así cubre también el atajo de la paleta de comandos. `runSmartLayout` sólo acepta los modos de usuario (`AutoArrangeMode`);
 `new` no le llega (F19b).
 
 **Colocación automática de tablas nuevas (`app.tsx`).** Tablas sin posición: si el canvas está
