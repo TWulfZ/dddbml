@@ -174,15 +174,19 @@ export class SchemaEditor {
     hooks: { confirm?: (r: Applicable) => Promise<boolean>; beforeApply?: (r: Applicable) => void } = {},
   ): Promise<Computed | null> {
     let confirmed: string[] | null = null;
+    // Each compute is two worker parses (~2 s apiece on 5000 tables): reuse the confirmed one.
+    let reuse: Computed | null = null;
     if (hooks.confirm) {
       const first = await this.compute(intent, action);
       if (!first || !(await hooks.confirm(first.result))) return null;
       // The modal may have been open across a merge or a git peek.
       if (this.host.refuseWhileReadOnly(action)) return null;
       confirmed = first.result.cascade;
+      reuse = first;
     }
     for (let attempt = 0; attempt < 2; attempt++) {
-      const c = await this.compute(intent, action);
+      const c = reuse ?? await this.compute(intent, action);
+      reuse = null;
       if (!c) return null;
       if (confirmed && confirmed.join('\n') !== c.result.cascade.join('\n')) {
         void vscode.window.showWarningMessage(`dddbml: ${c.result.label} was not applied — the .dbml changed while you confirmed; try again.`);
@@ -194,7 +198,9 @@ export class SchemaEditor {
         void vscode.window.showWarningMessage(`dddbml: ${c.result.label} was not applied — VS Code rejected the edit.`);
         return null;
       }
-      await c.doc.save();
+      if (!(await c.doc.save())) {
+        void vscode.window.showWarningMessage(`dddbml: ${c.result.label} is in the editor but was not saved; the diagram updates when the file is saved.`);
+      }
       this.maybeWarnAutoSave();
       return c;
     }

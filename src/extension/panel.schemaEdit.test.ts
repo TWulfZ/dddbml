@@ -170,6 +170,22 @@ describe('schema:delete', () => {
     await vi.waitFor(() => expect(applied(h)).toHaveLength(1));
     expect(h.readDbml()).toBe('// orders domain\n\nTable b {\n  id int\n  a_id int\n}\n\nTableGroup g {\n}\n');
   });
+
+  it('does not apply a cascade other than the one confirmed', async () => {
+    const h = await openPanel({ dbml: DBML });
+    let typed = false;
+    duringSchemaEdit = () => {
+      if (typed) return;
+      typed = true;
+      const d = fake.openDocument(h.dbml);
+      d.edit(d.getText().replace('  a_id int\n', '  a_id int [ref: > a.id]\n'));
+    };
+    fake.nextChoice = 'Delete';
+    await h.web.receive({ type: 'schema:delete', payload: { kind: 'table', table: 'public.a' } });
+    await vi.waitFor(() => expect(warnings().some((w) => w.includes('changed while you confirmed'))).toBe(true));
+    expect(fake.events).not.toContain('applyEdit');
+    expect(h.readDbml()).toBe(DBML);
+  });
 });
 
 describe('schema:undo / schema:redo', () => {
