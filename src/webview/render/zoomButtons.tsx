@@ -1,7 +1,7 @@
 import { useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import { store, useAppStore } from '../state/store';
-import { schedulePersist } from '../persistence';
+import { undoLatest as undo, redoLatest as redo } from '../state/historyActions';
 import { fitToContent, zoomAtCenter, zoomToAtCenter } from './viewport';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
@@ -16,17 +16,6 @@ function ZoomButtonsImpl() {
   const spacePan = useAppStore((s) => s.spacePan);
   const panActive = panMode || spacePan;
   const getEl = () => document.querySelector<HTMLElement>('.ddd-viewport');
-
-  const undo = () => {
-    if (store.getState().past.length === 0) return;
-    store.getState().undo();
-    schedulePersist();
-  };
-  const redo = () => {
-    if (store.getState().future.length === 0) return;
-    store.getState().redo();
-    schedulePersist();
-  };
 
   return (
     <div class="ddd-zoom">

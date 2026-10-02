@@ -287,6 +287,9 @@ más allá del centro del campo conmuta el lado y persiste.
   `ColorPopup` reusando `popupAnchorFor`, escribe `EdgeLayout.color`.
 - Reemplaza el `ContextMenu` por click derecho de waypoint en `edgeLayer.tsx`
   (más intuitivo, confirmado por el usuario).
+- Spec 19: la toolbar de una FK suma **🗑 Delete relation** (`schema:delete { kind: 'ref' }`), y el
+  click derecho sobre una FK abre un `ContextMenu` con esa sola acción. Las aristas `Dep` no la
+  tienen. El borrador del arrastre de FK es un `<path>` más de este mismo SVG overlay.
 - Render de arista aplica `stroke` desde `EdgeLayout.color` cuando existe.
 
 ### 6. Modo imán + rejilla (grid snap)

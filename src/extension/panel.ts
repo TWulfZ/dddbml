@@ -11,6 +11,7 @@ import { getCurrentBranch, getRepoRoot, getUnmergedStages, gitAdd, gitCommit, gi
 import type { GitOp } from '../shared/types';
 import { getExporter, listExporters } from './exporters';
 import { applySettingsPatch, loadSettings, onSettingsChange } from './settings';
+import { SchemaEditor } from './schemaEditor';
 
 const PERSIST_DEBOUNCE_MS = 200;
 /** Editor autosave fires the .dbml watcher on a timer while typing; coalesce bursts. */
@@ -131,6 +132,7 @@ export class DiagramPanel {
   /** Signature (conflicts with both sides) of the last `merge:begin` posted — so re-detecting the SAME
    *  conflict set (e.g. a double-firing watcher) doesn't re-post and wipe the user's decisions. */
   private lastPostedMergeSig: string | null = null;
+  private readonly schemaEditor: SchemaEditor;
 
   private constructor(
     private readonly context: vscode.ExtensionContext,
@@ -148,6 +150,13 @@ export class DiagramPanel {
       },
     );
 
+    this.schemaEditor = new SchemaEditor({
+      uri: dbmlUri,
+      globalState: context.globalState,
+      refuseWhileReadOnly: (action) => this.refuseWhileReadOnly(action),
+      post: (msg) => this.post(msg),
+      tableNames: () => this.lastValidSchema.tables.map((t) => t.name),
+    });
     this.webviewPanel.webview.html = this.renderHtml();
     this.webviewPanel.webview.onDidReceiveMessage(
       (msg: WebviewToHost) => this.handleWebviewMessage(msg),
@@ -194,6 +203,11 @@ export class DiagramPanel {
     // The hide event may not have reached the extension host yet; a hidden panel will reload.
     if (!this.webviewPanel.visible) this.hydrated = false;
     this.webviewPanel.reveal(vscode.ViewColumn.Beside, true);
+  }
+
+  /** Code → diagram navigation (spec 19): the document link of a `Table` declaration lands here. */
+  public focusTable(table: QualifiedName): void {
+    this.whenHydrated(() => this.post({ type: 'diagram:focusTable', payload: { table } }));
   }
 
   public sendViewportCommand(action: ViewportCommand): void {
@@ -380,6 +394,27 @@ export class DiagramPanel {
         return;
       case 'error:log':
         console.error('[dddbml webview]', msg.payload.message, msg.payload.stack);
+        return;
+      case 'schema:addTable':
+        void this.schemaEditor.addTable(msg.payload);
+        return;
+      case 'schema:addField':
+        void this.schemaEditor.addField(msg.payload.table);
+        return;
+      case 'schema:addRef':
+        void this.schemaEditor.addRef(msg.payload.from, msg.payload.to, msg.payload.op);
+        return;
+      case 'schema:delete':
+        void this.schemaEditor.delete(msg.payload);
+        return;
+      case 'schema:undo':
+        void this.schemaEditor.undo(msg.payload.id);
+        return;
+      case 'schema:redo':
+        void this.schemaEditor.redo(msg.payload.id);
+        return;
+      case 'command:revealColumn':
+        void this.schemaEditor.revealColumn(msg.payload);
         return;
       default:
         return;

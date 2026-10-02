@@ -39,10 +39,14 @@ tiene que ser explícita.
   diagrama la revierte: el host guarda la edición inversa y la versión del documento tras
   aplicarla; el undo aplica la inversa solo si el documento no cambió desde entonces; si cambió,
   avisa y remite al Ctrl+Z del editor (el comando sale del historial sin aplicarse). (2026-10-01.)
+  *Implementación:* "no cambió" se compara por contenido (hash del texto), no por versión; ver
+  §Undo, detalles fijados.
 - [ ] **Borrar un campo que participa en un índice compuesto.** Opciones: quitar el campo del
   índice (y el índice si queda vacío) / rechazar con aviso. *No bloqueante* (default propuesto:
-  rechazar con aviso).
+  rechazar con aviso). **Implementado el default** (rechazar); un índice de **una sola** columna
+  sobre ese campo se borra con él y aparece en la confirmación (sin él el archivo no parsearía).
 - [ ] **Contenido de una tabla nueva.** Default propuesto: `id int [pk]`. *No bloqueante.*
+  **Implementado el default.**
 
 
 ## Diseño
@@ -65,6 +69,16 @@ webview, que reemplaza `tables` entero, no puede borrar una entrada que el host 
 Toda intención se rechaza (con aviso) si el panel está en solo lectura (spec 16, gate en dos capas)
 o si el buffer actual no parsea (no hay rangos fiables).
 
+Implementación (host, `schemaEditor.ts`): las intenciones de un panel corren **de a una** (cola). Cada
+una lee `document.getText()` + `document.version`, pide la edición al worker (op `schemaEdit`, canal
+`edit:<uri>`) y aplica el `WorkspaceEdit` solo si la versión sigue igual; si cambió, recalcula una
+vez y si vuelve a cambiar avisa ("kept changing") sin tocar nada. El gate de solo lectura se vuelve
+a mirar tras **cada** cálculo del worker (segundos en 5000 tablas: un merge o una vista git pudo
+cerrarlo), antes de `layout:place` y de aplicar; si está cerrado, avisa y no toca nada. El worker además **re-parsea el
+resultado** antes de devolverlo: una edición que dejaría el archivo inválido (p. ej. una tabla que
+aún nombra un bloque `Records` o `Dep`, o una ref inline declarada en un `TablePartial`) se rechaza
+con el motivo, nunca se aplica.
+
 ### Navegación
 
 - **Código → diagrama:** `DocumentLinkProvider` para `.dbml` que marca el nombre de cada
@@ -72,12 +86,20 @@ o si el buffer actual no parsea (no hay rangos fiables).
   "Show in diagram"). Ctrl+click abre el panel si no está abierto, centra la cámara en la tabla
   (`fitToBbox`) y la selecciona. Una tabla oculta o dentro de un grupo colapsado enfoca su grupo.
 - **Diagrama → código:** doble click en una tabla abre su línea (ya existe); doble click en un
-  campo abre la línea de ese campo (`findColumnLine`, extensión de `tableLocation.ts`).
+  campo abre la línea de ese campo (`findColumnLocation` en `tableLocation.ts`, op `locateColumn`;
+  cursor sobre el nombre del campo, canal `locate:<uri>` compartido con el doble click de tabla).
+- Detalle del link: los argumentos del comando son `[uri del documento, nombre calificado]`
+  (JSON en la query del `command:` URI), así el comando abre el panel de **ese** archivo. Los
+  rangos salen del worker (op `tableLinks`) con un **escaneo léxico** (comentarios y strings
+  excluidos, solo declaraciones de nivel superior) en vez de un parse: VS Code pide links en cada
+  pausa de tipeo, deben funcionar con el buffer roto, y un parse de 5000 tablas ocuparía la cola
+  del worker ~2 s. El foco espera a que el webview esté hidratado (`whenHydrated`).
 
 ### Crear tabla (click derecho en el canvas vacío)
 
 1. Menú "New table here" → el host pide el nombre (`showInputBox`, valida identificador, permite
-   `schema.tabla`, rechaza duplicados).
+   `schema.tabla`, rechaza duplicados). Al cerrarse el input vuelve a mirar el gate de solo lectura
+   (un merge o una vista git pudo abrirse mientras se escribía).
 2. Host → webview `layout:place { table, x, y }` (coords world del click, snap a grilla si está
    activo). El webview guarda la posición aunque la tabla aún no exista en el schema.
 3. Host inserta al final del archivo `Table <nombre> {\n  id int [pk]\n}`; si el click cayó dentro
@@ -85,18 +107,35 @@ o si el buffer actual no parsea (no hay rangos fiables).
 4. Guarda, abre el editor con el cursor en una línea nueva dentro del bloque, listo para escribir
    campos. Al llegar el schema, la tabla aparece donde se hizo click (no se auto-coloca).
 
+Detalles fijados: el nombre se escribe `tabla` o `schema.tabla`; cada parte es texto libre (se
+escribe entre `"…"` si lo necesita, `addDoubleQuoteIfNeeded` de `@dbml/core`) y una parte con punto
+va entre comillas en el input. El archivo guardado queda limpio (`Table x {⏎  id int [pk]⏎}`); la
+línea vacía indentada del cursor se inserta **después** de guardar, sin guardar (igual que "Agregar
+campo"), y el undo de la intención la quita junto con la tabla. Se separa del contenido previo con
+una línea en blanco y respeta el fin de línea del archivo (LF/CRLF). El miembro del `TableGroup` va
+antes de su `}` con la indentación de los demás miembros. El webview manda `x, y` ya ajustados a la
+grilla; el host los reenvía tal cual en `layout:place`, antes de aplicar la edición.
+
 ### Agregar campo
 
 Click derecho en una tabla → "Add field" → el host abre el editor, inserta una línea vacía con la
 indentación del bloque antes del `}` y coloca el cursor. No escribe nada más: el usuario teclea y
-guarda; el diagrama se actualiza al guardar.
+guarda; el diagrama se actualiza al guardar. Como no guarda, **no** produce `schema:applied` ni
+entra al historial del diagrama (el undo del editor lo cubre); sí respeta el gate de solo lectura.
 
 ### Crear FK (arrastre campo → campo)
 
 Arrastrar desde el puerto de un campo (fila visible en LOD `full`) hasta un campo de otra tabla.
 Al soltar, un popup elige la cardinalidad (`>`, `<`, `-`, `<>`). El host agrega `ref: <op>
 schema.tabla.campo` a los settings del campo origen (dentro del `[...]` existente, o creando
-`[ref: ...]`). Las refs a la misma tabla (self-ref) se permiten. Respeta el gate de solo lectura.
+`[ref: ...]`). Las refs a la misma tabla (self-ref) se permiten, pero el diagrama no dibuja
+self-loops (spec 05, límite conocido 3): no tienen arista, así que tampoco "Delete relation"; se
+editan o borran en el `.dbml` (o borrando el campo). Al elegir la cardinalidad de una self-ref el
+webview muestra la nota transitoria "Self-references are not drawn in the diagram; edit them in
+the .dbml", para que el soltar no parezca ignorado. Respeta el gate de solo lectura.
+El schema `public` se omite (`@dbml/core` 10 resuelve los endpoints sin schema a `public`, sea cual
+sea el schema de la tabla origen). Un `[]` pegado al tipo (`text[]`) es parte del tipo, no settings.
+Se rechaza una ref que ya existe (mismos extremos) y la de un campo inyectado por `TablePartial`.
 
 ### Borrar (tabla, campo, FK)
 
@@ -106,21 +145,94 @@ su línea en cada `TableGroup`; la entrada del sidecar queda huérfana (spec 03:
 limpia; así un undo recupera la posición). Campo: su línea y las refs que lo usan. FK: el `ref:`
 inline (y el `[]` si queda vacío) o la sentencia `Ref:`.
 
+Detalles fijados:
+- Todo borrado (también una FK sola) pide confirmación; el modal lista la cascada en `detail`. Tras
+  confirmar se recalcula contra el buffer actual; si la cascada difiere de la confirmada, se avisa y
+  no se aplica.
+- Una línea que queda vacía se borra entera (con su comentario final); si el bloque borrado estaba
+  entre dos líneas en blanco (o un borde del archivo) se lleva una de ellas. Al sacar un setting se
+  conservan los separadores del resto (`[ref: > a.id, not null]` → `[not null]`). Si se sacan los
+  últimos de la lista, del setting que queda se quita solo su coma (su comentario final se
+  conserva) y lo sacado se borra con la misma regla de líneas (cada línea vaciada con su comentario).
+- Un miembro de grupo se reconoce también por el alias de la tabla.
+- Campo: se rechaza si es la única columna, si viene de un `TablePartial` o si está en un índice
+  compuesto (ver Preguntas abiertas); un índice de una sola columna sobre él se borra con él.
+
 ### Escritura y autoguardado
 
 `applyEdit` + `document.save()` en cada intención. Si la configuración `files.autoSave` es `off`,
 la primera intención de la sesión muestra un `showWarningMessage` no modal: "dddbml writes your
 .dbml from the diagram; enable Auto Save to keep both in sync" con acción "Enable Auto Save"
 (`workbench.action.toggleAutoSave`) y "Don't show again" (memento global).
+"Primera intención" = la primera que guarda (no "Agregar campo"); "Don't show again" se guarda en
+`globalState` bajo `dddbml.autoSaveWarningDismissed`.
 
 ### Undo
 
 Cada intención aplicada produce un `SchemaEditCommand` en el historial del diagrama (spec 11) con
-un id; el host guarda `{ id, uri, versionAfter, inverse: TextEdit[], placed?: tabla }`. Ctrl+Z en el
-diagrama envía `schema:undo { id }`: el host aplica `inverse` si `document.version === versionAfter`
+un id; el host guarda `{ id, uri, textAfter, inverse: TextEdit[] }`. Ctrl+Z en el diagrama envía
+`schema:undo { id }`: el host aplica `inverse` si el texto del documento sigue siendo `textAfter`
 y guarda; si no, avisa ("the .dbml changed since; use Undo in the editor") y descarta el comando.
 Redo análogo con la edición directa. Deshacer "crear tabla" no borra su posición del sidecar
 (queda huérfana, spec 03), así un redo la vuelve a colocar en el mismo punto.
+
+Detalles fijados:
+- El **host** genera el id y lo informa con `schema:applied { id, label }` tras guardar; el webview
+  empuja entonces el `SchemaEditCommand`. El host guarda por panel `{ label, estado, edits
+  pendientes, hash (SHA-1) del texto }` (sin `placed`: el sidecar no se toca), con tope de 200
+  entradas como el historial (spec 11).
+- "El documento no cambió desde entonces" (Preguntas abiertas) se comprueba **por contenido**, no
+  por `document.version`: deshacer una edición posterior mueve la versión pero deja exactamente el
+  texto que dejó la anterior (si no, el segundo Ctrl+Z seguido siempre se rechazaría), y un
+  documento que VS Code cerró y reabrió vuelve a la versión 1 con otro texto (la versión podría
+  coincidir y aplicar offsets viejos). Cada transición guarda el hash del texto resultante.
+- Redo de "crear tabla": rehace la edición limpia (`edits` del worker), no el texto previo al undo,
+  que incluía la línea del cursor sin guardar; el archivo guardado queda limpio también tras redo.
+- Si el host no ejecuta un `schema:undo`/`schema:redo` (texto cambiado, id desconocido, estado que
+  no corresponde, solo lectura, edición rechazada por VS Code) responde `schema:discarded { id }` y
+  el webview saca el comando del historial sin aplicarlo.
+- Tras cada guardado se compara el texto con el esperado: si un participante de guardado (formato,
+  `trimTrailingWhitespace`, …) reescribió más que la edición, la inversa pasa a ser el diff mínimo
+  entre el texto actual y el anterior, así el undo restaura exactamente el texto previo igual.
+- La inversa la calcula el worker junto con la edición (`inverse` en offsets del texto editado).
+- Límite conocido: el host no distingue un participante de guardado de otro cambio que llegue
+  mientras `save()` está pendiente (el usuario tecleando en el editor, otra extensión). Ambos
+  quedan en el diff de respaldo, así que un Ctrl+Z del diagrama también revierte ese cambio
+  concurrente (el Ctrl+Z del editor lo recupera, la reversión es un `WorkspaceEdit`).
+
+### Webview (implementación)
+
+- **Canvas vacío** (`app.tsx`, `render/canvasMenu.ts`): click derecho sobre el fondo (viewport,
+  `.ddd-world`, grilla) abre un `ContextMenu` con "New table here". Las coords world del click se
+  ajustan con `gridSnapper()`; el grupo es el contenedor expandido (`derived.containers`) que
+  contiene el punto, el más interno si se solapan (los contenedores no reciben eventos, así que se
+  resuelve por geometría). En solo lectura el ítem sale deshabilitado.
+- **`layout:place`** → `placeTable` en el store: fija la posición aunque la tabla no esté en el
+  schema, quita un `hidden` huérfano con ese nombre (si no, la tabla recién creada sería invisible) y
+  persiste. Se ignora en solo lectura. `setSchema` no poda `positions` y el auto-placement sólo
+  coloca tablas sin posición, así que la tabla aparece donde se hizo click.
+- **Menú de tabla** (`tableNode.tsx`): "Add field", "Delete table" (al final, peligro). **Menú de
+  campo** (filas visibles en LOD `full`): "Delete field" arriba de los ítems de la tabla. Las filas
+  `removed`/`changed-old` del diff (columnas que el `.dbml` ya no tiene) son inertes y delegan en la
+  tabla. Doble click en un campo → `command:revealColumn`; en la tabla → `command:reveal`.
+- **Arrastre de FK** (`drag/fkDrag.ts`): cada fila viva tiene un puerto sobre el borde derecho de la
+  tabla (visible al hover). Es un gesto propio (no mueve tablas ni waypoints; cuenta en
+  `isGestureActive`, así Ctrl+Z no corre durante él). La línea borrador es un único
+  `<path class="ddd-fk-draft">` en el SVG overlay de aristas, escrito imperativamente por frame; el
+  campo bajo el puntero se resalta y se resuelve con `elementFromPoint` (`data-col` en la fila,
+  `data-id` en la tabla). Soltar sobre el mismo campo o fuera de un campo cancela; Escape cancela.
+  Al soltar se abre un `ContextMenu` con `Many-to-one (>)`, `One-to-many (<)`, `One-to-one (-)`,
+  `Many-to-many (<>)` → `schema:addRef`; Escape o click afuera lo cierran sin postear.
+- **Borrar FK**: botón "Delete relation" en la toolbar de la arista y menú contextual de la arista.
+  El edge se identifica por su clave remapeada; el `Ref.id` sale de `refKeyByStableId`. Si varias
+  refs comparten la clave (duplicadas) la acción queda deshabilitada: no se sabe cuál borrar.
+- **Undo** (spec 11): `SchemaEditCommand { id, label }`; ver allí el eco de `setSchema` que evita
+  vaciar la pila cuando el cambio de tablas lo causó la propia edición.
+- **`diagram:focusTable`** (`render/focusTable.ts`): `fitToBbox` con zoom máximo 100 % (una tabla
+  sola no se agranda más) y la selecciona. Miembro de grupo colapsado → encuadra el nodo del grupo
+  sin seleccionar. Tabla oculta → aviso "X is hidden." y, si su grupo está expandido y visible,
+  encuadra el contenedor; si no, la cámara no se mueve. Tabla ausente del schema (buffer sin
+  guardar) → aviso, sin mover la cámara. Los avisos usan la nota transitoria del webview (spec 13).
 
 ## Modelo de datos / tipos afectados
 
@@ -128,13 +240,41 @@ Redo análogo con la edición directa. Deshacer "crear tabla" no borra su posici
   `schema:addRef { from: {table, column}, to: {table, column}, op }`,
   `schema:delete { kind: 'table' | 'field' | 'ref', … }`, `command:revealColumn { table, column }`.
 - `HostToWebview`: `layout:place { table, x, y }`, `diagram:focusTable { table }`.
+- Forma exacta implementada (`src/shared/types.ts`):
+  ```ts
+  type RefOp = '>' | '<' | '-' | '<>';
+  interface ColumnRef { table: QualifiedName; column: string }
+  type SchemaDeleteTarget =
+    | { kind: 'table'; table: QualifiedName }
+    | { kind: 'field'; table: QualifiedName; column: string }
+    | { kind: 'ref'; refId: string };            // Ref.id
+  // WebviewToHost
+  | { type: 'schema:addTable'; payload: { x: number; y: number; group?: string } }
+  | { type: 'schema:addField'; payload: { table: QualifiedName } }
+  | { type: 'schema:addRef'; payload: { from: ColumnRef; to: ColumnRef; op: RefOp } }
+  | { type: 'schema:delete'; payload: SchemaDeleteTarget }
+  | { type: 'schema:undo'; payload: { id: string } }
+  | { type: 'schema:redo'; payload: { id: string } }
+  | { type: 'command:revealColumn'; payload: ColumnRef }
+  // HostToWebview
+  | { type: 'layout:place'; payload: { table: QualifiedName; x: number; y: number } }
+  | { type: 'diagram:focusTable'; payload: { table: QualifiedName } }
+  | { type: 'schema:applied'; payload: { id: string; label: string } }
+  | { type: 'schema:discarded'; payload: { id: string } }
+  ```
+- Worker (`parseClient.ts` `ParseOps`): ops nuevas `locateColumn`, `tableLinks`, `schemaEdit`
+  (además de `parse` y `locate`); un solo despachador `parseOps.ts` lo usan el worker y
+  `testing/parseSetup.ts`. Las ediciones son offsets UTF-16 (`textEdits.ts`, puro, lo importan
+  host y worker); el host las convierte con `document.positionAt`.
 - Store: `positions` acepta claves de tablas aún no presentes en el schema (ya es un `Map` por
   nombre); `setSchema` no las poda.
 - Sidecar: sin cambios.
 
 ## Puntos de extensión / integración
 
-`src/extension/tableLocation.ts` (rangos por tokens) y nuevo `src/extension/schemaEdits.ts` (puro:
+`src/extension/tableLocation.ts` (rangos por tokens), `dbmlModel.ts` (vista tipada del modelo de
+`@dbml/core`), `dbmlScan.ts` (léxico mínimo para separadores y miembros de grupo que los tokens del
+parser no cubren), `schemaEditor.ts` (host: cola, gate, versión, undo) y nuevo `src/extension/schemaEdits.ts` (puro:
 fuente + intención → `TextEdit[]`, testeable sin VS Code). **Ambos corren dentro del worker de
 parse** (`parseWorker.ts`): cada consulta de posiciones o cálculo de edición es un op nuevo de
 `ParseRequest` (`parseClient.ts` + `parseWorker.ts` + `testing/parseSetup.ts`); el host nunca importa
@@ -166,6 +306,11 @@ muestra un `showWarningMessage` con el motivo y no toca ningún archivo.
 
 Las intenciones son eventos discretos; el costo es un parse del archivo (~1 s en `huge.dbml`, ver
 el worker de parse de la sesión records/deps). Ningún cambio en el camino de pan/zoom/drag.
+
+Medido (worker en proceso, `huge.dbml`, 5000 tablas, máquina cargada): una intención cuesta **dos**
+parses — el de la fuente y el de verificación del resultado — ~3.7 s en total para borrar una
+tabla; los links de un archivo de 1 MB, ~25 ms (escaneo léxico, sin parse). Un borrado reusa el
+cálculo que se confirmó si el documento no cambió mientras el modal estaba abierto.
 
 ## Test plan
 

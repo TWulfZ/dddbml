@@ -126,7 +126,7 @@ interface ExportedDatabase {
   records?: ExportedRecords[];
 }
 
-function unquote(s: string): string {
+export function unquote(s: string): string {
   if (!s) return s;
   const first = s.charAt(0);
   const last = s.charAt(s.length - 1);
@@ -136,7 +136,7 @@ function unquote(s: string): string {
   return s;
 }
 
-function qualify(schemaName: string | null | undefined, tableName: string): QualifiedName {
+export function qualify(schemaName: string | null | undefined, tableName: string): QualifiedName {
   const s = unquote((schemaName ?? '').trim());
   const t = unquote(tableName.trim());
   return `${s && s.length > 0 ? s : 'public'}.${t}`;
@@ -343,7 +343,7 @@ function normalizeRelation(rel: unknown): RefEndpointRelation {
   return '1';
 }
 
-function stableRefId(
+export function stableRefId(
   srcTable: string,
   srcCols: string[],
   tgtTable: string,

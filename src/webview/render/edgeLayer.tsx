@@ -16,7 +16,9 @@ import type { EdgeStyle } from '../state/history';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
-import { IconReset, IconSettings } from '../icons';
+import { IconReset, IconSettings, IconTrash } from '../icons';
+import { postToHost } from '../vscode';
+import { ContextMenu, clampMenuAnchor } from './contextMenu';
 
 interface GroupSize {
   name: string;
@@ -29,6 +31,8 @@ interface GroupSize {
 interface EdgeLayerProps {
   /** ALL effective refs — routed once (memoized) and culled to `visibleRefIds` at render. */
   refs: Ref[];
+  /** Parser `Ref.id` → edge key; deleting an edge names the ref by its parser id (spec 19). */
+  refKeyByStableId: ReadonlyMap<string, string>;
   /** Ids of refs with ≥ 1 visible endpoint; `null` = render every route (e.g. before first cull). */
   visibleRefIds: Set<string> | null;
   /** Current zoom LOD. `'rect'` (low zoom) → straight lines, no markers/dots/overlay. */
@@ -125,7 +129,7 @@ interface EdgeHitProps {
 /** Hit path (+ hover flow) of an unselected edge in the overlay SVG; memoized like EdgeStroke. */
 const EdgeHit = memo(function EdgeHit({ route: r, color, hovered, onHover, onUnhover, onSelect }: EdgeHitProps) {
   return (
-    <g style={color ? { color } : undefined}>
+    <g data-edge={r.id} style={color ? { color } : undefined}>
       {hovered ? <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} /> : null}
       <path
         d={r.d}
@@ -139,7 +143,7 @@ const EdgeHit = memo(function EdgeHit({ route: r, color, hovered, onHover, onUnh
   );
 });
 
-function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, worldBbox, refDiff, deps }: EdgeLayerProps) {
+function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, rows, groupSizes, worldBbox, refDiff, deps }: EdgeLayerProps) {
   const density = useAppStore((s) => s.settings.ui.density);
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
@@ -155,6 +159,8 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
   }, [readOnly]);
   const [hover, setHover] = useState<HoverState | null>(null);
   const [clickPos, setClickPos] = useState<{ x: number; y: number } | null>(null);
+  const [edgeMenu, setEdgeMenu] = useState<{ x: number; y: number; refId: string } | null>(null);
+  const closeEdgeMenu = useCallback(() => setEdgeMenu(null), []);
 
   const groupByName = useMemo(() => {
     const m = new Map<string, GroupSize>();
@@ -341,6 +347,31 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
     );
   };
 
+  /** The single parser ref drawn as edge `key`; null when several refs share it (ambiguous delete). */
+  const stableRefIdOf = (key: string): string | null => {
+    let found: string | null = null;
+    for (const [id, k] of refKeyByStableId) {
+      if (k !== key) continue;
+      if (found !== null) return null;
+      found = id;
+    }
+    return found;
+  };
+  const deleteRelation = (key: string) => {
+    const refId = stableRefIdOf(key);
+    if (refId === null || isCanvasReadOnly(store.getState())) return;
+    postToHost({ type: 'schema:delete', payload: { kind: 'ref', refId } });
+  };
+  const onOverlayContextMenu = (e: MouseEvent) => {
+    const key = (e.target as Element).closest('[data-edge]')?.getAttribute('data-edge');
+    if (!key) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setClickPos({ x: e.clientX, y: e.clientY });
+    store.getState().setSelectedEdge(key);
+    setEdgeMenu({ ...clampMenuAnchor(e.clientX, e.clientY, 200, 40), refId: key });
+  };
+
   const selectedRoute = selectedEdgeId
     ? routes.find((r) => r.id === selectedEdgeId) ?? depRoutes.find((r) => r.id === selectedEdgeId) ?? null
     : null;
@@ -415,7 +446,9 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
 
       {/* Overlay layer: interactive handles. z-index above tables so handles stay grabbable
           even where an edge crosses a table. SVG is pointer-transparent; only handles catch. */}
-      <svg class="ddd-edges ddd-edges-overlay" {...svgSize} style={svgStyle}>
+      <svg class="ddd-edges ddd-edges-overlay" {...svgSize} style={svgStyle} onContextMenu={onOverlayContextMenu}>
+        {/* FK drag draft line (spec 19); `d` is written imperatively by fkDrag.ts, never by Preact. */}
+        <path class="ddd-fk-draft" />
         {lowZoom || readOnly ? null : visibleRoutes.map((r) => {
           const selected = r.id === selectedEdgeId;
           const color = edgeLayouts.get(r.id)?.color;
@@ -433,7 +466,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
             );
           }
           return (
-            <g key={r.id} style={color ? { color } : undefined}>
+            <g key={r.id} data-edge={r.id} style={color ? { color } : undefined}>
               {/* Selected highlight first, then the marching-dot flow ON TOP so it stays visible while
                   selected (the opaque highlight used to cover it). */}
               <path d={r.d} class="ddd-edge is-selected" style={color ? { stroke: color } : undefined} />
@@ -573,10 +606,30 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
                   <IconSettings size={13} />
                 </Button>
               </Tooltip>
+              {refById.has(selectedRoute.id) ? (
+                <Tooltip label="Delete relation">
+                  <Button
+                    variant="toolbar"
+                    size="tool"
+                    disabled={stableRefIdOf(selectedRoute.id) === null}
+                    onClick={() => deleteRelation(selectedRoute.id)}
+                  >
+                    <IconTrash size={13} />
+                  </Button>
+                </Tooltip>
+              ) : null}
             </div>,
             document.body,
           )
         : null}
+      {edgeMenu && !readOnly ? (
+        <ContextMenu
+          x={edgeMenu.x}
+          y={edgeMenu.y}
+          items={[{ label: 'Delete relation', danger: true, disabled: stableRefIdOf(edgeMenu.refId) === null, onClick: () => deleteRelation(edgeMenu.refId) }]}
+          onClose={closeEdgeMenu}
+        />
+      ) : null}
       {colorPopup && !readOnly ? (
         <ColorPopup
           current={depColor(depById.get(colorPopup.refId), edgeLayouts.get(colorPopup.refId)) ?? '#888888'}

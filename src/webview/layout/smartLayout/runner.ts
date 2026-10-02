@@ -126,6 +126,10 @@ export async function runSmartLayout(mode: AutoArrangeMode, opts: ArrangeOptions
   const s = store.getState();
   if (s.schema.tables.length === 0) return;
   if (isCanvasReadOnly(s)) return; // blocking merge / git overlay (spec 14/16): the layout is read-only
+  if (mode === 'selection' && s.selection.size === 0) {
+    s.showNotice('Select tables first');
+    return;
+  }
 
   const colCount = new Map<QualifiedName, number>();
   for (const t of s.schema.tables) colCount.set(t.name, t.columns.length);

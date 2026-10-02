@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fake, Uri, type FakeWebviewPanel } from './vscodeFake';
+import { fake, FakeMemento, Uri, type FakeWebviewPanel } from './vscodeFake';
 import { DiagramPanel } from '../panel';
 import type { Layout } from '../../shared/types';
 
@@ -27,6 +27,7 @@ export interface Harness {
   panel: DiagramPanel;
   writeSidecar(text: string): void;
   readSidecar(): string;
+  readDbml(): string;
   /** Messages of `type` posted since the last `mark()`. */
   since(type: string): Array<{ type: string; payload?: unknown }>;
   mark(): void;
@@ -41,14 +42,14 @@ export function newDir(): string {
 }
 
 /** `reuseDir` reopens an existing diagram (same files, same view-state store) as-is. */
-export async function openPanel(opts: { dbml?: string; sidecar?: string | null; reuseDir?: string } = {}): Promise<Harness> {
+export async function openPanel(opts: { dbml?: string; sidecar?: string | null; reuseDir?: string; globalState?: FakeMemento } = {}): Promise<Harness> {
   const dir = opts.reuseDir ?? newDir();
   if (!opts.reuseDir) {
     writeFileSync(join(dir, 'd.dbml'), opts.dbml ?? DBML);
     if (opts.sidecar !== null) writeFileSync(join(dir, 'd.dbml.layout.json'), opts.sidecar ?? sidecarText({ 'public.a': { x: 0, y: 0 }, 'public.b': { x: 400, y: 0 } }));
   }
   const dbml = Uri.file(join(dir, 'd.dbml'));
-  const context = { extensionUri: Uri.file('/ext'), globalStorageUri: Uri.file(join(dir, 'global')) };
+  const context = { extensionUri: Uri.file('/ext'), globalStorageUri: Uri.file(join(dir, 'global')), globalState: opts.globalState ?? new FakeMemento() };
   DiagramPanel.createOrShow(context as never, dbml as never);
   const web = fake.panels[fake.panels.length - 1]!;
   const panel = DiagramPanel.get(dbml as never)!;
@@ -61,6 +62,7 @@ export async function openPanel(opts: { dbml?: string; sidecar?: string | null; 
     panel,
     writeSidecar: (text) => writeFileSync(join(dir, 'd.dbml.layout.json'), text),
     readSidecar: () => readFileSync(join(dir, 'd.dbml.layout.json'), 'utf8'),
+    readDbml: () => readFileSync(join(dir, 'd.dbml'), 'utf8'),
     since: (type) => web.posted.slice(markAt).filter((m) => m.type === type),
     mark: () => { markAt = web.posted.length; },
   };

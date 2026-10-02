@@ -296,6 +296,22 @@ export interface GitStatusSummary {
   dirty: boolean;
 }
 
+/* ----- Assisted editing (see specs/19) ----- */
+
+/** DBML relationship operator as written in `ref: <op> table.column` (`>` = many-to-one). */
+export type RefOp = '>' | '<' | '-' | '<>';
+
+export interface ColumnRef {
+  table: QualifiedName;
+  column: string;
+}
+
+export type SchemaDeleteTarget =
+  | { kind: 'table'; table: QualifiedName }
+  | { kind: 'field'; table: QualifiedName; column: string }
+  /** `refId` is `Ref.id`. */
+  | { kind: 'ref'; refId: string };
+
 /* ----- Settings ----- */
 
 export type UiDensity = 'compact' | 'cozy' | 'comfortable';
@@ -411,7 +427,15 @@ export type HostToWebview =
   | { type: 'git:diff:exit' }
   | { type: 'export:prompt' }
   | { type: 'exportImage:prompt' }
-  | { type: 'image:result'; payload: { ok: boolean; path?: string; message?: string } };
+  | { type: 'image:result'; payload: { ok: boolean; path?: string; message?: string } }
+  /** World position for a table the host is about to write; it may precede the table in the schema. */
+  | { type: 'layout:place'; payload: { table: QualifiedName; x: number; y: number } }
+  /** Center and select the table (a hidden one or one in a collapsed group focuses its group). */
+  | { type: 'diagram:focusTable'; payload: { table: QualifiedName } }
+  /** A `.dbml` edit from the diagram landed; `id` keys its later `schema:undo` / `schema:redo`. */
+  | { type: 'schema:applied'; payload: { id: string; label: string } }
+  /** The host did not undo/redo `id` (the `.dbml` changed since, or it was refused): drop it from history. */
+  | { type: 'schema:discarded'; payload: { id: string } };
 
 /* ----- Protocol: Webview → Host ----- */
 
@@ -439,6 +463,14 @@ export type WebviewToHost =
   | { type: 'git:diff:enter' }
   | { type: 'git:diff:exit' }
   | { type: 'notify:headerColorOverride'; payload: { table: QualifiedName } }
+  /** World coords of the context-menu click; `group` = expanded group container under it. */
+  | { type: 'schema:addTable'; payload: { x: number; y: number; group?: string } }
+  | { type: 'schema:addField'; payload: { table: QualifiedName } }
+  | { type: 'schema:addRef'; payload: { from: ColumnRef; to: ColumnRef; op: RefOp } }
+  | { type: 'schema:delete'; payload: SchemaDeleteTarget }
+  | { type: 'schema:undo'; payload: { id: string } }
+  | { type: 'schema:redo'; payload: { id: string } }
+  | { type: 'command:revealColumn'; payload: ColumnRef }
   | { type: 'error:log'; payload: { message: string; stack?: string } };
 
 /**

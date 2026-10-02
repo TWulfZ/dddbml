@@ -1,12 +1,27 @@
 import type { QualifiedName } from '../shared/types';
 import type { parseDbml } from './parser';
+import type { SchemaEditIntent, SchemaEditResult } from './schemaEdits';
+import type { TableNameRange } from './tableLocation';
 
 export type ParseResult = ReturnType<typeof parseDbml>;
 
-/** `locate` finds a table's declaration line (go-to-source) with the same parser, off-thread too. */
-export type ParseRequest = { op: 'parse'; source: string } | { op: 'locate'; source: string; table: QualifiedName };
+/**
+ * Everything that needs `@dbml/core` runs in the worker (spec 18): the parse itself and every source
+ * lookup or edit computed from it (go-to-source, document links, spec 19 schema edits).
+ */
+export interface ParseOps {
+  parse: { request: { source: string }; result: ParseResult };
+  /** 0-based `Table` declaration line. */
+  locate: { request: { source: string; table: QualifiedName }; result: number | null };
+  /** 0-based position of a column's name. */
+  locateColumn: { request: { source: string; table: QualifiedName; column: string }; result: { line: number; character: number } | null };
+  tableLinks: { request: { source: string }; result: TableNameRange[] };
+  schemaEdit: { request: { source: string; intent: SchemaEditIntent }; result: SchemaEditResult };
+}
+export type ParseOp = keyof ParseOps;
+export type ParseRequest = { [K in ParseOp]: { op: K } & ParseOps[K]['request'] }[ParseOp];
 export type ParseJob = ParseRequest & { id: number };
-export type ParseReply = { id: number; result: ParseResult } | { id: number; line: number | null };
+export type ParseReply = { [K in ParseOp]: { id: number; op: K; value: ParseOps[K]['result'] } }[ParseOp];
 
 /** The subset of `node:worker_threads` Worker the client needs; injectable for tests. */
 export interface WorkerLike {
@@ -28,7 +43,21 @@ export interface ParseClient {
   parse(source: string, channel?: ParseChannel): Promise<ParseResult | null>;
   /** 0-based declaration line, `null` if absent, `undefined` when superseded. */
   locate(source: string, table: QualifiedName, channel: ParseChannel): Promise<number | null | undefined>;
+  /** Any op; `undefined` when superseded. */
+  request<K extends ParseOp>(request: Extract<ParseRequest, { op: K }>, channel: ParseChannel): Promise<ParseOps[K]['result'] | undefined>;
   dispose(): void;
+}
+
+/** What a request resolves to when the worker dies under it. */
+function crashReply(job: Job, message: string): ParseReply {
+  const id = job.id;
+  switch (job.request.op) {
+    case 'parse': return { id, op: 'parse', value: { schema: null, error: { message } } };
+    case 'locate': return { id, op: 'locate', value: null };
+    case 'locateColumn': return { id, op: 'locateColumn', value: null };
+    case 'tableLinks': return { id, op: 'tableLinks', value: [] };
+    case 'schemaEdit': return { id, op: 'schemaEdit', value: { ok: false, reason: message } };
+  }
 }
 
 interface Job {
@@ -62,9 +91,7 @@ export function createParseClient(spawn: () => WorkerLike): ParseClient {
       worker = null;
       const job = inFlight;
       inFlight = null;
-      if (job) {
-        settle(job, job.request.op === 'parse' ? { id: job.id, result: { schema: null, error: { message } } } : { id: job.id, line: null });
-      }
+      if (job) settle(job, crashReply(job, message));
       pump();
     };
     w.on('message', (reply) => {
@@ -101,15 +128,20 @@ export function createParseClient(spawn: () => WorkerLike): ParseClient {
     });
   };
 
+  const request = async <K extends ParseOp>(req: Extract<ParseRequest, { op: K }>, channel: ParseChannel): Promise<ParseOps[K]['result'] | undefined> => {
+    const reply = await run(req, channel);
+    // The worker answers each job with its own op; TS cannot correlate the two unions.
+    return reply && reply.op === req.op ? (reply.value as ParseOps[K]['result']) : undefined;
+  };
+
   return {
     async parse(source, channel = 'live') {
-      const reply = await run({ op: 'parse', source }, channel);
-      return reply && 'result' in reply ? reply.result : null;
+      return (await request({ op: 'parse', source }, channel)) ?? null;
     },
-    async locate(source, table, channel) {
-      const reply = await run({ op: 'locate', source, table }, channel);
-      return reply && 'line' in reply ? reply.line : undefined;
+    locate(source, table, channel) {
+      return request({ op: 'locate', source, table }, channel);
     },
+    request,
     dispose() {
       disposed = true;
       for (const job of pending.values()) job.resolve(null);

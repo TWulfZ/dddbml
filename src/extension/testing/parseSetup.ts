@@ -1,5 +1,4 @@
-import { parseDbml } from '../parser';
-import { findTableLine } from '../tableLocation';
+import { runParseJob } from '../parseOps';
 import type { ParseJob, ParseReply, WorkerLike } from '../parseClient';
 import { setParseWorkerFactory } from '../parseService';
 
@@ -8,9 +7,7 @@ setParseWorkerFactory((): WorkerLike => {
   let onMessage: ((r: ParseReply) => void) | null = null;
   return {
     postMessage(job: ParseJob) {
-      setImmediate(() => onMessage?.(
-        job.op === 'parse' ? { id: job.id, result: parseDbml(job.source) } : { id: job.id, line: findTableLine(job.source, job.table) },
-      ));
+      setImmediate(() => onMessage?.(runParseJob(job)));
     },
     on(event: string, cb: (arg: never) => void) {
       if (event === 'message') onMessage = cb as (r: ParseReply) => void;

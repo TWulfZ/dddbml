@@ -235,8 +235,9 @@ un Ctrl+Z (un solo `ArrangeCommand` con posiciones y formas de aristas previas) 
 pide confirmación (decisión 2026-10-01).
 Corre en el webview (`layout/resetLayout.ts`): el host sólo valida el gate y postea
 `command:resetLayout`; el webview recalcula con el auto-layout de la primera apertura (dagre),
-limpia la forma de **todas** las aristas, vacía el historial (sin undo: memento futuro, spec 11)
-y persiste por el `layout:persist` normal. Las entradas huérfanas (tabla fuera del schema)
+limpia la forma de **todas** las aristas, empuja un `ArrangeCommand` (label `Reset layout`, con las
+posiciones y los `EdgeLayout` previos; el historial anterior se conserva debajo) y persiste por el
+`layout:persist` normal. Las entradas huérfanas (tabla fuera del schema)
 conservan posición y color: limpiarlas es trabajo de `Prune orphans`. Antes el host escribía
 `tables: {}`, que borraba colores y flags ocultos y dejaba los waypoints absolutos colgando.
 

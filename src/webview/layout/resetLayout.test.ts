@@ -63,6 +63,17 @@ describe('Reset Layout (spec 03, F24)', () => {
     expect(persisted.edges).toEqual({ [EDGE]: { color: '#0000ff' } });
   });
 
+  it('is undone by one Ctrl+Z: previous positions and edge shapes come back (spec 03)', () => {
+    store.getState().pushMoveCommand({ kind: 'move', label: 'Move users', timestamp: 0, from: [['public.users', { x: 0, y: 0 }]], to: [['public.users', { x: 5000, y: 5000 }]] });
+    resetLayout();
+    expect(store.getState().past.map((c) => c.kind)).toEqual(['move', 'arrange']);
+    store.getState().undo();
+    const s = store.getState();
+    expect(s.positions.get('public.users')).toEqual({ x: 5000, y: 5000 });
+    expect(s.positions.get('public.orders')).toEqual({ x: -3000, y: 70 });
+    expect(s.edgeLayouts.get(EDGE)).toEqual({ waypoints: [{ x: 4000, y: 4000 }], sourceSide: 'top', targetSide: 'bottom', color: '#0000ff' });
+  });
+
   it('does nothing while the canvas is read-only', () => {
     store.getState().enterTimeTravel('abc', 'abc');
     const before = store.getState().positions;

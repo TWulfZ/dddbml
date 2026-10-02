@@ -2,6 +2,8 @@ import { store } from './state/store';
 import { fitToContent, resetView, zoomAtCenter } from './render/viewport';
 import { runSmartLayout, runEdgeOrdering } from './layout/smartLayout';
 import { resetLayout } from './layout/resetLayout';
+import { focusTable } from './render/focusTable';
+import { schedulePersist } from './persistence';
 import type { HostToWebview } from '../shared/types';
 
 /** Applies one host → webview message to the store (split from `main.tsx` so it can be tested). */
@@ -106,6 +108,22 @@ export function handleHostMessage(msg: HostToWebview): void {
     case 'git:diff:enter':
       // Keep the current (working) schema on screen; overlay the diff and enter read-only.
       state.enterDiff(msg.payload.baseLabel, msg.payload.headLabel, msg.payload.diff);
+      return;
+    case 'layout:place': {
+      // Arrives before the table does: held now, auto-placement then finds it already positioned.
+      const { table, x, y } = msg.payload;
+      state.placeTable(table, x, y);
+      if (store.getState().positions !== state.positions) schedulePersist();
+      return;
+    }
+    case 'diagram:focusTable':
+      focusTable(msg.payload.table);
+      return;
+    case 'schema:applied':
+      state.pushSchemaCommand(msg.payload.id, msg.payload.label);
+      return;
+    case 'schema:discarded':
+      state.dropSchemaCommand(msg.payload.id);
       return;
   }
 }

@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { disposeParseService } from './parseService';
+import { disposeParseService, parseRequest } from './parseService';
 import { DiagramPanel } from './panel';
 import './exporters'; // side-effect: register built-in exporters
 
@@ -78,6 +78,17 @@ export function activate(context: vscode.ExtensionContext): void {
       else active.sendAutoArrange(pick.mode);
     }),
 
+    vscode.languages.registerDocumentLinkProvider({ language: 'dbml', scheme: 'file' }, { provideDocumentLinks: tableLinks }),
+
+    // Target of the `Table` declaration links: [document uri, qualified table name].
+    vscode.commands.registerCommand(REVEAL_IN_DIAGRAM, (uriArg?: unknown, table?: unknown) => {
+      if (typeof uriArg !== 'string' || typeof table !== 'string') return;
+      const uri = vscode.Uri.parse(uriArg);
+      if (!isWorkingDbml(uri)) return;
+      DiagramPanel.createOrShow(context, uri);
+      DiagramPanel.get(uri)?.focusTable(table); // queued by the panel until the webview is hydrated
+    }),
+
     vscode.commands.registerCommand('dddbml.zoomIn',       () => DiagramPanel.getActive()?.sendViewportCommand('zoomIn')),
     vscode.commands.registerCommand('dddbml.zoomOut',      () => DiagramPanel.getActive()?.sendViewportCommand('zoomOut')),
     vscode.commands.registerCommand('dddbml.resetView',    () => DiagramPanel.getActive()?.sendViewportCommand('resetView')),
@@ -90,6 +101,24 @@ export function deactivate(): Promise<void> {
   DiagramPanel.disposeAll();
   disposeParseService();
   return DiagramPanel.settle();
+}
+
+const REVEAL_IN_DIAGRAM = 'dddbml.revealInDiagram';
+
+/** Code → diagram (spec 19): Ctrl+click on a `Table` declaration's name focuses it in the diagram. */
+async function tableLinks(doc: vscode.TextDocument): Promise<vscode.DocumentLink[]> {
+  if (!isWorkingDbml(doc.uri)) return [];
+  // Positions come from the worker: the host never parses DBML (spec 18).
+  const ranges = await parseRequest({ op: 'tableLinks', source: doc.getText() }, `links:${doc.uri.toString()}`);
+  return (ranges ?? []).map((r) => {
+    const args = encodeURIComponent(JSON.stringify([doc.uri.toString(), r.table]));
+    const link = new vscode.DocumentLink(
+      new vscode.Range(doc.positionAt(r.start), doc.positionAt(r.end)),
+      vscode.Uri.parse(`command:${REVEAL_IN_DIAGRAM}?${args}`),
+    );
+    link.tooltip = 'Show in diagram';
+    return link;
+  });
 }
 
 const NO_DBML_MESSAGE = 'dddbml: open a working-tree .dbml file first (git/read-only views are not supported).';
