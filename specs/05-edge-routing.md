@@ -568,7 +568,18 @@ Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traz
 2. **Crossing-min greedy/local** (§9): A* penaliza cruces sólo contra lo ya ruteado, en orden
    `ref.id` — determinista pero no globalmente óptimo (más débil que un layer-sweep global).
 3. **Tie-break de lado** binario (45° ⇒ horizontal) en el render path. Aceptable.
-3. **Self-loops** (ref de tabla a sí misma) no soportados visualmente. v1.1.
+3. ~~**Self-loops** no soportados.~~ **Decisión 2026-10-01: se dibujan** (ver §Self-loops).
+
+### Self-loops (decisión 2026-10-01)
+
+Una ref cuyo origen y destino son la **misma tabla visible** (no dos tablas colapsadas en el mismo
+grupo, que siguen sin arista) se dibuja como lazo ortogonal por **un mismo lado** (por defecto
+`right`; el flip L/R aplica a ambos extremos): sale del puerto de la columna origen, se aleja
+`LOOP_OFFSET` (2× stub) más un escalón por cada otro lazo del mismo lado de esa tabla, corre en
+vertical hasta la fila de la columna destino y vuelve a entrar por el mismo lado. Si origen y
+destino son la misma columna, los puertos se separan ±¼ de fila. Los puertos del lazo entran al
+grupo de puertos del lado como cualquier otra arista. v1: seleccionable, color, flip de lado,
+borrar (spec 19) y entra en culling/export; **sin waypoints editables** y fuera del A\* (§9).
 4. **Sin curvatura** en codos (90° rígidos). v1.1 opcional.
 5. **Retroceso en x-overlap** (target con borde izq dentro del extent-x del source ⇒
    `chooseSides` invierte el span y la ruta se devuelve, incluso a cero-waypoints):

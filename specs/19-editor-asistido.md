@@ -41,7 +41,9 @@ tiene que ser explícita.
   avisa y remite al Ctrl+Z del editor (el comando sale del historial sin aplicarse). (2026-10-01.)
   *Implementación:* "no cambió" se compara por contenido (hash del texto), no por versión; ver
   §Undo, detalles fijados.
-- [ ] **Borrar un campo que participa en un índice compuesto.** Opciones: quitar el campo del
+- [x] **Borrar un campo que participa en un índice compuesto.** **Decisión (2026-10-01):** se
+  rechaza con aviso; un índice de **una sola** columna se borra junto con el campo y aparece en la
+  confirmación. Opciones: quitar el campo del
   índice (y el índice si queda vacío) / rechazar con aviso. *No bloqueante* (default propuesto:
   rechazar con aviso). **Implementado el default** (rechazar); un índice de **una sola** columna
   sobre ese campo se borra con él y aparece en la confirmación (sin él el archivo no parsearía).
@@ -128,11 +130,8 @@ entra al historial del diagrama (el undo del editor lo cubre); sí respeta el ga
 Arrastrar desde el puerto de un campo (fila visible en LOD `full`) hasta un campo de otra tabla.
 Al soltar, un popup elige la cardinalidad (`>`, `<`, `-`, `<>`). El host agrega `ref: <op>
 schema.tabla.campo` a los settings del campo origen (dentro del `[...]` existente, o creando
-`[ref: ...]`). Las refs a la misma tabla (self-ref) se permiten, pero el diagrama no dibuja
-self-loops (spec 05, límite conocido 3): no tienen arista, así que tampoco "Delete relation"; se
-editan o borran en el `.dbml` (o borrando el campo). Al elegir la cardinalidad de una self-ref el
-webview muestra la nota transitoria "Self-references are not drawn in the diagram; edit them in
-the .dbml", para que el soltar no parezca ignorado. Respeta el gate de solo lectura.
+`[ref: ...]`). Las refs a la misma tabla (self-ref) se permiten y se dibujan como lazo (spec 05 §Self-loops,
+decisión 2026-10-01), así que también tienen "Delete relation". Respeta el gate de solo lectura.
 El schema `public` se omite (`@dbml/core` 10 resuelve los endpoints sin schema a `public`, sea cual
 sea el schema de la tabla origen). Un `[]` pegado al tipo (`text[]`) es parte del tipo, no settings.
 Se rechaza una ref que ya existe (mismos extremos) y la de un campo inyectado por `TablePartial`.
@@ -303,6 +302,10 @@ Toda intención rechazada (solo lectura, buffer que no parsea, nombre inválido,
 muestra un `showWarningMessage` con el motivo y no toca ningún archivo.
 
 ## Performance budget
+
+**Decisión (2026-10-01):** se mantiene la validación (segundo parse del resultado) aunque en
+`huge.dbml` una intención tarde ~3.7 s con la máquina cargada: nunca se escribe un `.dbml` que no
+parsea.
 
 Las intenciones son eventos discretos; el costo es un parse del archivo (~1 s en `huge.dbml`, ver
 el worker de parse de la sesión records/deps). Ningún cambio en el camino de pan/zoom/drag.
