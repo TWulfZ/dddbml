@@ -143,7 +143,9 @@ Detalles fijados:
   no se aplica.
 - Una línea que queda vacía se borra entera (con su comentario final); si el bloque borrado estaba
   entre dos líneas en blanco (o un borde del archivo) se lleva una de ellas. Al sacar un setting se
-  conservan los separadores del resto (`[ref: > a.id, not null]` → `[not null]`).
+  conservan los separadores del resto (`[ref: > a.id, not null]` → `[not null]`). Si se sacan los
+  últimos de la lista, del setting que queda se quita solo su coma (su comentario final se
+  conserva) y lo sacado se borra con la misma regla de líneas (cada línea vaciada con su comentario).
 - Un miembro de grupo se reconoce también por el alias de la tabla.
 - Campo: se rechaza si es la única columna, si viene de un `TablePartial` o si está en un índice
   compuesto (ver Preguntas abiertas); un índice de una sola columna sobre él se borra con él.

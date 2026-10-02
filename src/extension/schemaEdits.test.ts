@@ -172,6 +172,18 @@ describe('delete ref', () => {
     expect(after).toBe(BASE.replace('org int [ref: > orgs.id]', 'org int'));
   });
 
+  it('drops the last setting of a multi-line list with its own comment, keeping the kept line comment', () => {
+    const src = `Table a {\n  id int\n}\n\nTable b {\n  a_id int [\n    not null, // required\n    ref: > a.id // the fk\n  ]\n}\n`;
+    expect(run(src, { kind: 'delete', target: { kind: 'ref', refId: 'public.a(id)->public.b(a_id)' } }).after)
+      .toBe(`Table a {\n  id int\n}\n\nTable b {\n  a_id int [\n    not null // required\n  ]\n}\n`);
+  });
+
+  it('drops trailing settings of a one-line list without leaving a gap', () => {
+    const src = `Table a {\n  id int\n}\n\nTable b {\n  a_id int [not null , note: 'x', ref: > a.id] // c\n}\n`;
+    expect(run(src, { kind: 'delete', target: { kind: 'ref', refId: 'public.a(id)->public.b(a_id)' } }).after)
+      .toBe(`Table a {\n  id int\n}\n\nTable b {\n  a_id int [not null , note: 'x'] // c\n}\n`);
+  });
+
   it('removes a standalone Ref statement and one of the blank lines around it', () => {
     const { result, after } = run(BASE, { kind: 'delete', target: { kind: 'ref', refId: 'auth.users(id)->public.orgs(owner)' } });
     expect(after).toBe(BASE.replace('Ref owner_fk: orgs.owner > U.id [delete: cascade]\n\n', ''));

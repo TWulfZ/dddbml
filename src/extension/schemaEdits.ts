@@ -332,14 +332,23 @@ function settingRemovals(src: string, b: Bracket, drop: Set<number>): Array<{ st
     while (s > 0 && (src[s - 1] === ' ' || src[s - 1] === '\t')) s--;
     return [{ start: s, end: b.close + 1 }];
   }
+  let keep = n - 1;
+  while (drop.has(keep)) keep--;
   const out: Array<{ start: number; end: number }> = [];
   for (const i of drop) {
-    if (i < n - 1) out.push({ start: b.segments[i]!.start, end: b.segments[i + 1]!.start });
+    if (i < keep) out.push({ start: b.segments[i]!.start, end: b.segments[i + 1]!.start });
   }
-  if (drop.has(n - 1)) {
-    let keep = n - 1;
-    while (drop.has(keep)) keep--;
-    out.push({ start: b.segments[keep]!.end, end: b.segments[n - 1]!.end });
+  if (keep < n - 1) {
+    // Only the comma goes from the kept segment's line: whatever follows it (a `// comment`)
+    // belongs to that line; the dropped tail goes with line semantics, its own comments included.
+    const kept = b.segments[keep]!;
+    const comma = lex(src, kept.end, b.segments[keep + 1]!.start).find((t) => isPunct(src, t, ','));
+    if (comma) {
+      let s = comma.start;
+      while (s > kept.end && (src[s - 1] === ' ' || src[s - 1] === '\t')) s--;
+      out.push({ start: s, end: comma.end });
+    }
+    out.push(deletionRange(src, b.segments[keep + 1]!.start, b.segments[n - 1]!.end));
   }
   return out;
 }
