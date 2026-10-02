@@ -720,7 +720,8 @@ function localNotchCorners(
 /** True if the run at `segIndex` is an existing notch's dip bottom (drag = deepen, not create). */
 export function isDipRun(route: EdgeRoute, segIndex: number): boolean {
   const seg = route.segments[segIndex];
-  if (!seg || seg.rigid) return false;
+  // A loop's trunk is U-shaped like a notch, but a loop never carries waypoints.
+  if (!seg || seg.rigid || route.loop) return false;
   const corners = editableCornersOf(route);
   const j = segIndex - 1;
   const p1 = corners[j];

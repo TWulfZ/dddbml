@@ -595,8 +595,10 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
 - **Lado.** `sourceSide ?? targetSide` (sólo `left` cuenta; `top`/`bottom` persistidos se ignoran);
   `right` por defecto y **no se persiste**: el flip a la derecha borra el override. Waypoints
   persistidos de un lazo se ignoran.
-- **UI.** Seleccionado: sin handles de tramo; los dos endpoints siguen siendo handles de flip y
-  mueven ambos extremos. Toolbar: *Flip side* (en lugar de *Reset line*), color y *Delete relation*.
+- **UI.** Seleccionado: sin handles de tramo (ni doble clic de notch: `isDipRun` es falso en un
+  lazo), pero cada tramo conserva su línea de hit, que sólo selecciona — sin ella un clic o clic
+  derecho sobre el lazo seleccionado caía al canvas (deseleccionaba / menú de canvas). Los dos
+  endpoints siguen siendo handles de flip y mueven ambos extremos. Toolbar: *Flip side* (en lugar de *Reset line*), color y *Delete relation*.
   En LOD `rect` mantiene su forma (la recta puerto-puerto quedaría sobre el borde de la tabla).
 - **Fuera de:** A\* (`computeEdgeOrdering` los filtra), `computeEdgeResets`,
   `computeAutoShapeDrops`, "Reset relations" y la traslación de waypoints del drag: su única forma
@@ -643,7 +645,7 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
   `LOOP_OFFSET`; dos lazos del mismo lado se apilan (el de tramo menor adentro); un lazo del otro lado
   no empuja; misma columna ⇒ puertos ±¼ fila; flip ⇒ ambos extremos a la izquierda; waypoints y
   lados top/bottom persistidos se ignoran; entra al grupo de puertos; `routeMoved` de su tabla ==
-  rebuild completo. Clave (`edgeKey.test.ts`), caja de culling (`sceneCache.test.ts`), export
+  rebuild completo. Clave (`edgeKey.test.ts`), controles del lazo seleccionado (`edgeLayer.selected.test.ts`), caja de culling (`sceneCache.test.ts`), export
   (`imageExport.test.ts`), resets/drag (`edgeReset.test.ts`), A\* (`edgeOrdering.test.ts`) y flip
   (`dragController.test.ts`).
 - Bbox faltante ⇒ arista omitida (no crash).
