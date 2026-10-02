@@ -128,7 +128,11 @@ entra al historial del diagrama (el undo del editor lo cubre); sí respeta el ga
 Arrastrar desde el puerto de un campo (fila visible en LOD `full`) hasta un campo de otra tabla.
 Al soltar, un popup elige la cardinalidad (`>`, `<`, `-`, `<>`). El host agrega `ref: <op>
 schema.tabla.campo` a los settings del campo origen (dentro del `[...]` existente, o creando
-`[ref: ...]`). Las refs a la misma tabla (self-ref) se permiten. Respeta el gate de solo lectura.
+`[ref: ...]`). Las refs a la misma tabla (self-ref) se permiten, pero el diagrama no dibuja
+self-loops (spec 05, límite conocido 3): no tienen arista, así que tampoco "Delete relation"; se
+editan o borran en el `.dbml` (o borrando el campo). Al elegir la cardinalidad de una self-ref el
+webview muestra la nota transitoria "Self-references are not drawn in the diagram; edit them in
+the .dbml", para que el soltar no parezca ignorado. Respeta el gate de solo lectura.
 El schema `public` se omite (`@dbml/core` 10 resuelve los endpoints sin schema a `public`, sea cual
 sea el schema de la tabla origen). Un `[]` pegado al tipo (`text[]`) es parte del tipo, no settings.
 Se rechaza una ref que ya existe (mismos extremos) y la de un campo inyectado por `TablePartial`.

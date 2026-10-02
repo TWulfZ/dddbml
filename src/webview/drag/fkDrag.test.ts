@@ -65,16 +65,22 @@ describe('FK drag (spec 19 §Crear FK)', () => {
     expect(draftAttrs.get('d')).toBe('');
     expect(store.getState().refDraft).toEqual({ from: FROM, to: { table: 'public.users', column: 'id' }, x: 400, y: 300 });
 
+    const notice = store.getState().notice;
     commitRefDraft('>');
     expect(postToHost).toHaveBeenCalledWith({ type: 'schema:addRef', payload: { from: FROM, to: { table: 'public.users', column: 'id' }, op: '>' } });
     expect(store.getState().refDraft).toBeNull();
+    expect(store.getState().notice).toBe(notice);
   });
 
-  it('allows a self reference to another column of the same table', () => {
+  it('allows a self reference to another column of the same table, noting it will not be drawn', () => {
     startFkDrag(press(), FROM, port);
     underPointer = { table: 'public.orders', column: 'id' };
     listeners.get('pointerup')!(at(10, 10));
     expect(store.getState().refDraft?.to).toEqual({ table: 'public.orders', column: 'id' });
+    const before = store.getState().notice?.seq ?? 0;
+    commitRefDraft('>');
+    expect(postToHost).toHaveBeenCalledWith({ type: 'schema:addRef', payload: { from: FROM, to: { table: 'public.orders', column: 'id' }, op: '>' } });
+    expect(store.getState().notice).toEqual({ text: 'Self-references are not drawn in the diagram; edit them in the .dbml', seq: before + 1 });
   });
 
   it('drops on its own column or on empty canvas do nothing', () => {
