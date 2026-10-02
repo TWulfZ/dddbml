@@ -138,6 +138,8 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
   barra muestra sólo `+k hidden`, sin prev/next; el tooltip del contador avisa que prev/next las
   salta. Una tabla dentro de un grupo **colapsado**
   apunta al nodo del grupo (un objetivo por grupo), nunca a su posición cruda.
+  El nodo de un grupo colapsado con tablas cambiadas lleva el **mismo borde de diff** que una
+  tabla (`added`/`modified`/`removed`; estados mixtos → `modified`) (decisión 2026-10-01).
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
   layer); **cambiadas** (`'changed'`: mismo id pero otra cardinalidad, dirección o
   emparejamiento de columnas compuestas; se comparan en orientación canónica, así `a > b` y
