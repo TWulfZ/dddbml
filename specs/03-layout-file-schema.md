@@ -70,7 +70,7 @@ desde los flags del sidecar y el siguiente persist lo guarda. Time-travel nunca 
 | `edges.*.color` | string | opcional | Color de trazo por arista (valor de paleta BC o hex custom). Ausente = color de tema. Ver spec 05 §5. |
 | `edges.*.sourceSide` | string | opcional | `"left"` \| `"right"`. Override del lado de puerto origen elegido por `chooseSides`. Ver spec 05 §4. |
 | `edges.*.targetSide` | string | opcional | `"left"` \| `"right"`. Override del lado de puerto destino. Ver spec 05 §4. |
-| `edges.*.auto` | boolean | opcional | Sólo `true`. La forma (`waypoints` / lados) la escribió el ordenamiento A\* (spec 05 §9, F20), no el usuario: no cuenta como manual y se descarta al mover un extremo. Cualquier edición del usuario de la forma lo borra; el color no. Se omite si no hay forma. Aditivo: un sidecar sin él carga igual (todo cuenta como manual, como antes). |
+| `edges.*.auto` | boolean | opcional | Sólo `true`. La forma (`waypoints` / lados) la escribió el ordenamiento A\* (spec 05 §9, F20), no el usuario: no cuenta como manual y se descarta al mover un extremo. Cualquier edición del usuario de la forma lo borra; el color no. Se omite si no hay forma. Aditivo: un sidecar sin él carga igual (todo cuenta como manual, como antes). Nunca en una clave `dep:` (spec 18): se ignora al leer y no se escribe. |
 | `edges.*.dx` | integer | opcional | **Legacy v1.** Offset del midX para H-V-H simple. Soft-migrate a `waypoints` en el siguiente persist. |
 | `edges.*.dy` | integer | opcional | **Legacy v1.** Ver `dx`. |
 

@@ -113,7 +113,11 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
     - Con waypoints: Catmull-Rom → Béziers que **pasan por** cada waypoint. La tangente en los
       extremos es la dirección del stub, así que no hay quiebre donde la curva sale de la tabla.
 - La capa es el mismo SVG de `edgeLayer.tsx` (`<g class="ddd-dep-group">`), con trazo punteado
-  `--ddd-dep` y marker de flecha al final. El culling es el mismo que el de las refs.
+  `--ddd-dep` y marker de flecha al final. El culling es el mismo que el de las refs: `SceneCache`
+  (spec 04) calcula `effectiveDeps` junto a `effectiveRefs` y, con `showDeps`, sus cajas
+  (rects de extremos ∪ waypoints) entran en `edgeBoxes` y en `worldBbox`.
+- Drag: `DepRouteCache` re-rutea sólo las deps de las tablas movidas y conserva la identidad del
+  resto; cada trazo es un `DepStroke` memoizado (spec 04 "Drag incremental").
 - Color: `EdgeLayout.color` (sidecar) > `Dep.color` (DBML) > token.
 - Toggle efímero "Dependencies" en View options (`groupPanel`), activado por defecto y visible sólo
   si el schema tiene deps. Apagado también las saca del export de imagen.
@@ -128,6 +132,12 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
   claves `dep:`).
 - La persistencia va por `Layout.edges[key].waypoints`, con coords enteras (invariante
   git-friendly de spec 03).
+- Las claves `dep:` nunca llevan el marcador `auto` (spec 05 §9): ni A\* ni los resets por
+  movimiento de tablas ni "Reset relations" las tocan, y `hasAutoShape` lo descarta si un sidecar
+  editado a mano lo trae, así que ninguna edición de dep depende de él.
+- Solo lectura (merge, time travel, diff): insertar, mover y borrar waypoints de una dep son
+  no-ops (`runEdgeDrag` y `deleteDepWaypoint` consultan `isCanvasReadOnly`) y `DepOverlay` no se
+  monta.
 
 ### `headercolor` y selector de color
 
@@ -158,6 +168,12 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
   - `sendSchema` espera `parseAsync`. Si una versión más nueva la reemplaza, espera a ese envío
     (`latestSchemaSend`), así hydrate y las salidas de overlay siguen viendo "schema publicado"
     antes de su siguiente mensaje.
+  - Ese envío más nuevo puede no postear: un reload del watcher salta un payload idéntico al
+    último posteado (`skipIfUnchanged`) o se aborta porque entró un overlay (`abortIf`, spec 16).
+    Un llamador que **debe** postear (hydrate, salida de overlay: el webview muestra otra cosa que
+    `lastPostedSchema`) re-parsea si nadie posteó desde que empezó (`schemaPosts`). Sin esto, la
+    salida de time-travel desbloqueaba el canvas con el schema de la revisión pasada.
+  - `abortIf` se evalúa después del parse asíncrono y justo antes de postear.
   - Time travel y diff HEAD también usan el worker.
 - Build: segunda entry de esbuild (`--outdir`) → `dist/extension/extension/parseWorker.js`.
   `extension.js` baja de 15.1 MB a 64 KB.
@@ -215,6 +231,10 @@ El sidecar no cambia de schema: las deps sólo agregan claves `dep:*` en `edges`
   grupo. Su clave cambia mientras está colapsada (igual que las refs), así que los waypoints
   editados en ese estado son independientes de los de la dep expandida.
 - Las filas por encima de 200 no se ven en el preview (se indica el total).
+- Los waypoints de una dep son coordenadas absolutas: si un auto-arrange mueve sus dos extremos,
+  se quedan donde estaban (a diferencia de las refs, cuyo `computeEdgeResets` limpia la forma
+  varada). Se acepta porque las deps quedan fuera de todo reset automático; "Reset line" sobre la
+  dep los limpia a mano.
 
 ## Plan de pruebas
 

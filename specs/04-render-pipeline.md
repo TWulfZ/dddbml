@@ -105,9 +105,10 @@ suelto por edge fuera de esta capa). Edge culling:
 - El ruteo se memoiza (`[refs, positions, rows, groupSizes, edgeLayouts]`) sobre un
   `EdgeRouteCache` persistente; las posiciones world no cambian en pan/zoom → el ruteo no
   recomputa por frame. Un frame de drag re-rutea sólo las refs afectadas (ver "Drag incremental").
-- Cada arista visible es un hijo `memo` (`EdgeStroke` en la capa base, `EdgeHit` en el overlay,
-  ambos `<g>` dentro del **único** `<svg>` de su capa): las rutas que conservan identidad no se
-  re-diffean. Sólo la arista seleccionada construye inline su DOM de edición.
+- Cada arista visible es un hijo `memo` (`EdgeStroke` / `DepStroke` en la capa base, `EdgeHit` en
+  el overlay, todos `<g>` dentro del **único** `<svg>` de su capa): las rutas que conservan
+  identidad no se re-diffean. Sólo la arista seleccionada construye inline su DOM de edición. Los
+  hit-paths de deps (`DepOverlay`) no están memoizados: son pocos frente a las refs.
 - Se rutean todas las `effectiveRefs`; las *rutas* se filtran por `visibleRefIds`
   (`useVisibleEdgeIds`): una arista es visible si su **caja** (rects de sus dos nodos
   extremo ∪ waypoints, `edgeBoxes` en `app.tsx`) cruza el viewport + margen 256px.
@@ -229,10 +230,14 @@ mueve la cámara.
   - recalcula sólo el contenedor de los grupos expandidos tocados (`groupContainerRects`,
     el mismo helper que `deriveSceneGeometry`) y su gemelo de export;
   - `SpatialIndex.move` para las tablas movidas y sus contenedores (misma instancia);
-  - re-calcula sólo las cajas de las aristas que tocan una tabla movida;
+  - re-calcula sólo las cajas de las aristas (refs y deps visibles, spec 18) que tocan una tabla
+    movida;
   - `worldBbox`: une los rects nuevos; re-escanea todo sólo si un rect movido sostenía un lado
     del bbox y ya no lo alcanza (encogimiento).
-  - `effectiveRefs`, `collapsedNodes`, `hiddenTables`/`collapsedTables` conservan identidad.
+  - `effectiveRefs`, `effectiveDeps`, `collapsedNodes`, `hiddenTables`/`collapsedTables`
+    conservan identidad.
+  `showDeps` es un input más de la escena: apagarlo quita las cajas de las deps (rebuild
+  completo; es un toggle, no un frame).
   Cualquier otro cambio (o un delta que toca una tabla oculta/colapsada) cae al rebuild completo,
   cuyo resultado es idéntico (test de equivalencia aleatorio en `sceneCache.test.ts`). Un cambio
   sólo de `edgeLayouts` (edición de waypoints) reutiliza geometría e índice y rehace cajas/bbox.
@@ -244,10 +249,16 @@ mueve la cámara.
   tabla puede reordenar/re-espaciar los stubs de sus vecinas. El resto de rutas conserva
   identidad. El orden del grupo desempata por id de ref y luego por (índice de arista, origen
   antes que destino), así el re-sort incremental coincide con el completo.
+- **Deps (`DepRouteCache`, `render/depRouter.ts`).** Una dep no reparte puertos con nadie: su ruta
+  depende sólo de sus dos rects y sus waypoints. Con `deps`, `rows`, `groupSizes`, `edgeLayouts` y
+  densidad idénticos y un delta pequeño, `routeMoved` re-rutea sólo las deps con un extremo
+  movido; el resto conserva identidad (y `DepStroke` no se re-diffea).
 - **Coste medido** (`render/dragFrame.perf.test.ts`, `huge.dbml` 5000 tablas / 1000 refs, 20
   grupos expandidos; commit + escena + ruteo + las dos consultas de culling, sin Preact ni
   paint): antes ~7.7–10 ms/frame; ahora ~0.55–0.8 ms/frame (1 tabla) y ~0.7–0.8 ms (50 tablas).
-  El resto es la copia del `Map` de 5000 posiciones del store (~0.5 ms). Ver spec 07.
+  El resto es la copia del `Map` de 5000 posiciones del store (~0.5 ms). Con 1000 deps
+  sintéticas además de las 1000 refs: rebuild ~13–15 ms/frame, incremental ~0.55–0.85 ms (1 y 50 tablas);
+  el ruteo de las 1000 deps solo cuesta ~1.6 ms completo frente a ~0.01 ms incremental. Ver spec 07.
 
 ## Cámara fuera de Preact (pan/zoom sin re-render)
 

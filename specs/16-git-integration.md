@@ -198,7 +198,9 @@ esperaba sus lecturas: `runExternalReload` toma `overlayGeneration` (se incremen
 time-travel o diff) al empezar y, si cambió, no postea `schema:update` ni el layout — se difiere al
 exit, o vuelve a correr con lecturas frescas si el overlay ya se cerró. Un layout leído pero no
 posteado no cuenta como visto (`diskSidecarText` vuelve al valor previo), así la reproducción sale
-como `layout:external-change`. El host postea el `exit` **al final** (schema → layout → `merge:begin` si apareció → exit), así el
+como `layout:external-change`. Con el parse en worker (spec 18), el `sendSchema` de una salida
+puede quedar reemplazado por el de un reload; si ese reload no postea (payload igual o abortado),
+la salida re-parsea y postea igual. El host postea el `exit` **al final** (schema → layout → `merge:begin` si apareció → exit), así el
 webview nunca queda editable con la revisión pasada. Ese layout (y el que precede a un diff abierto
 desde time-travel) va como `layout:external-change` sólo si el texto del sidecar cambió desde la
 última vez que el host lo vio; si no, `layout:loaded` — el webview conserva el historial de undo

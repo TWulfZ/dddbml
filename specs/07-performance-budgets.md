@@ -28,7 +28,7 @@ DBML de 5000 tablas abierto en una laptop decente (Chromium webview, sin WebGL),
 | FPS pan continuo 10s | >= 55 avg, >= 30 p99 | DevTools Performance tab + `requestAnimationFrame` timing |
 | FPS zoom continuo | >= 55 avg | idem |
 | Drag single table | < 16.7ms por frame (60fps) | DevTools Performance, M5 |
-| JS por frame de drag (commit + escena + ruteo + culling, sin Preact/paint) | < 4ms (medido ~0.6ms, 1 tabla; ~0.75ms, 50 tablas; antes ~8ms) | `src/webview/render/dragFrame.perf.test.ts` sobre `huge.dbml` (spec 04 "Drag incremental") |
+| JS por frame de drag (commit + escena + ruteo + culling, sin Preact/paint) | < 4ms (medido ~0.6ms, 1 tabla; ~0.75ms, 50 tablas; ~0.7ms con 1000 deps extra; antes ~8ms) | `src/webview/render/dragFrame.perf.test.ts` sobre `huge.dbml` (spec 04 "Drag incremental") |
 | Write layout file | < 50ms | `performance.now()` alrededor del fs.write |
 
 ## Cómo medir FPS en webview

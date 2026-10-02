@@ -482,6 +482,11 @@ viaja por todo el camino de persistencia (sidecar `edges.*.auto`, spec 03; `pers
   primera edición devuelve la forma de A\* como `auto` y rehacerla la vuelve del usuario;
   `ArrangeCommand` ya guarda el `EdgeLayout` completo.
 - El marcador sin forma no significa nada: se poda al escribir (`hasAutoShape`).
+- Nunca en una clave `dep:` (spec 18): las deps no pasan por A\*. `hasAutoShape(key, layout)` es
+  falso para ellas, así que el marcador se descarta al leer el sidecar, en `setLayout`, en toda
+  escritura del store (`writeLayout`) y en el persist. Ordenar aristas, `computeAutoShapeDrops`,
+  `computeEdgeResets` y "Reset relations" recorren sólo `schema.refs`, así que nunca tocan una
+  clave `dep:`.
 
 **Tipos/opciones nuevas:** `runSmartLayout(mode, opts: ArrangeOptions)` con
 `orderEdges: boolean` (default `true`) y `preserveManualEdges: boolean` (default `true`, E5);
@@ -531,7 +536,7 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
 
 ### 10. Aristas `Dep` (spec 18)
 
-Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traza una **curva** entre dos stubs horizontales rígidos de 24 px (mismo `MIN_STUB`, mismo recorte a la mitad del gap). Sin waypoints es una Bézier con handles horizontales; con waypoints, Catmull-Rom → Béziers que pasan por cada punto, tangente a los stubs en los extremos. Lados izquierda/derecha por centros (misma regla que `chooseSides`); puerto Y = centro de la primera columna (`rows.indexOf`) o `headerCenterY()` para deps a nivel tabla. Edición: sólo la dep seleccionada muestra handles de inserción (t=0.5 de cada tramo) y de waypoint (mover / doble clic = borrar); reutiliza `runEdgeDrag` + `WaypointCommand`. Se pintan en el **mismo SVG** (`DepPaths` en la capa base, `DepOverlay` en la de overlay) y se cullean con el mismo `visibleRefIds`. No participan en auto-layout, A* ni puertos compartidos con refs.
+Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traza una **curva** entre dos stubs horizontales rígidos de 24 px (mismo `MIN_STUB`, mismo recorte a la mitad del gap). Sin waypoints es una Bézier con handles horizontales; con waypoints, Catmull-Rom → Béziers que pasan por cada punto, tangente a los stubs en los extremos. Lados izquierda/derecha por centros (misma regla que `chooseSides`); puerto Y = centro de la primera columna (`rows.indexOf`) o `headerCenterY()` para deps a nivel tabla. Edición: sólo la dep seleccionada muestra handles de inserción (t=0.5 de cada tramo) y de waypoint (mover / doble clic = borrar); reutiliza `runEdgeDrag` + `WaypointCommand`. Se pintan en el **mismo SVG** (`DepPaths` en la capa base, `DepOverlay` en la de overlay) y se cullean con el mismo `visibleRefIds`. No participan en auto-layout, A* ni puertos compartidos con refs, nunca llevan `auto` (§9) y los resets de forma por movimiento de tablas no las tocan. Durante un drag se re-rutean sólo las deps de las tablas movidas (`DepRouteCache`, spec 04 "Drag incremental").
 
 ## Limitaciones conocidas
 
