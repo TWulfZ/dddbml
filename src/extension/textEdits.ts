@@ -60,3 +60,15 @@ export function mergeDeletions(ranges: ReadonlyArray<{ start: number; end: numbe
   }
   return out;
 }
+
+/**
+ * `edits` re-expressed for the text with `length` characters inserted at `at`: an edit whose range
+ * holds `at` grows over the insertion (so an undo also removes it), later edits shift.
+ */
+export function growOverInsertion(edits: readonly OffsetEdit[], at: number, length: number): OffsetEdit[] {
+  return edits.map((e) => {
+    if (e.end < at) return e;
+    if (e.start <= at) return { ...e, end: e.end + length };
+    return { ...e, start: e.start + length, end: e.end + length };
+  });
+}
