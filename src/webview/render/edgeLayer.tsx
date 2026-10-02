@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { createPortal, memo } from 'preact/compat';
 import type { QualifiedName, Ref, RefDiffStatus } from '../../shared/types';
 import { columnCenterY, estimateSize, headerCenterY } from '../layout/autoLayout';
+import { densityMetrics } from '../layout/density';
 import type { KeyedDepEdge } from './edgeKey';
 import { DepMarkerDef, DepOverlay, DepPaths } from './depEdges';
 import { DepRouteCache, depColor } from './depRouter';
@@ -11,12 +12,12 @@ import type { Bbox } from './spatialIndex';
 import type { LodLevel } from './lod';
 import { store, useAppStore, isCanvasReadOnly } from '../state/store';
 import { smallPositionsDelta } from '../state/positionsDelta';
-import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch } from '../drag/dragController';
+import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch, flipLoopSide } from '../drag/dragController';
 import type { EdgeStyle } from '../state/history';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
 import { Button } from '../ui/Button';
 import { Tooltip } from '../ui/Tooltip';
-import { IconReset, IconSettings, IconTrash } from '../icons';
+import { IconReset, IconSettings, IconSwap, IconTrash } from '../icons';
 import { postToHost } from '../vscode';
 import { ContextMenu, clampMenuAnchor } from './contextMenu';
 
@@ -82,7 +83,8 @@ interface EdgeStrokeProps {
   lowZoom: boolean;
 }
 
-const straightPath = (r: EdgeRoute) => `M ${r.source.x} ${r.source.y} L ${r.target.x} ${r.target.y}`;
+// A loop's port-to-port line would lie on its own table border, so it keeps its shape.
+const straightPath = (r: EdgeRoute) => (r.loop ? r.d : `M ${r.source.x} ${r.source.y} L ${r.target.x} ${r.target.y}`);
 
 /**
  * One edge stroke in the shared base SVG. Memoized on the route object: a drag frame keeps every
@@ -195,17 +197,17 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, 
   // A positions-only delta recorded by the store (a drag frame) re-routes just the refs it can
   // change and keeps every other route object, so the memoized strokes below skip their diff.
   const [routeCache] = useState(() => new EdgeRouteCache());
-  const routedRef = useRef<{ refs: Ref[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts } | null>(null);
+  const routedRef = useRef<{ refs: Ref[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density } | null>(null);
   const routes = useMemo(() => {
     const prev = routedRef.current;
-    routedRef.current = { refs, positions, rows, groupSizes, edgeLayouts };
+    routedRef.current = { refs, positions, rows, groupSizes, edgeLayouts, density };
     const layoutOf = (id: string) => edgeLayouts.get(id);
-    if (prev && prev.refs === refs && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts) {
+    if (prev && prev.refs === refs && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts && prev.density === density) {
       const moved = smallPositionsDelta(prev.positions, positions);
       if (moved) return routeCache.routeMoved(moved, bboxOf, columnY, layoutOf);
     }
-    return routeCache.routeAll(refs, bboxOf, columnY, layoutOf);
-  }, [refs, positions, rows, groupSizes, edgeLayouts]);
+    return routeCache.routeAll(refs, bboxOf, columnY, layoutOf, densityMetrics(density).rowHeight);
+  }, [refs, positions, rows, groupSizes, edgeLayouts, density]);
 
   const [depRouteCache] = useState(() => new DepRouteCache());
   const depRoutedRef = useRef<{ deps: KeyedDepEdge[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density } | null>(null);
@@ -309,7 +311,7 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, 
     const cx = tableCenterX(end === 'source' ? ref?.source.table : ref?.target.table);
     if (cx === null) return;
     store.getState().setSelectedEdge(r.id);
-    startEndpointDrag(r.id, end, cx, e, e.currentTarget as SVGElement, clientToWorldX);
+    startEndpointDrag(r.id, end, cx, e, e.currentTarget as SVGElement, clientToWorldX, r.loop === true);
   };
 
   // Stable identities so the memoized per-edge hit paths only re-render when their own route changes.
@@ -476,7 +478,8 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, 
                   transparent hit-path (EdgeHit) that handles select-on-click + hover-flow, instead of a
                   hit-line per segment. This is what keeps the overlay's node/listener count flat at
                   thousands of relations. */}
-              {r.segments.map((s, i) => {
+              {/* A loop has no editable runs (spec 05 §Self-loops): only its endpoints, which flip it. */}
+              {r.loop ? null : r.segments.map((s, i) => {
                 const len = Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1);
                 const hot = hover?.refId === r.id && hover.segIndex === i;
                 // Two-tier control (dbdiagram): each editable run carries a REAL blue vertex at its
@@ -584,15 +587,27 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, 
               style={{ left: `${toolbarPos.x}px`, top: `${toolbarPos.y}px` }}
               onPointerDown={(e) => e.stopPropagation()}
             >
-              <Tooltip label="Reset line">
-                <Button
-                  variant="toolbar"
-                  size="tool"
-                  onClick={() => resetEdgeWaypoints(selectedRoute.id)}
-                >
-                  <IconReset size={13} />
-                </Button>
-              </Tooltip>
+              {'loop' in selectedRoute && selectedRoute.loop ? (
+                <Tooltip label="Flip side">
+                  <Button
+                    variant="toolbar"
+                    size="tool"
+                    onClick={() => flipLoopSide(selectedRoute.id)}
+                  >
+                    <IconSwap size={13} />
+                  </Button>
+                </Tooltip>
+              ) : (
+                <Tooltip label="Reset line">
+                  <Button
+                    variant="toolbar"
+                    size="tool"
+                    onClick={() => resetEdgeWaypoints(selectedRoute.id)}
+                  >
+                    <IconReset size={13} />
+                  </Button>
+                </Tooltip>
+              )}
               <Tooltip label="Edge color">
                 <Button
                   variant="toolbar"

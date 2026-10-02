@@ -1,4 +1,6 @@
 import type { EdgeLayout, QualifiedName, Ref, Waypoint } from '../../shared/types';
+import { densityMetrics } from '../layout/density';
+import { isSelfRef } from './edgeKey';
 import type { Bbox } from './spatialIndex';
 
 export type Side = 'left' | 'right' | 'top' | 'bottom';
@@ -13,6 +15,23 @@ export type Side = 'left' | 'right' | 'top' | 'bottom';
  * spike); a very-close same-row edge then has no editable middle (just a straight rigid connector).
  */
 const MIN_STUB = 24;
+
+/** How far a self-loop's trunk sits from its table side (spec 05 §Self-loops: 2× stub). */
+export const LOOP_OFFSET = 2 * MIN_STUB;
+/** Extra distance per other loop on the same table side, so stacked loops nest instead of overlapping. */
+export const LOOP_STEP = MIN_STUB / 2;
+/** Row height used to split a same-column loop's ports when the caller passes none. */
+const DEFAULT_ROW_HEIGHT = densityMetrics('cozy').rowHeight;
+
+/** Farthest a table's loops reach out of its side when `stackSize` loops share that side. */
+export function loopReach(stackSize: number): number {
+  return LOOP_OFFSET + Math.max(0, stackSize - 1) * LOOP_STEP;
+}
+
+/** The single side a loop is drawn on: the persisted override (both ends flip together), else right. */
+export function loopSide(layout: EdgeLayout | undefined): 'left' | 'right' {
+  return (layout?.sourceSide ?? layout?.targetSide) === 'left' ? 'left' : 'right';
+}
 
 type Point = { x: number; y: number };
 
@@ -53,6 +72,8 @@ export interface EdgeRoute {
    */
   sourceStub: { x: number; y: number };
   targetStub: { x: number; y: number };
+  /** Self-loop: drawn by its own geometry, never carries editable waypoints (spec 05 §Self-loops). */
+  loop?: true;
 }
 
 /** Optional per-endpoint port override — used to align edges with the PK/FK column row. */
@@ -84,8 +105,12 @@ function decideSides(r: Ref, bboxOf: (name: QualifiedName) => Bbox | undefined, 
   const srcBbox = bboxOf(r.source.table);
   const tgtBbox = bboxOf(r.target.table);
   if (!srcBbox || !tgtBbox) return null;
-  const auto = chooseSides(srcBbox, tgtBbox);
   const layout = layoutResolver?.(r.id);
+  if (isSelfRef(r)) {
+    const side = loopSide(layout);
+    return { ref: r, srcBbox, tgtBbox, sourceSide: side, targetSide: side };
+  }
+  const auto = chooseSides(srcBbox, tgtBbox);
   return {
     ref: r,
     srcBbox,
@@ -113,9 +138,12 @@ function buildRoute(
   d: SideDecision,
   sourceRatio: number,
   targetRatio: number,
-  columnYResolver?: ColumnYResolver,
-  layoutResolver?: EdgeLayoutResolver,
+  columnYResolver: ColumnYResolver | undefined,
+  layoutResolver: EdgeLayoutResolver | undefined,
+  loopRank: number,
+  rowHeight: number,
 ): EdgeRoute {
+  if (isSelfRef(d.ref)) return buildLoopRoute(d, sourceRatio, targetRatio, columnYResolver, loopRank, rowHeight);
   let sourceY: number | undefined;
   let targetY: number | undefined;
   if (columnYResolver) {
@@ -150,6 +178,55 @@ function buildRoute(
 }
 
 /**
+ * A self-loop leaves its source column's port, runs out `loopReach(rank + 1)` past the side, down
+ * (or up) to the target column's row and back in on the same side. Ports coinciding (same column)
+ * are split ±¼ row so the loop keeps a visible trunk.
+ */
+function buildLoopRoute(
+  d: SideDecision,
+  sourceRatio: number,
+  targetRatio: number,
+  columnYResolver: ColumnYResolver | undefined,
+  rank: number,
+  rowHeight: number,
+): EdgeRoute {
+  const side = d.sourceSide;
+  const offsetOf = (cols: string[]) => (columnYResolver && cols[0] ? columnYResolver(d.ref.source.table, cols[0]) : undefined);
+  const sOff = offsetOf(d.ref.source.columns);
+  const tOff = offsetOf(d.ref.target.columns);
+  const a = portPoint(d.srcBbox, side, sourceRatio, sOff === undefined ? undefined : d.srcBbox.y + sOff);
+  const b = portPoint(d.srcBbox, side, targetRatio, tOff === undefined ? undefined : d.srcBbox.y + tOff);
+  if (a.y === b.y) {
+    const q = Math.round(rowHeight / 4);
+    a.y -= q;
+    b.y += q;
+  }
+  const dir = STUB_DIR[side].x;
+  const aStub = { x: a.x + dir * MIN_STUB, y: a.y };
+  const bStub = { x: b.x + dir * MIN_STUB, y: b.y };
+  const farX = a.x + dir * loopReach(rank + 1);
+  const corners = [a, aStub, { x: farX, y: a.y }, { x: farX, y: b.y }, bStub, b];
+  return {
+    id: d.ref.id,
+    d: roundedPathString(corners, CORNER_RADIUS),
+    waypoints: [],
+    segments: buildSegments(corners, []),
+    source: a,
+    target: b,
+    sourceStub: aStub,
+    targetStub: bStub,
+    loop: true,
+  };
+}
+
+/** Vertical distance between a loop's two column rows; unresolved columns count as 0. */
+function loopSpan(r: Ref, columnYResolver: ColumnYResolver | undefined): number {
+  if (!columnYResolver) return 0;
+  const off = (cols: string[]) => (cols[0] ? columnYResolver(r.source.table, cols[0]) : undefined) ?? 0;
+  return Math.abs(off(r.target.columns) - off(r.source.columns));
+}
+
+/**
  * Routing state kept between calls so a table drag re-routes only what the move can change
  * (spec 04, "Commit del drag por frame"): the refs touching a moved table, plus every ref sharing a
  * port group (table + side) with one of them — the stubs on a side are spread by sorting the group,
@@ -161,6 +238,9 @@ export class EdgeRouteCache {
   private sourceRatio: number[] = [];
   private targetRatio: number[] = [];
   private routes: Array<EdgeRoute | null> = [];
+  /** Stack position of each loop among the loops on its table side; 0 for every other ref. */
+  private loopRank: number[] = [];
+  private rowHeight = DEFAULT_ROW_HEIGHT;
   private readonly ports = new Map<string, PortEntry[]>();
   private readonly edgesByTable = new Map<QualifiedName, number[]>();
   private out: EdgeRoute[] = [];
@@ -175,14 +255,18 @@ export class EdgeRouteCache {
    *   3. No layout → automatic H-V-H with midpoint between ports.
    *
    * Returns an ordered list matching refs[] order — callers can filter by visibility.
+   * `rowHeight` (the density's) only splits the ports of a same-column self-loop.
    */
   public routeAll(
     refs: readonly Ref[],
     bboxOf: (name: QualifiedName) => Bbox | undefined,
     columnYResolver?: ColumnYResolver,
     layoutResolver?: EdgeLayoutResolver,
+    rowHeight: number = DEFAULT_ROW_HEIGHT,
   ): EdgeRoute[] {
     this.refs = refs;
+    this.rowHeight = rowHeight;
+    this.rankLoops(columnYResolver, layoutResolver);
     this.decisions = refs.map((r) => decideSides(r, bboxOf, layoutResolver));
     this.sourceRatio = refs.map(() => 0.5);
     this.targetRatio = refs.map(() => 0.5);
@@ -196,7 +280,7 @@ export class EdgeRouteCache {
     });
     for (const key of this.ports.keys()) this.spreadPorts(key, null);
     this.routes = this.decisions.map((d, i) =>
-      d ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, layoutResolver) : null,
+      d ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, layoutResolver, this.loopRank[i]!, rowHeight) : null,
     );
     return this.collect();
   }
@@ -230,9 +314,37 @@ export class EdgeRouteCache {
     for (const key of touched) this.spreadPorts(key, dirty);
     for (const i of dirty) {
       const d = this.decisions[i];
-      this.routes[i] = d ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, layoutResolver) : null;
+      this.routes[i] = d
+        ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, layoutResolver, this.loopRank[i]!, this.rowHeight)
+        : null;
     }
     return this.collect();
+  }
+
+  /**
+   * Nests the loops sharing a table side: the shorter span goes inside so nested loops never cross.
+   * Reads only refs, rows and layouts — never positions — so a drag never re-ranks.
+   */
+  private rankLoops(columnYResolver: ColumnYResolver | undefined, layoutResolver: EdgeLayoutResolver | undefined): void {
+    this.loopRank = this.refs.map(() => 0);
+    const bySide = new Map<string, number[]>();
+    this.refs.forEach((r, i) => {
+      if (!isSelfRef(r)) return;
+      const key = portKey(r.source.table, loopSide(layoutResolver?.(r.id)));
+      const list = bySide.get(key);
+      if (list) list.push(i);
+      else bySide.set(key, [i]);
+    });
+    for (const list of bySide.values()) {
+      if (list.length < 2) continue;
+      const span = list.map((i) => loopSpan(this.refs[i]!, columnYResolver));
+      const order = list.map((_, k) => k).sort((p, q) => {
+        const a = this.refs[list[p]!]!.id;
+        const b = this.refs[list[q]!]!.id;
+        return (span[p]! - span[q]!) || (a < b ? -1 : a > b ? 1 : 0) || (list[p]! - list[q]!);
+      });
+      order.forEach((k, rank) => { this.loopRank[list[k]!] = rank; });
+    }
   }
 
   private collect(): EdgeRoute[] {
@@ -307,8 +419,9 @@ export function routeRefs(
   bboxOf: (name: QualifiedName) => Bbox | undefined,
   columnYResolver?: ColumnYResolver,
   layoutResolver?: EdgeLayoutResolver,
+  rowHeight?: number,
 ): EdgeRoute[] {
-  return new EdgeRouteCache().routeAll(refs, bboxOf, columnYResolver, layoutResolver);
+  return new EdgeRouteCache().routeAll(refs, bboxOf, columnYResolver, layoutResolver, rowHeight);
 }
 
 /**

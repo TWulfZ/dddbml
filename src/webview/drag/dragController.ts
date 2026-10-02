@@ -1,7 +1,7 @@
 import { store, isCanvasReadOnly } from '../state/store';
 import { buildArrangeCommand, buildEdgeStyleCommand, buildEdgesResetCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle, type MoveCommand } from '../state/history';
 import { schedulePersist } from '../persistence';
-import { slideSegment, notchAtQuarter, deleteNotch, type EdgeRoute } from '../render/edgeRouter';
+import { slideSegment, notchAtQuarter, deleteNotch, loopSide, type EdgeRoute } from '../render/edgeRouter';
 import { screenToWorld, type Point } from '../render/viewport';
 import { gridSnapper } from '../layout/grid';
 import { computeDragEdgeChanges, hasShape, rawLayoutDeps, rawLayoutRefs } from '../layout/smartLayout/edgeReset';
@@ -362,9 +362,26 @@ export function commitEdgeStyle(refId: string, before: EdgeStyle, label: string)
   schedulePersist();
 }
 
+/** A self-loop's two ends share one side (spec 05 §Self-loops); right is the default, so it is not stored. */
+function setLoopSide(refId: string, side: 'left' | 'right'): void {
+  const stored = side === 'left' ? 'left' : null;
+  store.getState().setEdgeSide(refId, 'source', stored);
+  store.getState().setEdgeSide(refId, 'target', stored);
+}
+
+/** Toolbar flip of a self-loop to the other table side, as one EdgeStyleCommand. */
+export function flipLoopSide(refId: string): void {
+  const state = store.getState();
+  if (isCanvasReadOnly(state)) return;
+  const before = readEdgeStyle(refId);
+  setLoopSide(refId, loopSide(state.edgeLayouts.get(refId)) === 'left' ? 'right' : 'left');
+  commitEdgeStyle(refId, before, 'Flip edge port');
+}
+
 /**
  * Drag an edge endpoint across its table to flip the port side (left <-> right). The side is
  * chosen by which half of the table the pointer is over; committed as one EdgeStyleCommand.
+ * `loop` flips both ends together.
  */
 export function startEndpointDrag(
   refId: string,
@@ -373,6 +390,7 @@ export function startEndpointDrag(
   e: PointerEvent,
   target: SVGElement | HTMLElement,
   toWorldX: (clientX: number) => number | null,
+  loop = false,
 ): void {
   if (edgeDragActive || e.button !== 0) return;
   if (isCanvasReadOnly(store.getState())) return;
@@ -386,7 +404,9 @@ export function startEndpointDrag(
   const onMove = (ev: PointerEvent) => {
     const wx = toWorldX(ev.clientX);
     if (wx === null) return;
-    store.getState().setEdgeSide(refId, end, wx >= tableCenterX ? 'right' : 'left');
+    const side = wx >= tableCenterX ? 'right' : 'left';
+    if (loop) setLoopSide(refId, side);
+    else store.getState().setEdgeSide(refId, end, side);
   };
 
   const onUp = (ev: PointerEvent) => {

@@ -490,9 +490,8 @@ viaja por todo el camino de persistencia (sidecar `edges.*.auto`, spec 03; `pers
   quedarse quieta, y la arista viaja con su `source`: sigue siendo "interna" aunque el snap deje un
   extremo en su lugar, así una forma `auto` no se descarta por eso). Lados, color y `auto` no
   cambian; una forma `auto` sin waypoints (sólo lados) queda intacta porque la geometría relativa no
-  cambió. Las self-refs no se dibujan (spec 19) y `rawLayoutRefs` las omite: no tienen forma que
-  trasladar. Todo en el mismo `ArrangeCommand` del movimiento (label
-  `Move …`, spec 11): un Ctrl+Z devuelve tablas y waypoints, el redo los re-aplica. Se calcula una
+  cambió. Los self-loops no se trasladan (§Self-loops): no tienen waypoints. Todo en el mismo
+  `ArrangeCommand` del movimiento (label `Move …`, spec 11): un Ctrl+Z devuelve tablas y waypoints, el redo los re-aplica. Se calcula una
   vez en el commit (no por frame: durante el arrastre los waypoints quedan fijos y el drag
   incremental del spec 04 no cambia); en solo lectura no se aplica nada.
 - Toda edición del usuario de esa arista borra el marcador: waypoints (agregar/mover/quitar,
@@ -580,6 +579,30 @@ vertical hasta la fila de la columna destino y vuelve a entrar por el mismo lado
 destino son la misma columna, los puertos se separan ±¼ de fila. Los puertos del lazo entran al
 grupo de puertos del lado como cualquier otra arista. v1: seleccionable, color, flip de lado,
 borrar (spec 19) y entra en culling/export; **sin waypoints editables** y fuera del A\* (§9).
+
+Implementación (`edgeRouter.ts` `buildLoopRoute`):
+
+- **Clave.** `edgeKeyedRefs` conserva la self-ref cruda (`T::a|T::b`, también en `rawLayoutRefs` y en
+  `refKeyByStableId`, así "Delete relation" la nombra). Se sigue descartando toda ref cuyos dos
+  extremos caen en el mismo nodo de grupo colapsado, incluida una self-ref de una tabla colapsada.
+- **Geometría.** Puertos en las filas de las columnas (`columnYResolver`); stubs rígidos de
+  `MIN_STUB`; tronco vertical a `loopReach(rango + 1)` = `LOOP_OFFSET` (48) + `rango × LOOP_STEP`
+  (12) del borde. Misma Y en ambos puertos (misma columna) ⇒ origen −¼ fila, destino +¼
+  (`rowHeight` de la densidad, que `routeAll` recibe).
+- **Apilado.** Los lazos de un mismo (tabla, lado) se ordenan por alto del tramo (menor adentro, así
+  los anidados no se cruzan), desempate por id. El rango sólo depende de refs, filas y layouts —nunca
+  de posiciones— así un drag (`routeMoved`) no re-ordena y coincide con un rebuild completo.
+- **Lado.** `sourceSide ?? targetSide` (sólo `left` cuenta; `top`/`bottom` persistidos se ignoran);
+  `right` por defecto y **no se persiste**: el flip a la derecha borra el override. Waypoints
+  persistidos de un lazo se ignoran.
+- **UI.** Seleccionado: sin handles de tramo; los dos endpoints siguen siendo handles de flip y
+  mueven ambos extremos. Toolbar: *Flip side* (en lugar de *Reset line*), color y *Delete relation*.
+  En LOD `rect` mantiene su forma (la recta puerto-puerto quedaría sobre el borde de la tabla).
+- **Fuera de:** A\* (`computeEdgeOrdering` los filtra), `computeEdgeResets`,
+  `computeAutoShapeDrops`, "Reset relations" y la traslación de waypoints del drag: su única forma
+  es el lado elegido por el usuario, que ningún movimiento invalida.
+- **Culling/export.** Caja = tabla ∪ alcance del lado (spec 04); el export rutea con `routeRefs` y
+  sus bounds incluyen las esquinas del lazo.
 4. **Sin curvatura** en codos (90° rígidos). v1.1 opcional.
 5. **Retroceso en x-overlap** (target con borde izq dentro del extent-x del source ⇒
    `chooseSides` invierte el span y la ruta se devuelve, incluso a cero-waypoints):
@@ -616,6 +639,13 @@ borrar (spec 19) y entra en culling/export; **sin waypoints editables** y fuera 
   control es el vértice; clampa `r` a media-sección adyacente; descarta puntos coincidentes;
   `≤ 2` puntos ⇒ segmento plano. Vía `routeRefs`: arista misma-fila sin `Q`; arista doblada
   con `Q` (el waypoint es una esquina literal → `Q<waypoint>`).
+- **Self-loops (`edgeRouter.loop.test.ts`):** un lazo sale y vuelve por la derecha a
+  `LOOP_OFFSET`; dos lazos del mismo lado se apilan (el de tramo menor adentro); un lazo del otro lado
+  no empuja; misma columna ⇒ puertos ±¼ fila; flip ⇒ ambos extremos a la izquierda; waypoints y
+  lados top/bottom persistidos se ignoran; entra al grupo de puertos; `routeMoved` de su tabla ==
+  rebuild completo. Clave (`edgeKey.test.ts`), caja de culling (`sceneCache.test.ts`), export
+  (`imageExport.test.ts`), resets/drag (`edgeReset.test.ts`), A\* (`edgeOrdering.test.ts`) y flip
+  (`dragController.test.ts`).
 - Bbox faltante ⇒ arista omitida (no crash).
 - Back-compat: `waypoints=[]` ⇒ ruta recta misma-fila / H-V-H offset con stubs.
 

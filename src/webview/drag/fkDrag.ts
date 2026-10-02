@@ -117,6 +117,4 @@ export function commitRefDraft(op: RefOp): void {
   s.setRefDraft(null);
   if (!draft || isCanvasReadOnly(s)) return;
   postToHost({ type: 'schema:addRef', payload: { from: draft.from, to: draft.to, op } });
-  // Self-loops have no edge yet (spec 05 known limits): without a word the drop looks ignored.
-  if (draft.to.table === draft.from.table) s.showNotice('Self-references are not drawn in the diagram; edit them in the .dbml');
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Ref, Schema } from '../../shared/types';
+import { LOOP_OFFSET } from '../render/edgeRouter';
 import { buildExportModel, renderSvg, type ExportDerived, type ExportSource, type ThemeTokens } from './imageExport';
 
 const schema: Schema = {
@@ -151,5 +152,24 @@ describe('buildExportModel — deps (spec 18)', () => {
 
   it('drops a dep whose downstream table is outside the selection', () => {
     expect(withDep('selection', ['public.a']).deps).toEqual([]);
+  });
+});
+
+describe('buildExportModel — self-loops (spec 05 §Self-loops)', () => {
+  const loop: Ref = {
+    id: 'public.b::a_id|public.b::id',
+    source: { table: 'public.b', columns: ['a_id'], relation: '*' },
+    target: { table: 'public.b', columns: ['id'], relation: '1' },
+  };
+
+  it('exports the loop and grows the bounds past the table to hold it', () => {
+    const plain = source(['public.b']);
+    const withLoop = source(['public.b']);
+    withLoop.derived = { ...derived, effectiveRefs: [ref, loop] };
+    const without = buildExportModel(plain, { scope: 'selection', background: true, filename: 'd' })!;
+    const m = buildExportModel(withLoop, { scope: 'selection', background: true, filename: 'd' })!;
+    expect(m.edges).toHaveLength(1);
+    expect(m.edges[0]!.source.x).toBe(m.edges[0]!.target.x);
+    expect(m.bounds.x + m.bounds.w).toBeGreaterThanOrEqual(without.bounds.x + without.bounds.w + LOOP_OFFSET);
   });
 });

@@ -72,15 +72,15 @@ describe('FK drag (spec 19 §Crear FK)', () => {
     expect(store.getState().notice).toBe(notice);
   });
 
-  it('allows a self reference to another column of the same table, noting it will not be drawn', () => {
+  it('allows a self reference to another column of the same table without a notice (drawn as a loop)', () => {
     startFkDrag(press(), FROM, port);
     underPointer = { table: 'public.orders', column: 'id' };
     listeners.get('pointerup')!(at(10, 10));
     expect(store.getState().refDraft?.to).toEqual({ table: 'public.orders', column: 'id' });
-    const before = store.getState().notice?.seq ?? 0;
+    const notice = store.getState().notice;
     commitRefDraft('>');
     expect(postToHost).toHaveBeenCalledWith({ type: 'schema:addRef', payload: { from: FROM, to: { table: 'public.orders', column: 'id' }, op: '>' } });
-    expect(store.getState().notice).toEqual({ text: 'Self-references are not drawn in the diagram; edit them in the .dbml', seq: before + 1 });
+    expect(store.getState().notice).toBe(notice);
   });
 
   it('drops on its own column or on empty canvas do nothing', () => {

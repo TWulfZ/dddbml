@@ -19,9 +19,15 @@ export function isEdgeKey(id: string): boolean {
   return id.includes('::');
 }
 
+/** A ref from a table to itself, drawn as a loop (spec 05 §Self-loops). */
+export function isSelfRef(r: Ref): boolean {
+  return r.source.table === r.target.table;
+}
+
 /**
  * Refs re-identified by `edgeKey`, endpoints remapped by `mapEndpoint` (null = drop the ref).
- * Refs collapsing onto one node are dropped; refs sharing a key keep the first occurrence.
+ * A raw self-ref is kept (a loop); any other ref whose ends land on one node (two tables of one
+ * collapsed group, or a self-ref inside it) is dropped. Refs sharing a key keep the first occurrence.
  */
 export function edgeKeyedRefs(
   refs: readonly Ref[],
@@ -33,7 +39,8 @@ export function edgeKeyedRefs(
   for (const r of refs) {
     const src = mapEndpoint(r.source.table);
     const tgt = mapEndpoint(r.target.table);
-    if (src == null || tgt == null || src === tgt) continue;
+    if (src == null || tgt == null) continue;
+    if (src === tgt && !(isSelfRef(r) && src === r.source.table)) continue;
     const key = edgeKey(src, r.source.columns, tgt, r.target.columns);
     keyByStableId.set(r.id, key);
     if (seen.has(key)) continue;

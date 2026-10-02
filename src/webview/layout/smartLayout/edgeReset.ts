@@ -1,5 +1,5 @@
 import type { Dep, EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
-import { edgeKeyedDeps, edgeKeyedRefs, type KeyedDepEdge } from '../../render/edgeKey';
+import { edgeKeyedDeps, edgeKeyedRefs, isSelfRef, type KeyedDepEdge } from '../../render/edgeKey';
 
 /** Every ref under the key its layout has while both endpoints render as themselves (no hide/collapse). */
 export function rawLayoutRefs(refs: readonly Ref[]): Ref[] {
@@ -59,6 +59,9 @@ export function computeEdgeResets(
 ): Array<[string, EdgeLayout | null]> {
   const out: Array<[string, EdgeLayout | null]> = [];
   for (const r of refs) {
+    // Loops (here and in every reset below) carry only the user's side flip, which no move
+    // invalidates; they never get waypoints or A* shapes (spec 05 §Self-loops).
+    if (isSelfRef(r)) continue;
     const existing = edgeLayouts.get(r.id);
     if (!existing || existing.auto) continue;
     const stranded =
@@ -91,6 +94,7 @@ export function computeAutoShapeDrops(
 ): Array<[string, EdgeLayout | null]> {
   const out: Array<[string, EdgeLayout | null]> = [];
   for (const r of refs) {
+    if (isSelfRef(r)) continue;
     const existing = edgeLayouts.get(r.id);
     if (!existing?.auto) continue;
     if (!moved.has(r.source.table) && !moved.has(r.target.table)) continue;
@@ -136,6 +140,7 @@ export function computeDragEdgeChanges(
   const dragged = (name: QualifiedName): boolean => before.has(name) && after.has(name);
   const oneEnd: Ref[] = [];
   for (const r of refs) {
+    if (isSelfRef(r)) continue;
     if (dragged(r.source.table) && dragged(r.target.table)) translate(r.id, r.source.table);
     else oneEnd.push(r);
   }
@@ -160,6 +165,7 @@ export function computeSelectionEdgeResets(
 ): Array<[string, EdgeLayout | null]> {
   const out: Array<[string, EdgeLayout | null]> = [];
   for (const r of refs) {
+    if (isSelfRef(r)) continue;
     const existing = edgeLayouts.get(r.id);
     if (!hasShape(existing)) continue;
     if (!selection.has(r.source.table) && !selection.has(r.target.table)) continue;

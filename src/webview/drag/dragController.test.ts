@@ -5,7 +5,7 @@ vi.mock('../persistence', () => ({ schedulePersist: vi.fn() }));
 
 import { store } from '../state/store';
 import { zoomAt } from '../render/viewport';
-import { commitEdgeStyle, deleteDepWaypoint, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag } from './dragController';
+import { commitEdgeStyle, deleteDepWaypoint, flipLoopSide, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag } from './dragController';
 import type { EdgeLayout, Ref } from '../../shared/types';
 import { depKey, edgeKey } from '../render/edgeKey';
 
@@ -384,5 +384,34 @@ describe('dep waypoint edits (spec 18)', () => {
     up(400, 300);
     expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
     expect(store.getState().past[0]?.kind).toBe('move');
+  });
+});
+
+describe('self-loop side flip (spec 05 §Self-loops)', () => {
+  const loop = edgeKey('a', ['parent_id'], 'a', ['id']);
+
+  it('the toolbar flip moves both ends to the other side, one undo step', () => {
+    flipLoopSide(loop);
+    expect(store.getState().edgeLayouts.get(loop)).toEqual({ sourceSide: 'left', targetSide: 'left' });
+    // Right is the default side: flipping back drops the override instead of persisting it.
+    flipLoopSide(loop);
+    expect(store.getState().edgeLayouts.has(loop)).toBe(false);
+    expect(store.getState().past).toHaveLength(2);
+    store.getState().undo();
+    expect(store.getState().edgeLayouts.get(loop)).toEqual({ sourceSide: 'left', targetSide: 'left' });
+  });
+
+  it('dragging either loop endpoint across the table flips both ends', () => {
+    startEndpointDrag(loop, 'target', 100, ptr(150, 0), fakeNode(), (x) => x, true);
+    move(50, 0);
+    up(50, 0);
+    expect(store.getState().edgeLayouts.get(loop)).toEqual({ sourceSide: 'left', targetSide: 'left' });
+    expect(store.getState().past).toHaveLength(1);
+  });
+
+  it('is gated by the read-only canvas', () => {
+    store.setState({ gitView: { kind: 'diff', baseLabel: 'HEAD', headLabel: 'Working tree' } });
+    flipLoopSide(loop);
+    expect(store.getState().edgeLayouts.has(loop)).toBe(false);
   });
 });

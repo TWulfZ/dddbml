@@ -250,3 +250,22 @@ describe('computeEdgeOrdering → routeRefs (rendered A* routes)', () => {
     }
   });
 });
+
+describe('computeEdgeOrdering — self-loops (spec 05 §Self-loops)', () => {
+  it('leaves loops out of A*: no waypoints, sides or auto marker for them', async () => {
+    const { schema, positions } = obstacleSchema();
+    const loop: Ref = {
+      id: 'public.a::c1|public.a::c0',
+      source: { table: 'public.a', columns: ['c1'], relation: '*' },
+      target: { table: 'public.a', columns: ['c0'], relation: '1' },
+    };
+    const ordered = await computeEdgeOrdering({
+      schema: { ...schema, refs: [...schema.refs, loop] },
+      positions: new Map(positions),
+      existingLayouts: new Map(),
+      preserveManual: false,
+    });
+    expect(ordered.resets.find(([id]) => id === loop.id)).toBeUndefined();
+    expect(ordered.resets.length).toBeGreaterThan(0);
+  });
+});

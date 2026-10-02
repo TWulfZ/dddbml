@@ -4,6 +4,7 @@ import { SpatialIndex } from '../../render/spatialIndex';
 import { chooseSides, routeRefs, type ColumnYResolver } from '../../render/edgeRouter';
 import { columnCenterY, estimateSize } from '../autoLayout';
 import { chooseSides4, orderEdges, type OrderEdgeInput, type RoutedEdge } from '../edgeOrder';
+import { isSelfRef } from '../../render/edgeKey';
 import { hasManualShape } from './edgeReset';
 
 /**
@@ -72,8 +73,10 @@ export async function computeEdgeOrdering(input: EdgeOrderingInput): Promise<Edg
   }
   const bboxOf = (name: QualifiedName): Bbox | undefined => bboxes.get(name);
 
-  // Refs to route, in deterministic ref.id order; skip manual-shaped edges when preserving.
+  // Refs to route, in deterministic ref.id order; skip manual-shaped edges when preserving, and
+  // self-loops, whose geometry is fixed by the render router (spec 05 §Self-loops).
   const refs = schema.refs
+    .filter((r) => !isSelfRef(r))
     .filter((r) => !(preserveManual && hasManualShape(existingLayouts.get(r.id))))
     .filter((r) => bboxes.has(r.source.table) && bboxes.has(r.target.table))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

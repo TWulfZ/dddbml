@@ -285,8 +285,8 @@ host.
 
 - **Tabla única en `selection`**: el modo incremental la reubica junto a los miembros fijos de su
   grupo (o anclada a sus vecinos FK fijos si no tiene grupo) — útil, no degenerado.
-- **FK auto-referente** (tabla→sí misma): ambos extremos "se mueven" → sus waypoints se resetean;
-  el self-loop se re-rutea vía `columnYResolver`. Cubierto por test.
+- **FK auto-referente** (tabla→sí misma): se dibuja como lazo sin waypoints (spec 05 §Self-loops);
+  los resets por movimiento lo saltean (sólo guarda el lado) y se re-rutea vía `columnYResolver`.
 - **`columns[0]`-only**: FKs compuestas alinean solo por la primera columna.
 - **Nombres de columna**: deben venir des-comillados consistentemente (invariante de `parser.ts`); si
   no, `findIndex` falla en silencio y la alineación simplemente no ocurre (sin crash).

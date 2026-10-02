@@ -41,3 +41,27 @@ describe('edgeKeyedDeps', () => {
     ]);
   });
 });
+
+describe('edgeKeyedRefs — self-refs (spec 05 §Self-loops)', () => {
+  const mk = (id: string, s: string, sCol: string, t: string, tCol: string): Ref => ({
+    id,
+    source: { table: s, columns: [sCol], relation: '*' },
+    target: { table: t, columns: [tCol], relation: '1' },
+  });
+
+  it('keeps a raw self-ref under its own key', () => {
+    const { refs, keyByStableId } = edgeKeyedRefs([mk('self', 'public.a', 'parent_id', 'public.a', 'id')], (t) => t);
+    expect(refs.map((r) => r.id)).toEqual(['public.a::parent_id|public.a::id']);
+    expect(keyByStableId.get('self')).toBe('public.a::parent_id|public.a::id');
+  });
+
+  it('still drops refs whose two ends collapse onto one group node, self-refs included', () => {
+    const map = (t: string) => (t === 'public.a' || t === 'public.b' ? '__group__:G' : t);
+    const { refs, keyByStableId } = edgeKeyedRefs(
+      [mk('ab', 'public.a', 'x', 'public.b', 'y'), mk('aa', 'public.a', 'x', 'public.a', 'id')],
+      map,
+    );
+    expect(refs).toEqual([]);
+    expect(keyByStableId.size).toBe(0);
+  });
+});

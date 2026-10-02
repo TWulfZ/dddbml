@@ -111,7 +111,9 @@ suelto por edge fuera de esta capa). Edge culling:
   hit-paths de deps (`DepOverlay`) no están memoizados: son pocos frente a las refs.
 - Se rutean todas las `effectiveRefs`; las *rutas* se filtran por `visibleRefIds`
   (`useVisibleEdgeIds`): una arista es visible si su **caja** (rects de sus dos nodos
-  extremo ∪ waypoints, `edgeBoxes` en `app.tsx`) cruza el viewport + margen 256px.
+  extremo ∪ waypoints ∪ alcance de un self-loop, `edgeBoxes` en `app.tsx`) cruza el viewport +
+  margen 256px. Un lazo extiende la caja de su tabla por `loopReach(lazos de la tabla)` del lado en
+  que se dibuja (superset: cuenta los lazos de ambos lados; spec 05 §Self-loops).
   Probar sólo los extremos no basta: una arista entre dos tablas fuera de pantalla
   que cruza el viewport desaparecía y parpadeaba al panear. La caja es un superset
   (una diagonal en `rect` puede no tocar el viewport aunque su caja sí) — renderizar
@@ -317,7 +319,7 @@ temporalmente es el que se arrastra (`dragController` lo pone en `startDrag` y l
 `pointerup`).
 
 **Superficies world-size (SVG de aristas, `.ddd-grid`).** Siguen dimensionadas al bbox
-completo del mundo (`worldBbox`: escena dibujada ∪ waypoints de las aristas dibujadas, + 400
+completo del mundo (`worldBbox`: escena dibujada ∪ cajas de las aristas dibujadas —waypoints y lazos—, + 400
 de margen; sin los waypoints, un tramo deslizado más allá de la tabla más externa se
 recortaba junto con su handle). Al no estar promovidas viven dentro del layer tileado del mundo, por lo
 que su tamaño no crea texturas gigantes; el coste es sólo de *paint records*. Si la medición

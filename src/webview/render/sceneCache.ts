@@ -2,7 +2,8 @@ import type { EdgeLayout, GroupLayout, QualifiedName, Ref, Schema, Table, TableG
 import { estimateSize } from '../layout/autoLayout';
 import type { RowGeometry } from '../layout/tableRows';
 import { smallPositionsDelta } from '../state/positionsDelta';
-import { edgeKeyedDeps, edgeKeyedRefs, type KeyedDepEdge } from './edgeKey';
+import { edgeKeyedDeps, edgeKeyedRefs, isSelfRef, type KeyedDepEdge } from './edgeKey';
+import { loopReach, loopSide } from './edgeRouter';
 import { deriveSceneGeometry, groupContainerRects, sceneBounds, type SceneGeometry, type SceneRect } from './sceneGeometry';
 import { SpatialIndex, type Bbox } from './spatialIndex';
 import type { EdgeBox } from './useVisibleNames';
@@ -47,7 +48,7 @@ export interface Scene {
   derived: DerivedScene;
   /** Mutated in place by a drag; its `version` says when it changed. */
   spatialIndex: SpatialIndex;
-  /** Edge culling boxes: endpoint node rects ∪ waypoints (spec 04 "Edge culling"). */
+  /** Edge culling boxes: endpoint node rects ∪ waypoints ∪ self-loop extent (spec 04 "Edge culling"). */
   edgeBoxes: EdgeBox[];
   /** Drawn scene ∪ edge boxes, padded: the extent of the world-size surfaces (spec 04). */
   worldBbox: Bbox;
@@ -119,6 +120,8 @@ export class SceneCache {
   private readonly groupRects = new Map<QualifiedName, Bbox>();
   private readonly boxSlotsByTable = new Map<QualifiedName, number[]>();
   private boxEdges: BoxedEdge[] = [];
+  /** Self-loops per table: a loop's box reaches as far as the outermost loop it may stack under. */
+  private readonly loopsByTable = new Map<QualifiedName, number>();
   private content: Bbox | null = null;
 
   public update(next: SceneInputs): Scene {
@@ -177,6 +180,10 @@ export class SceneCache {
     for (const g of derived.collapsedNodes) this.groupRects.set(groupNodeId(g.name), toBbox(g));
     this.boxSlotsByTable.clear();
     this.boxEdges = [];
+    this.loopsByTable.clear();
+    for (const r of derived.effectiveRefs) {
+      if (isSelfRef(r)) this.loopsByTable.set(r.source.table, (this.loopsByTable.get(r.source.table) ?? 0) + 1);
+    }
     const edgeBoxes: EdgeBox[] = [];
     const add = (e: BoxedEdge): void => {
       const box = this.edgeBoxOf(e, next);
@@ -278,6 +285,12 @@ export class SceneCache {
     if (!a || !b) return null;
     let minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
     let maxX = Math.max(a.x + a.w, b.x + b.w), maxY = Math.max(a.y + a.h, b.y + b.h);
+    const loops = r.from === r.to ? this.loopsByTable.get(r.from) ?? 0 : 0;
+    if (loops > 0) {
+      // Every loop on the table counted, not just those on this side: a superset box is enough for culling.
+      if (loopSide(inputs.edgeLayouts.get(r.id)) === 'left') minX -= loopReach(loops);
+      else maxX += loopReach(loops);
+    }
     for (const wp of inputs.edgeLayouts.get(r.id)?.waypoints ?? []) {
       if (wp.x < minX) minX = wp.x;
       if (wp.y < minY) minY = wp.y;

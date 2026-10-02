@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Dep, EdgeLayout, GroupLayout, QualifiedName, Ref, Schema, Table } from '../../shared/types';
+import { columnCenterY, estimateSize } from '../layout/autoLayout';
 import { buildRowGeometry, fkColumnsByTable } from '../layout/tableRows';
 import { store } from '../state/store';
+import { routeRefs } from './edgeRouter';
 import { SceneCache, type Scene, type SceneInputs } from './sceneCache';
 
 // 30 tables: g0 expanded (t0-t9), g1 collapsed (t10-t14), g2 hidden (t15-t19), t20-t29 ungrouped
@@ -167,5 +169,67 @@ describe('SceneCache — incremental drag frames', () => {
     const scene = new SceneCache().update(inputsFor(start(), false));
     expect(scene.derived.effectiveDeps.length).toBeGreaterThan(0);
     expect(scene.edgeBoxes.some((b) => b.id.startsWith('dep:'))).toBe(false);
+  });
+});
+
+describe('SceneCache — self-loop culling boxes (spec 05 §Self-loops)', () => {
+  const cols = ['id', 'a', 'b', 'c', 'd'].map((name) => ({ name, type: 'int' }));
+  const table = (name: string): Table => ({ name, schemaName: 'public', tableName: name, columns: cols });
+  const loop = (id: string, s: string, t: string): Ref => ({
+    id,
+    source: { table: 'p', columns: [s], relation: '*' },
+    target: { table: 'p', columns: [t], relation: '1' },
+  });
+  // Filler tables keep a one-table drag under the incremental path's moved-share cap.
+  const filler = ['q0', 'q1', 'q2', 'q3', 'q4'];
+  const schema: Schema = { tables: ['p', ...filler].map(table), refs: [loop('l1', 'a', 'b'), loop('l2', 'c', 'd')], groups: [] };
+  const tablesByName = new Map(schema.tables.map((t) => [t.name, t]));
+  const rows = buildRowGeometry({ tables: schema.tables, showOnlyPkFk: false, fkColumnsByTable: fkColumnsByTable(schema.refs) });
+  const groupState = {};
+  const individuallyHidden = new Set<QualifiedName>();
+  const inputs = (positions: ReadonlyMap<QualifiedName, { x: number; y: number }>, edgeLayouts: ReadonlyMap<string, EdgeLayout>): SceneInputs => ({
+    schema, positions, groupState, individuallyHidden, tablesByName, rows, edgeLayouts, density: 'cozy', showDeps: true,
+  });
+  const routesFor = (positions: ReadonlyMap<QualifiedName, { x: number; y: number }>, edgeLayouts: ReadonlyMap<string, EdgeLayout>) =>
+    routeRefs(
+      new SceneCache().update(inputs(positions, edgeLayouts)).derived.effectiveRefs,
+      (n) => {
+        const p = positions.get(n);
+        const s = estimateSize(cols.length);
+        return p ? { x: p.x, y: p.y, w: s.width, h: s.height } : undefined;
+      },
+      (t, c) => columnCenterY(rows.indexOf(t, c)),
+      (id) => edgeLayouts.get(id),
+    );
+
+  it('boxes each loop with its table plus the loop extent, on the side it is drawn', () => {
+    const positions = new Map([['p', { x: 0, y: 0 }]]);
+    for (const edgeLayouts of [new Map<string, EdgeLayout>(), new Map<string, EdgeLayout>([['p::c|p::d', { sourceSide: 'left', targetSide: 'left' }]])]) {
+      const scene = new SceneCache().update(inputs(positions, edgeLayouts));
+      expect(scene.edgeBoxes).toHaveLength(2);
+      for (const route of routesFor(positions, edgeLayouts)) {
+        const { bbox } = scene.edgeBoxes.find((b) => b.id === route.id)!;
+        for (const s of route.segments) {
+          for (const [x, y] of [[s.x1, s.y1], [s.x2, s.y2]] as const) {
+            expect(x).toBeGreaterThanOrEqual(bbox.x);
+            expect(x).toBeLessThanOrEqual(bbox.x + bbox.w);
+            expect(y).toBeGreaterThanOrEqual(bbox.y);
+            expect(y).toBeLessThanOrEqual(bbox.y + bbox.h);
+          }
+        }
+      }
+    }
+  });
+
+  it('moves the loop boxes with a dragged table, matching a full rebuild', () => {
+    store.setState({ positions: new Map([['p', { x: 0, y: 0 }], ...filler.map((n, i): [string, { x: number; y: number }] => [n, { x: 600 + i * 300, y: 0 }])]) });
+    const edgeLayouts = new Map<string, EdgeLayout>();
+    const cache = new SceneCache();
+    const first = cache.update(inputs(store.getState().positions, edgeLayouts));
+    store.getState().setPositionsBatch([['p', { x: 300, y: 120 }]]);
+    const inc = cache.update(inputs(store.getState().positions, edgeLayouts));
+    expect(inc.spatialIndex).toBe(first.spatialIndex);
+    expectSameScene(inc, new SceneCache().update(inputs(store.getState().positions, edgeLayouts)));
+    expect(inc.edgeBoxes[0]!.bbox.x).toBe(300);
   });
 });

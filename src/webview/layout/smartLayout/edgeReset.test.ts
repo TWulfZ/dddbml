@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { movedNames, computeAutoShapeDrops, computeDepStrandResets, computeDragEdgeChanges, computeEdgeResets, computeSelectionEdgeResets, hasManualShape } from './edgeReset';
+import { movedNames, computeAutoShapeDrops, computeDepStrandResets, computeDragEdgeChanges, computeEdgeResets, computeSelectionEdgeResets, hasManualShape, rawLayoutRefs } from './edgeReset';
 import type { KeyedDepEdge } from '../../render/edgeKey';
 import type { EdgeLayout, Ref } from '../../../shared/types';
 
@@ -176,5 +176,25 @@ describe('computeDragEdgeChanges (spec 05 "Arrastre de tablas")', () => {
       ['rides', { waypoints: [{ x: 15, y: 10 }], auto: true }],
       ['dep', { waypoints: [{ x: 15, y: 10 }] }],
     ]));
+  });
+});
+
+describe('self-loops (spec 05 §Self-loops)', () => {
+  const loop = ref('l', 'a', 'a');
+  const wps = [{ x: 400, y: 40 }];
+
+  it('rawLayoutRefs keeps a self-ref under its raw key', () => {
+    expect(rawLayoutRefs([loop]).map((r) => r.id)).toEqual(['a::x|a::y']);
+  });
+
+  it('moves, drags and resets never touch a loop: its only shape is the user-chosen side', () => {
+    const edges = new Map<string, EdgeLayout>([['l', { waypoints: wps, sourceSide: 'left', targetSide: 'left', auto: true, color: '#abc' }]]);
+    const moved = new Set(['a']);
+    expect(computeEdgeResets([loop], moved, edges)).toEqual([]);
+    expect(computeAutoShapeDrops([loop], moved, edges)).toEqual([]);
+    expect(computeSelectionEdgeResets([loop], moved, edges)).toEqual([]);
+    const before = new Map([['a', { x: 0, y: 0 }]]);
+    const after = new Map([['a', { x: 60, y: 20 }]]);
+    expect(computeDragEdgeChanges([loop], [], before, after, edges)).toEqual([]);
   });
 });

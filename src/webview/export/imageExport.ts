@@ -212,7 +212,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
   // are part of the included set. `view` keeps any edge touching the region (clipped by the viewBox).
   const refById = new Map<string, Ref>();
   for (const r of derived.effectiveRefs) refById.set(r.id, r);
-  const routes = routeRefs(derived.effectiveRefs, bboxOf, columnY, (id) => edgeLayouts.get(id));
+  const routes = routeRefs(derived.effectiveRefs, bboxOf, columnY, (id) => edgeLayouts.get(id), densityMetrics(density).rowHeight);
   const present = (endpoint: QualifiedName): boolean =>
     endpoint.startsWith(GROUP_PREFIX) ? includedGroups.has(endpoint.slice(GROUP_PREFIX.length)) : includedTables.has(endpoint);
 
