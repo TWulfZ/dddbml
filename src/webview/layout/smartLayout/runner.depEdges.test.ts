@@ -42,31 +42,41 @@ const depLayouts = () => {
   return out;
 };
 
-describe('runner — dep: edge layouts are never touched (spec 18)', () => {
-  const before = () => new Map([[USERS_ORDERS, depShape], [ORDERS_MART, { waypoints: [{ x: 1400, y: 900 }] }]]);
-
-  it('arranging every table keeps dep waypoints, even with both endpoints moved', async () => {
+describe('runner — stranded dep waypoints (spec 18, decided 2026-10-01)', () => {
+  it('arranging every table drops dep waypoints whose both endpoints moved, keeping color', async () => {
     await runSmartLayout('all', { orderEdges: false });
     expect(store.getState().positions.get('public.orders')).not.toEqual({ x: 900, y: 700 });
-    expect(depLayouts()).toEqual(before());
+    expect(depLayouts()).toEqual(new Map([[USERS_ORDERS, { color: '#3b82f6' }]]));
   });
 
-  it('arrange + A* ordering writes ref keys only', async () => {
+  it('restores the dropped dep waypoints and the positions with ONE undo', async () => {
+    await runSmartLayout('all', { orderEdges: false });
+    expect(store.getState().past).toHaveLength(1);
+    store.getState().undo();
+    expect(store.getState().positions.get('public.orders')).toEqual({ x: 900, y: 700 });
+    expect(depLayouts()).toEqual(new Map([[USERS_ORDERS, depShape], [ORDERS_MART, { waypoints: [{ x: 1400, y: 900 }] }]]));
+  });
+
+  it('keeps a dep whose other endpoint stayed put', async () => {
+    store.setState({ selection: new Set(['public.users']) });
+    await runSmartLayout('selection', { orderEdges: false });
+    expect(depLayouts().get(ORDERS_MART)).toEqual({ waypoints: [{ x: 1400, y: 900 }] });
+  });
+
+  it('arrange + A* ordering never marks a dep key auto', async () => {
     await runSmartLayout('all', { orderEdges: true, preserveManualEdges: false });
-    expect(depLayouts()).toEqual(before());
     for (const [k, v] of store.getState().edgeLayouts) if (v.auto) expect(k.startsWith('dep:')).toBe(false);
   });
 
-  it('"Order edges" leaves deps alone', async () => {
+  it('"Order edges" moves no table, so deps keep their waypoints', async () => {
+    const before = depLayouts();
     await runEdgeOrdering({ preserveManual: false });
-    expect([...store.getState().edgeLayouts.keys()].some((k) => !k.startsWith('dep:'))).toBe(true);
-    expect(depLayouts()).toEqual(before());
+    expect(depLayouts()).toEqual(before);
   });
 
-  it('"Reset relations" over the dep endpoints keeps their waypoints', () => {
-    const ref = [...store.getState().edgeLayouts.keys()].length;
+  it('"Reset relations" also straightens the deps touching the selection', () => {
+    store.setState({ selection: new Set(['public.mart']) });
     resetSelectedEdges();
-    expect(store.getState().edgeLayouts.size).toBe(ref);
-    expect(depLayouts()).toEqual(before());
+    expect(depLayouts()).toEqual(new Map([[USERS_ORDERS, depShape]]));
   });
 });

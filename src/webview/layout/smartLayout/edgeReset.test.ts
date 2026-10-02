@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { movedNames, computeAutoShapeDrops, computeEdgeResets, computeSelectionEdgeResets, hasManualShape } from './edgeReset';
+import { movedNames, computeAutoShapeDrops, computeDepStrandResets, computeEdgeResets, computeSelectionEdgeResets, hasManualShape } from './edgeReset';
+import type { KeyedDepEdge } from '../../render/edgeKey';
 import type { EdgeLayout, Ref } from '../../../shared/types';
 
 const ref = (id: string, s: string, t: string): Ref => ({
@@ -91,5 +92,21 @@ describe('A* auto shapes (F20)', () => {
   it('the stranded-manual reset leaves auto shapes to the auto drop', () => {
     const edges = new Map<string, EdgeLayout>([['e', autoShape]]);
     expect(computeEdgeResets([ref('e', 'a', 'b')], new Set(['a', 'b']), edges)).toEqual([]);
+  });
+});
+
+describe('computeDepStrandResets', () => {
+  const dep = (id: string, up: string, down: string): KeyedDepEdge => ({
+    id, upstream: { table: up, columns: [] }, downstream: { table: down, columns: [] }, name: null, note: null,
+  });
+
+  it('drops free waypoints only when both endpoints moved, keeping the color', () => {
+    const edges = new Map<string, EdgeLayout>([
+      ['d1', { waypoints: [{ x: 1, y: 1 }], color: '#f00' }],
+      ['d2', { waypoints: [{ x: 2, y: 2 }] }],
+      ['d3', { color: '#0f0' }],
+    ]);
+    const resets = computeDepStrandResets([dep('d1', 'a', 'b'), dep('d2', 'a', 'z'), dep('d3', 'a', 'b')], new Set(['a', 'b']), edges);
+    expect(resets).toEqual([['d1', { color: '#f00' }]]);
   });
 });

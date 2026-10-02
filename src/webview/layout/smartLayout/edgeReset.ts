@@ -1,9 +1,14 @@
-import type { EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
-import { edgeKeyedRefs } from '../../render/edgeKey';
+import type { Dep, EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
+import { edgeKeyedDeps, edgeKeyedRefs, type KeyedDepEdge } from '../../render/edgeKey';
 
 /** Every ref under the key its layout has while both endpoints render as themselves (no hide/collapse). */
 export function rawLayoutRefs(refs: readonly Ref[]): Ref[] {
   return edgeKeyedRefs(refs, (t) => t).refs;
+}
+
+/** Dep counterpart of {@link rawLayoutRefs}: every dep under its unremapped `dep:` key. */
+export function rawLayoutDeps(deps: readonly Dep[] | undefined): KeyedDepEdge[] {
+  return edgeKeyedDeps(deps ?? [], (t) => t);
 }
 
 /** Whether an edge carries any shape: explicit waypoints, a port-side override, or a legacy dx/dy. */
@@ -113,6 +118,42 @@ export function computeSelectionEdgeResets(
     if (!selection.has(r.source.table) && !selection.has(r.target.table)) continue;
 
     out.push([r.id, existing?.color ? { color: existing.color } : null]);
+  }
+  return out;
+}
+
+/**
+ * Dep waypoints are FREE points the curve passes through (spec 18), not orthogonal trunks, so once
+ * both endpoints move they float in empty space. Drop them (color kept), the dep twin of
+ * {@link computeEdgeResets}; callers fold the pairs into the move's single undo step.
+ */
+export function computeDepStrandResets(
+  deps: readonly KeyedDepEdge[],
+  moved: Set<QualifiedName>,
+  edgeLayouts: Map<string, EdgeLayout>,
+): Array<[string, EdgeLayout | null]> {
+  const out: Array<[string, EdgeLayout | null]> = [];
+  for (const d of deps) {
+    const existing = edgeLayouts.get(d.id);
+    if (!existing?.waypoints?.length) continue;
+    if (!moved.has(d.upstream.table) || !moved.has(d.downstream.table)) continue;
+    out.push([d.id, existing.color ? { color: existing.color } : null]);
+  }
+  return out;
+}
+
+/** Dep twin of {@link computeSelectionEdgeResets}: "Reset relations" also straightens touching deps. */
+export function computeSelectionDepResets(
+  deps: readonly KeyedDepEdge[],
+  selection: Set<QualifiedName>,
+  edgeLayouts: Map<string, EdgeLayout>,
+): Array<[string, EdgeLayout | null]> {
+  const out: Array<[string, EdgeLayout | null]> = [];
+  for (const d of deps) {
+    const existing = edgeLayouts.get(d.id);
+    if (!existing?.waypoints?.length) continue;
+    if (!selection.has(d.upstream.table) && !selection.has(d.downstream.table)) continue;
+    out.push([d.id, existing.color ? { color: existing.color } : null]);
   }
   return out;
 }
