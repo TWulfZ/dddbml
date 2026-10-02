@@ -146,7 +146,8 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
   extremo, los waypoints se conservan.
 - **Drag de tablas** (decidido con el usuario, 2026-10-01): el commit del drag **traslada** por el
   delta del drag los waypoints de toda dep cuyos dos extremos están en el set arrastrado, en el
-  mismo paso de undo; no los descarta (spec 05).
+  mismo paso de undo; no los descarta (`computeDragEdgeChanges`, spec 05 §9). Con un solo extremo
+  arrastrado se conservan.
 - "Reset relations" de una selección también endereza las deps que la tocan
   (`computeSelectionDepResets`), igual que el "Reset line" individual.
 - Solo lectura (merge, time travel, diff): insertar, mover y borrar waypoints de una dep son

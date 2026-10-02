@@ -58,6 +58,8 @@ function ptr(clientX: number, clientY: number): PointerEvent {
 const move = (x: number, y: number) => listeners.get('pointermove')!(ptr(x, y));
 const up = (x: number, y: number) => listeners.get('pointerup')!(ptr(x, y));
 
+const baseSettings = store.getState().settings;
+
 beforeEach(() => {
   listeners.clear();
   frames.clear();
@@ -70,6 +72,7 @@ beforeEach(() => {
     mergeConflicts: null,
     past: [],
     future: [],
+    settings: baseSettings,
   });
 });
 
@@ -268,6 +271,44 @@ describe('table drag over A* auto edges (F20)', () => {
     expect(store.getState().past).toHaveLength(0);
   });
 
+  it('a multi-select drag translates the waypoints of edges inside the selection, in one undo step', () => {
+    store.setState({ selection: new Set(['a', 'b']) });
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(160, 130);
+    up(160, 130);
+    const edges = store.getState().edgeLayouts;
+    expect(edges.get(ab)).toEqual({ ...autoShape, waypoints: [{ x: 310, y: 70 }], color: '#ff0000' });
+    expect(edges.get(ac)).toEqual(manual);
+    expect(edges.has(bc)).toBe(false);
+    expect(store.getState().past).toHaveLength(1);
+    store.getState().undo();
+    expect(store.getState().positions.get('a')).toEqual({ x: 0, y: 0 });
+    expect(store.getState().positions.get('b')).toEqual({ x: 500, y: 0 });
+    expect(store.getState().edgeLayouts.get(ab)).toEqual({ ...autoShape, color: '#ff0000' });
+    expect(store.getState().edgeLayouts.get(bc)).toEqual(autoShape);
+    store.getState().redo();
+    expect(store.getState().edgeLayouts.get(ab)).toEqual({ ...autoShape, waypoints: [{ x: 310, y: 70 }], color: '#ff0000' });
+    expect(store.getState().edgeLayouts.has(bc)).toBe(false);
+  });
+
+  it('a multi-select drag translates a manual ref inside the selection', () => {
+    store.setState({ selection: new Set(['a', 'c']) });
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(160, 130);
+    up(160, 130);
+    expect(store.getState().edgeLayouts.get(ac)).toEqual({ waypoints: [{ x: 310, y: 330 }] });
+  });
+
+  it('with snap on, waypoints move by the snapped delta the tables committed', () => {
+    const settings = store.getState().settings;
+    store.setState({ selection: new Set(['a', 'c']), settings: { ...settings, ui: { ...settings.ui, snapToGrid: true, gridSize: 20 } } });
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(157, 128);
+    up(157, 128);
+    expect(store.getState().positions.get('a')).toEqual({ x: 60, y: 20 });
+    expect(store.getState().edgeLayouts.get(ac)).toEqual({ waypoints: [{ x: 310, y: 320 }] });
+  });
+
   it('"Reset line" still resets an auto shape', () => {
     resetEdgeWaypoints(bc);
     expect(store.getState().edgeLayouts.has(bc)).toBe(false);
@@ -312,12 +353,20 @@ describe('dep waypoint edits (spec 18)', () => {
     expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
   });
 
-  it('a table drag over both endpoints leaves the dep waypoints where they are', () => {
+  it('a table drag over both endpoints carries the dep waypoints along', () => {
     store.setState({ selection: new Set(['a', 'b']) });
     startDrag(ptr(100, 100), 'a', fakeNode());
     move(400, 300);
     up(400, 300);
-    expect(store.getState().positions.get('b')).not.toEqual({ x: 500, y: 0 });
+    expect(store.getState().positions.get('b')).toEqual({ x: 800, y: 200 });
+    expect(store.getState().edgeLayouts.get(dk)).toEqual({ ...shape, waypoints: [{ x: 550, y: 300 }, { x: 600, y: 400 }] });
+  });
+
+  it('a table drag over one endpoint keeps the dep waypoints', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(400, 300);
+    up(400, 300);
     expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+    expect(store.getState().past[0]?.kind).toBe('move');
   });
 });

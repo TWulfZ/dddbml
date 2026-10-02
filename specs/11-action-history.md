@@ -98,7 +98,7 @@ Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor
 
 | Evento | Efecto sobre `past`/`future` |
 |---|---|
-| `pointerup` de drag con desplazamiento neto > 0 | Push `MoveCommand` a `past`; `future` limpio. Si `past.length > capacity`, FIFO drop del head. Si alguna arista de A\* (`auto`, spec 05 §9) toca una tabla movida, su forma se descarta en el mismo paso: se empuja un `ArrangeCommand` (posiciones + `EdgeLayout` antes/después, label `Move …`) en lugar del `MoveCommand`, así un Ctrl+Z devuelve tabla y forma. |
+| `pointerup` de drag con desplazamiento neto > 0 | Push `MoveCommand` a `past`; `future` limpio. Si `past.length > capacity`, FIFO drop del head. Si el drag cambia alguna arista (`computeDragEdgeChanges`, spec 05 "Arrastre de tablas": forma de A\* (`auto`) con un solo extremo movido → descartada; ref o dep con ambos extremos arrastrados → waypoints trasladados por el delta), se empuja un `ArrangeCommand` (posiciones + `EdgeLayout` antes/después, label `Move …`) en lugar del `MoveCommand`, así un Ctrl+Z devuelve tablas y formas y el redo las vuelve a aplicar. |
 | `pointerup` de drag sin desplazamiento (click sostenido) | No-op. `buildMoveCommand` retorna `null`. |
 | `pointerup` de waypoint drag con cambio neto en `waypoints[]` | Push `WaypointCommand` con `op = 'move'` (o `'remove'` si la operación colapsó a un vecino). |
 | `pointerup` de click-en-segmento (agregar) | Push `WaypointCommand` con `op = 'add'`. |

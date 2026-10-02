@@ -99,6 +99,50 @@ export function computeAutoShapeDrops(
   return out;
 }
 
+type Pos = { x: number; y: number };
+
+/**
+ * Edge changes at a table-drag commit (spec 05 "Arrastre de tablas"). A drag moves every dragged
+ * table by the same delta, so an edge (ref, auto or not, or dep) with BOTH endpoints dragged keeps
+ * its relative geometry: its absolute waypoints are translated, sides and `auto` untouched. Edges
+ * with one endpoint dragged follow {@link computeAutoShapeDrops} as before. `refs`/`deps` must carry
+ * raw layout keys (a dragged table is always rendered as itself).
+ */
+export function computeDragEdgeChanges(
+  refs: readonly Ref[],
+  deps: readonly KeyedDepEdge[],
+  before: Map<QualifiedName, Pos>,
+  after: Map<QualifiedName, Pos>,
+  edgeLayouts: Map<string, EdgeLayout>,
+): Array<[string, EdgeLayout | null]> {
+  const moved = movedNames(before, after);
+  // Per table, not one pointer delta: snapping an off-grid origin shifts each table by a different
+  // amount, and the edge then rides with its source end.
+  const delta = (name: QualifiedName): Pos | null => {
+    if (!moved.has(name)) return null;
+    const b = before.get(name);
+    const a = after.get(name);
+    return a && b ? { x: a.x - b.x, y: a.y - b.y } : null;
+  };
+  const out: Array<[string, EdgeLayout | null]> = [];
+  const translate = (id: string, from: QualifiedName, to: QualifiedName): void => {
+    const d = delta(from);
+    const existing = edgeLayouts.get(id);
+    if (!d || !moved.has(to) || !existing?.waypoints?.length) return;
+    out.push([id, { ...existing, waypoints: existing.waypoints.map((w) => ({ x: w.x + d.x, y: w.y + d.y })) }]);
+  };
+  const oneEnd: Ref[] = [];
+  for (const r of refs) {
+    if (moved.has(r.source.table) && moved.has(r.target.table)) translate(r.id, r.source.table, r.target.table);
+    else oneEnd.push(r);
+  }
+  for (const d of deps) {
+    if (moved.has(d.upstream.table) && moved.has(d.downstream.table)) translate(d.id, d.upstream.table, d.downstream.table);
+  }
+  out.push(...computeAutoShapeDrops(oneEnd, moved, edgeLayouts));
+  return out;
+}
+
 /**
  * Manual "reset relations" for a set of selected tables: every edge TOUCHING the selection
  * (source OR target selected) that carries a shape (user or A*) is reset to default routing —

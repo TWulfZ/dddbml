@@ -142,9 +142,10 @@ segmentos completos.
   **Arrastre de tablas (decisión 2026-10-01):** en un arrastre todas las tablas arrastradas se
   mueven el mismo delta, así que una arista (ref o Dep, manual o `auto`) con **ambos** extremos en
   el conjunto arrastrado **traslada** sus waypoints ese delta (la forma se conserva, `auto` se
-  mantiene), en el mismo paso de undo que el movimiento. Solo el auto-arrange, que mueve cada
-  extremo distinto, descarta formas. **Implementado** —
-  ver "Marcador `auto`" en §9.
+  mantiene), en el mismo paso de undo que el movimiento. Las aristas con un solo extremo arrastrado
+  siguen igual (forma `auto` descartada; manuales y deps conservan sus waypoints), y el
+  auto-arrange, que mueve cada extremo distinto, sigue descartando formas. **Implementado**
+  (`computeDragEdgeChanges`) — ver "Marcador `auto`" en §9.
 
 - **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
   forma en `WaypointCommand`. "Reset line" emite **un solo** `ArrangeCommand` de sólo
@@ -477,11 +478,21 @@ viaja por todo el camino de persistencia (sidecar `edges.*.auto`, spec 03; `pers
   manuales" re-ordena las aristas de A\* (antes la segunda corrida era un no-op silencioso).
 - Mover un extremo descarta la forma `auto` entera (waypoints + lados, conserva color) —
   `computeAutoShapeDrops` (`edgeReset.ts`), con **cualquiera** de los dos extremos movido (el lado
-  depende de la geometría relativa). Aplica en el commit de un drag de tabla (un único paso de undo:
-  el drag se registra como `ArrangeCommand` con label `Move …`, spec 11), en el auto-arrange
-  (`runner.ts`, junto a `computeEdgeResets`, que ahora ignora las `auto`) y en el reacomodo de
-  selección. Se evalúa sobre **todas** las refs del schema con su clave cruda (`rawLayoutRefs`): una
-  arista cuyo otro extremo está oculto/colapsado sigue siendo de A\* y queda igual de vieja.
+  depende de la geometría relativa). Aplica en el auto-arrange (`runner.ts`, junto a
+  `computeEdgeResets`, que ahora ignora las `auto`), en el reacomodo de selección y en el commit de
+  un drag de tabla **sólo** para las aristas con un único extremo arrastrado. Se evalúa sobre
+  **todas** las refs del schema con su clave cruda (`rawLayoutRefs`): una arista cuyo otro extremo
+  está oculto/colapsado sigue siendo de A\* y queda igual de vieja.
+- **Drag de tablas** (`computeDragEdgeChanges`, decisión 2026-10-01): toda arista — ref (manual o
+  `auto`) o dep (`rawLayoutDeps`) — con **ambos** extremos en el set arrastrado traslada sus
+  waypoints por el delta **realmente commiteado** (con snap, el delta ya redondeado de la tabla
+  `source`/`upstream`; si los orígenes están fuera de grilla cada tabla puede moverse distinto y la
+  arista viaja con su `source`). Lados, color y `auto` no cambian; una forma `auto` sin waypoints
+  (sólo lados) queda intacta porque la geometría relativa no cambió. Las self-refs de una tabla
+  arrastrada cuentan como ambos extremos. Todo en el mismo `ArrangeCommand` del movimiento (label
+  `Move …`, spec 11): un Ctrl+Z devuelve tablas y waypoints, el redo los re-aplica. Se calcula una
+  vez en el commit (no por frame: durante el arrastre los waypoints quedan fijos y el drag
+  incremental del spec 04 no cambia); en solo lectura no se aplica nada.
 - Toda edición del usuario de esa arista borra el marcador: waypoints (agregar/mover/quitar,
   arrastre de segmento, borrar muesca) vía `setEdgeWaypoints`, flip de lado vía `setEdgeSide`,
   "Reset line" (deja sólo el color). El **color no cuenta**. Un gesto que termina donde empezó (sin

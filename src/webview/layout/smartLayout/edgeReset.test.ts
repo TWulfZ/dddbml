@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { movedNames, computeAutoShapeDrops, computeDepStrandResets, computeEdgeResets, computeSelectionEdgeResets, hasManualShape } from './edgeReset';
+import { movedNames, computeAutoShapeDrops, computeDepStrandResets, computeDragEdgeChanges, computeEdgeResets, computeSelectionEdgeResets, hasManualShape } from './edgeReset';
 import type { KeyedDepEdge } from '../../render/edgeKey';
 import type { EdgeLayout, Ref } from '../../../shared/types';
 
@@ -108,5 +108,56 @@ describe('computeDepStrandResets', () => {
     ]);
     const resets = computeDepStrandResets([dep('d1', 'a', 'b'), dep('d2', 'a', 'z'), dep('d3', 'a', 'b')], new Set(['a', 'b']), edges);
     expect(resets).toEqual([['d1', { color: '#f00' }]]);
+  });
+});
+
+describe('computeDragEdgeChanges (spec 05 "Arrastre de tablas")', () => {
+  const dep = (id: string, up: string, down: string): KeyedDepEdge => ({
+    id, upstream: { table: up, columns: [] }, downstream: { table: down, columns: [] }, name: null, note: null,
+  });
+  const before = new Map([['a', { x: 0, y: 0 }], ['b', { x: 500, y: 0 }], ['z', { x: 0, y: 900 }]]);
+  const after = new Map([['a', { x: 60, y: 20 }], ['b', { x: 560, y: 20 }], ['z', { x: 0, y: 900 }]]);
+  const wps = [{ x: 250, y: 40 }, { x: 250, y: 300 }];
+  const moved = [{ x: 310, y: 60 }, { x: 310, y: 320 }];
+
+  it('translates manual and auto ref waypoints when both endpoints moved, keeping sides, color and auto', () => {
+    const edges = new Map<string, EdgeLayout>([
+      ['m', { waypoints: wps, sourceSide: 'left', color: '#abc' }],
+      ['au', { waypoints: wps, sourceSide: 'bottom', targetSide: 'top', auto: true }],
+    ]);
+    const out = new Map(computeDragEdgeChanges([ref('m', 'a', 'b'), ref('au', 'a', 'b')], [], before, after, edges));
+    expect(out.get('m')).toEqual({ waypoints: moved, sourceSide: 'left', color: '#abc' });
+    expect(out.get('au')).toEqual({ waypoints: moved, sourceSide: 'bottom', targetSide: 'top', auto: true });
+  });
+
+  it('translates a dep and a self-reference whose endpoints all moved', () => {
+    const edges = new Map<string, EdgeLayout>([['d', { waypoints: wps, color: '#f00' }], ['self', { waypoints: wps, auto: true }]]);
+    const out = new Map(computeDragEdgeChanges([ref('self', 'a', 'a')], [dep('d', 'a', 'b')], before, after, edges));
+    expect(out.get('d')).toEqual({ waypoints: moved, color: '#f00' });
+    expect(out.get('self')).toEqual({ waypoints: moved, auto: true });
+  });
+
+  it('keeps an auto shape with no waypoints when both endpoints moved: its sides still fit', () => {
+    const edges = new Map<string, EdgeLayout>([['au', { sourceSide: 'bottom', targetSide: 'top', auto: true }]]);
+    expect(computeDragEdgeChanges([ref('au', 'a', 'b')], [], before, after, edges)).toEqual([]);
+  });
+
+  it('leaves single-endpoint edges as before: auto refs dropped, manual refs and deps kept', () => {
+    const edges = new Map<string, EdgeLayout>([
+      ['au', { waypoints: wps, auto: true, color: '#abc' }],
+      ['m', { waypoints: wps }],
+      ['d', { waypoints: wps }],
+    ]);
+    const out = computeDragEdgeChanges([ref('au', 'a', 'z'), ref('m', 'z', 'b')], [dep('d', 'z', 'a')], before, after, edges);
+    expect(out).toEqual([['au', { color: '#abc' }]]);
+  });
+
+  it('translates by each edge\'s actual committed delta, not a shared pointer delta', () => {
+    // Off-grid origins snap by different amounts; the edge rides with its source table.
+    const snappedAfter = new Map([['a', { x: 60, y: 20 }], ['b', { x: 580, y: 20 }]]);
+    const edges = new Map<string, EdgeLayout>([['e', { waypoints: [{ x: 10, y: 10 }] }], ['r', { waypoints: [{ x: 10, y: 10 }] }]]);
+    const out = new Map(computeDragEdgeChanges([ref('e', 'a', 'b'), ref('r', 'b', 'a')], [], before, snappedAfter, edges));
+    expect(out.get('e')).toEqual({ waypoints: [{ x: 70, y: 30 }] });
+    expect(out.get('r')).toEqual({ waypoints: [{ x: 90, y: 30 }] });
   });
 });

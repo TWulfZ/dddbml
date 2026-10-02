@@ -4,7 +4,7 @@ import { schedulePersist } from '../persistence';
 import { slideSegment, notchAtQuarter, deleteNotch, type EdgeRoute } from '../render/edgeRouter';
 import { screenToWorld, type Point } from '../render/viewport';
 import { gridSnapper } from '../layout/grid';
-import { computeAutoShapeDrops, hasShape, movedNames, rawLayoutRefs } from '../layout/smartLayout/edgeReset';
+import { computeDragEdgeChanges, hasShape, rawLayoutDeps, rawLayoutRefs } from '../layout/smartLayout/edgeReset';
 import type { Waypoint } from '../../shared/types';
 import { isFkDragActive } from './fkDrag';
 
@@ -191,21 +191,24 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
 }
 
 /**
- * Push a table move. A* shapes touching a moved table were routed for the old geometry, so they
- * are dropped in the same undo step (an arrange-kind command, which snapshots edge layouts) (F20).
+ * Push a table move. Edge shapes the move invalidates (A* shapes with one end moved) or carries
+ * along (waypoints of edges with both ends dragged) change in the same undo step, as an
+ * arrange-kind command, which snapshots edge layouts (F20, spec 05 "Arrastre de tablas").
  */
 function commitMove(cmd: MoveCommand): void {
   const s = store.getState();
-  const drops = isCanvasReadOnly(s)
+  const before = new Map(cmd.from);
+  const after = new Map(cmd.to);
+  const changes = isCanvasReadOnly(s)
     ? []
-    : computeAutoShapeDrops(rawLayoutRefs(s.schema.refs), movedNames(new Map(cmd.from), new Map(cmd.to)), s.edgeLayouts);
-  if (drops.length === 0) {
+    : computeDragEdgeChanges(rawLayoutRefs(s.schema.refs), rawLayoutDeps(s.schema.deps), before, after, s.edgeLayouts);
+  if (changes.length === 0) {
     s.pushMoveCommand(cmd);
     return;
   }
   const edgesBefore = new Map(s.edgeLayouts);
-  s.applyEdgeLayouts(drops);
-  const arrange = buildArrangeCommand(new Map(cmd.from), new Map(cmd.to), edgesBefore, drops, cmd.label);
+  s.applyEdgeLayouts(changes);
+  const arrange = buildArrangeCommand(before, after, edgesBefore, changes, cmd.label);
   if (arrange) s.pushArrangeCommand(arrange);
 }
 
