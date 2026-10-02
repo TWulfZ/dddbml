@@ -134,8 +134,12 @@ Redo análogo con la edición directa. Deshacer "crear tabla" no borra su posici
 
 ## Puntos de extensión / integración
 
-`src/extension/tableLocation.ts` (rangos por tokens), nuevo `src/extension/schemaEdits.ts` (puro:
-fuente + intención → `TextEdit[]`, testeable sin VS Code), `panel.ts` (handlers + gate),
+`src/extension/tableLocation.ts` (rangos por tokens) y nuevo `src/extension/schemaEdits.ts` (puro:
+fuente + intención → `TextEdit[]`, testeable sin VS Code). **Ambos corren dentro del worker de
+parse** (`parseWorker.ts`): cada consulta de posiciones o cálculo de edición es un op nuevo de
+`ParseRequest` (`parseClient.ts` + `parseWorker.ts` + `testing/parseSetup.ts`); el host nunca importa
+`@dbml/core` (el bundle del host no lo contiene y un parse síncrono lo bloquearía, spec 18). El host
+solo aplica el `WorkspaceEdit` resultante, `panel.ts` (handlers + gate),
 `extension.ts` (`DocumentLinkProvider`, comando `dddbml.revealInDiagram`), `webview/render/
 contextMenu.tsx` y `tableNode.tsx` (menús), `drag/dragController.ts` (arrastre de FK, distinto del
 drag de tabla), `render/viewport.ts` (`fitToBbox` para el foco).
