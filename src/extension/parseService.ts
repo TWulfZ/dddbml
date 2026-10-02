@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type { QualifiedName } from '../shared/types';
-import { createParseClient, type ParseChannel, type ParseClient, type ParseResult, type WorkerLike } from './parseClient';
+import { createParseClient, type ParseChannel, type ParseClient, type ParseOp, type ParseOps, type ParseRequest, type ParseResult, type WorkerLike } from './parseClient';
 
 /** Sits next to extension.js in dist (second esbuild entry, spec 18 §Parse en worker). */
 function spawnWorker(): WorkerLike {
@@ -25,6 +25,11 @@ export function parseAsync(source: string, channel: ParseChannel): Promise<Parse
 export function locateTableAsync(source: string, table: QualifiedName, channel: ParseChannel): Promise<number | null | undefined> {
   client ??= createParseClient(spawn);
   return client.locate(source, table, channel);
+}
+
+export function parseRequest<K extends ParseOp>(request: Extract<ParseRequest, { op: K }>, channel: ParseChannel): Promise<ParseOps[K]['result'] | undefined> {
+  client ??= createParseClient(spawn);
+  return client.request(request, channel);
 }
 
 export function disposeParseService(): void {

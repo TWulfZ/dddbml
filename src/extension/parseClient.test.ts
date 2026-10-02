@@ -21,8 +21,8 @@ class FakeWorker implements WorkerLike {
   reply(): void {
     const job = this.jobs.shift()!;
     const reply: ParseReply = job.op === 'parse'
-      ? { id: job.id, result: { schema: { tables: [], refs: [], groups: [] }, error: null } }
-      : { id: job.id, line: 7 };
+      ? { id: job.id, op: 'parse', value: { schema: { tables: [], refs: [], groups: [] }, error: null } }
+      : { id: job.id, op: 'locate', value: 7 };
     (this.handlers.get('message') as (r: ParseReply) => void)(reply);
   }
   exit(code: number): void {
@@ -84,6 +84,13 @@ describe('createParseClient', () => {
     expect(workers).toHaveLength(2);
     workers[1]!.reply();
     expect((await next)?.error).toBeNull();
+  });
+
+  it('reports a crash under a schema edit as a refusal, never as a silent success', async () => {
+    const { client, workers } = setup();
+    const p = client.request({ op: 'schemaEdit', source: 'Table a {}', intent: { kind: 'addField', table: 'public.a' } }, 'edit');
+    workers[0]!.exit(1);
+    expect(await p).toEqual({ ok: false, reason: expect.stringMatching(/exited/) });
   });
 
   it('dispose terminates the worker and releases waiting callers', async () => {

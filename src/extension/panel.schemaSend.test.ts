@@ -6,8 +6,7 @@ vi.mock('vscode', () => import('./testing/vscodeFake'));
 
 import { fake, workspace, type Uri } from './testing/vscodeFake';
 import { DiagramPanel } from './panel';
-import { parseDbml } from './parser';
-import { findTableLine } from './tableLocation';
+import { runParseJob } from './parseOps';
 import { setParseWorkerFactory } from './parseService';
 import type { ParseJob, ParseReply, WorkerLike } from './parseClient';
 import { cleanupDirs, DBML, gitIn, openPanel, sidecarText } from './testing/panelHarness';
@@ -22,9 +21,7 @@ import { cleanupDirs, DBML, gitIn, openPanel, sidecarText } from './testing/pane
 let holding = false;
 const held: ParseJob[] = [];
 let reply: ((r: ParseReply) => void) | null = null;
-const answer = (job: ParseJob) => reply?.(
-  job.op === 'parse' ? { id: job.id, result: parseDbml(job.source) } : { id: job.id, line: findTableLine(job.source, job.table) },
-);
+const answer = (job: ParseJob) => reply?.(runParseJob(job));
 setParseWorkerFactory((): WorkerLike => ({
   postMessage(job: ParseJob) {
     if (holding) held.push(job);
