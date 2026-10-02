@@ -1,12 +1,13 @@
 import type { EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
+import { edgeKeyedRefs } from '../../render/edgeKey';
 
-/**
- * Whether an edge carries a user-authored shape: explicit waypoints, a port-side override, or a
- * legacy dx/dy. The on-demand edge-ordering pass skips these when `preserveManualEdges` is on, and
- * the same predicate decides whether a table-arrange would strand the shape. Shared so both paths
- * agree on what "manual" means.
- */
-export function hasManualShape(layout: EdgeLayout | undefined): boolean {
+/** Every ref under the key its layout has while both endpoints render as themselves (no hide/collapse). */
+export function rawLayoutRefs(refs: readonly Ref[]): Ref[] {
+  return edgeKeyedRefs(refs, (t) => t).refs;
+}
+
+/** Whether an edge carries any shape: explicit waypoints, a port-side override, or a legacy dx/dy. */
+export function hasShape(layout: EdgeLayout | undefined): boolean {
   if (!layout) return false;
   return (
     (layout.waypoints !== undefined && layout.waypoints.length > 0) ||
@@ -15,6 +16,14 @@ export function hasManualShape(layout: EdgeLayout | undefined): boolean {
     layout.dx !== undefined ||
     layout.dy !== undefined
   );
+}
+
+/**
+ * Whether an edge carries a user-authored shape. The on-demand edge-ordering pass skips these when
+ * `preserveManualEdges` is on; an A* shape (`auto`) is not the user's, so it stays re-orderable (F20).
+ */
+export function hasManualShape(layout: EdgeLayout | undefined): boolean {
+  return hasShape(layout) && layout?.auto !== true;
 }
 
 /** Tables whose position changed (or are newly placed) between two position maps. */
@@ -34,8 +43,9 @@ export function movedNames(
  * Edges whose BOTH endpoints moved have their shape (waypoints + legacy dx/dy) stranded —
  * waypoints are absolute world coords that don't follow tables (spec 05). Clear the shape,
  * preserving the user's color + port-side overrides. Edges with no shape are skipped, and
- * edges with only one endpoint moved keep their bend. Returns `[refId, nextLayout|null]`
- * pairs (null = delete the entry entirely).
+ * edges with only one endpoint moved keep their bend. A* shapes follow
+ * {@link computeAutoShapeDrops} instead. Returns `[refId, nextLayout|null]` pairs (null = delete
+ * the entry entirely).
  */
 export function computeEdgeResets(
   refs: Ref[],
@@ -45,12 +55,12 @@ export function computeEdgeResets(
   const out: Array<[string, EdgeLayout | null]> = [];
   for (const r of refs) {
     const existing = edgeLayouts.get(r.id);
-    if (!existing) continue;
-    const hasShape =
+    if (!existing || existing.auto) continue;
+    const stranded =
       (existing.waypoints !== undefined && existing.waypoints.length > 0) ||
       existing.dx !== undefined ||
       existing.dy !== undefined;
-    if (!hasShape) continue;
+    if (!stranded) continue;
     if (!moved.has(r.source.table) || !moved.has(r.target.table)) continue;
 
     const next: EdgeLayout = {};
@@ -65,8 +75,28 @@ export function computeEdgeResets(
 }
 
 /**
+ * A* shapes (`auto`) touching a moved table: sides and detours were chosen for the old relative
+ * geometry, so one moved endpoint is enough to make them wrong (F20). The whole shape is dropped
+ * (the edge falls back to default routing), color kept. Same `[refId, nextLayout|null]` pairs.
+ */
+export function computeAutoShapeDrops(
+  refs: Ref[],
+  moved: Set<QualifiedName>,
+  edgeLayouts: Map<string, EdgeLayout>,
+): Array<[string, EdgeLayout | null]> {
+  const out: Array<[string, EdgeLayout | null]> = [];
+  for (const r of refs) {
+    const existing = edgeLayouts.get(r.id);
+    if (!existing?.auto) continue;
+    if (!moved.has(r.source.table) && !moved.has(r.target.table)) continue;
+    out.push([r.id, existing.color ? { color: existing.color } : null]);
+  }
+  return out;
+}
+
+/**
  * Manual "reset relations" for a set of selected tables: every edge TOUCHING the selection
- * (source OR target selected) that carries a manual shape is reset to default routing —
+ * (source OR target selected) that carries a shape (user or A*) is reset to default routing —
  * waypoints + legacy dx/dy + port-side overrides cleared, color preserved (matches the
  * per-edge "Reset line"). Lets the user clean up a table's relations independently of an
  * auto-arrange. Returns `[refId, nextLayout|null]` pairs (null = delete the entry).
@@ -79,19 +109,10 @@ export function computeSelectionEdgeResets(
   const out: Array<[string, EdgeLayout | null]> = [];
   for (const r of refs) {
     const existing = edgeLayouts.get(r.id);
-    if (!existing) continue;
-    const hasShape =
-      (existing.waypoints !== undefined && existing.waypoints.length > 0) ||
-      existing.dx !== undefined ||
-      existing.dy !== undefined ||
-      existing.sourceSide !== undefined ||
-      existing.targetSide !== undefined;
-    if (!hasShape) continue;
+    if (!hasShape(existing)) continue;
     if (!selection.has(r.source.table) && !selection.has(r.target.table)) continue;
 
-    const next: EdgeLayout = {};
-    if (existing.color) next.color = existing.color;
-    out.push([r.id, next.color !== undefined ? next : null]);
+    out.push([r.id, existing?.color ? { color: existing.color } : null]);
   }
   return out;
 }

@@ -5,8 +5,9 @@ vi.mock('../persistence', () => ({ schedulePersist: vi.fn() }));
 
 import { store } from '../state/store';
 import { zoomAt } from '../render/viewport';
-import { commitEdgeStyle, resetEdgeWaypoints, startDrag } from './dragController';
-import type { EdgeLayout } from '../../shared/types';
+import { commitEdgeStyle, deleteDepWaypoint, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag } from './dragController';
+import type { EdgeLayout, Ref } from '../../shared/types';
+import { depKey, edgeKey } from '../render/edgeKey';
 
 // Minimal DOM stand-ins: the controller only needs window listeners, a body classList and a node
 // that can capture the pointer and find its viewport.
@@ -16,6 +17,20 @@ vi.stubGlobal('window', {
   removeEventListener: (type: string) => listeners.delete(type),
 });
 vi.stubGlobal('document', { body: { classList: { add: () => undefined, remove: () => undefined } } });
+
+// Manual animation frames: the drag commits from rAF, so tests decide when a frame runs.
+const frames = new Map<number, FrameRequestCallback>();
+let nextFrame = 1;
+vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+  frames.set(nextFrame, cb);
+  return nextFrame++;
+});
+vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
+function runFrame(): void {
+  const pending = [...frames.values()];
+  frames.clear();
+  for (const cb of pending) cb(0);
+}
 
 const VIEWPORT_RECT = { left: 50, top: 20 };
 
@@ -45,6 +60,7 @@ const up = (x: number, y: number) => listeners.get('pointerup')!(ptr(x, y));
 
 beforeEach(() => {
   listeners.clear();
+  frames.clear();
   store.setState({
     positions: new Map([['a', { x: 0, y: 0 }], ['b', { x: 500, y: 0 }]]),
     selection: new Set(),
@@ -79,12 +95,84 @@ describe('startDrag', () => {
   it('zooming mid-drag keeps the grabbed point under the cursor', () => {
     startDrag(ptr(100, 100), 'a', fakeNode());
     move(200, 100);
+    runFrame();
     expect(store.getState().positions.get('a')).toEqual({ x: 100, y: 0 });
     zoomAt({ x: 200 - VIEWPORT_RECT.left, y: 100 - VIEWPORT_RECT.top }, 2);
+    runFrame();
     expect(store.getState().positions.get('a')).toEqual({ x: 100, y: 0 });
     move(200, 100);
+    runFrame();
     expect(store.getState().positions.get('a')).toEqual({ x: 100, y: 0 });
     up(200, 100);
+  });
+
+  it('commits at most once per animation frame, with the latest pointer', () => {
+    const node = fakeNode();
+    startDrag(ptr(100, 100), 'a', node);
+    let commits = 0;
+    const unsub = store.subscribe((s, prev) => {
+      if (s.positions !== prev.positions) commits++;
+    });
+    move(120, 100);
+    move(140, 110);
+    move(160, 120);
+    expect(commits).toBe(0);
+    runFrame();
+    unsub();
+    expect(commits).toBe(1);
+    expect(store.getState().positions.get('a')).toEqual({ x: 60, y: 20 });
+    expect(node.style.transform).toBe('translate(60px, 20px)');
+    up(160, 120);
+  });
+
+  it('a frame that lands after the canvas turned read-only writes nothing', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(150, 130);
+    store.setState({ gitView: { kind: 'diff', baseLabel: 'HEAD', headLabel: 'Working tree' } });
+    runFrame();
+    up(150, 130);
+    expect(store.getState().positions.get('a')).toEqual({ x: 0, y: 0 });
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('a lock that lands after a committed frame puts the tables back on release, with no history', () => {
+    const node = fakeNode();
+    store.setState({ selection: new Set(['a', 'b']) });
+    startDrag(ptr(100, 100), 'a', node);
+    move(150, 130);
+    runFrame();
+    expect(store.getState().positions.get('a')).toEqual({ x: 50, y: 30 });
+    store.setState({ gitView: { kind: 'diff', baseLabel: 'HEAD', headLabel: 'Working tree' } });
+    up(150, 130);
+    expect(store.getState().positions.get('a')).toEqual({ x: 0, y: 0 });
+    expect(store.getState().positions.get('b')).toEqual({ x: 500, y: 0 });
+    expect(node.style.transform).toBe('translate(0px, 0px)');
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('a lock that swapped in its own layout (time travel) keeps that layout on release', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(150, 130);
+    runFrame();
+    store.getState().enterTimeTravel('abc', 'abc');
+    store.getState().setLayout({
+      version: 1,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      tables: { a: { x: 70, y: 80 }, b: { x: 500, y: 0 } },
+      groups: {},
+    });
+    up(150, 130);
+    expect(store.getState().positions.get('a')).toEqual({ x: 70, y: 80 });
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('a release before the pending frame still lands on the last pointer position', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(150, 130);
+    up(150, 130);
+    expect(store.getState().positions.get('a')).toEqual({ x: 50, y: 30 });
+    expect(store.getState().past).toHaveLength(1);
+    expect(frames.size).toBe(0);
   });
 });
 
@@ -123,5 +211,113 @@ describe('edge edits', () => {
     store.setState({ edgeLayouts: new Map([['k', { color: '#ff0000' }]]) });
     resetEdgeWaypoints('k');
     expect(store.getState().past).toHaveLength(0);
+  });
+});
+
+describe('table drag over A* auto edges (F20)', () => {
+  const mkRef = (s: string, t: string): Ref => ({
+    id: `${s}->${t}`,
+    source: { table: s, columns: ['id'], relation: '*' },
+    target: { table: t, columns: ['id'], relation: '1' },
+  });
+  const ab = edgeKey('a', ['id'], 'b', ['id']);
+  const ac = edgeKey('a', ['id'], 'c', ['id']);
+  const bc = edgeKey('b', ['id'], 'c', ['id']);
+  const autoShape: EdgeLayout = { waypoints: [{ x: 250, y: 40 }], sourceSide: 'bottom', targetSide: 'top', auto: true };
+  const manual: EdgeLayout = { waypoints: [{ x: 250, y: 300 }] };
+
+  beforeEach(() => {
+    store.setState({
+      schema: { tables: [], refs: [mkRef('a', 'b'), mkRef('a', 'c'), mkRef('b', 'c')], groups: [] },
+      positions: new Map([['a', { x: 0, y: 0 }], ['b', { x: 500, y: 0 }], ['c', { x: 500, y: 500 }]]),
+      edgeLayouts: new Map([[ab, { ...autoShape, color: '#ff0000' }], [ac, manual], [bc, autoShape]]),
+    });
+  });
+
+  it('dropping a dragged table discards the auto shapes it touches, keeping color and user shapes', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(160, 100);
+    up(160, 100);
+    const edges = store.getState().edgeLayouts;
+    expect(edges.get(ab)).toEqual({ color: '#ff0000' });
+    expect(edges.get(ac)).toEqual(manual);
+    expect(edges.get(bc)).toEqual(autoShape);
+  });
+
+  it('one undo restores the table and the auto shape it discarded', () => {
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(160, 100);
+    up(160, 100);
+    expect(store.getState().past).toHaveLength(1);
+    store.getState().undo();
+    expect(store.getState().positions.get('a')).toEqual({ x: 0, y: 0 });
+    expect(store.getState().edgeLayouts.get(ab)).toEqual({ ...autoShape, color: '#ff0000' });
+    store.getState().redo();
+    expect(store.getState().edgeLayouts.get(ab)).toEqual({ color: '#ff0000' });
+  });
+
+  it('a port flip dragged back to where it started leaves the shape automatic and history empty', () => {
+    const rightAuto: EdgeLayout = { ...autoShape, sourceSide: 'right' };
+    store.setState({ edgeLayouts: new Map([[bc, rightAuto]]) });
+    startEndpointDrag(bc, 'source', 600, ptr(650, 0), fakeNode(), (x) => x);
+    move(550, 0);
+    expect(store.getState().edgeLayouts.get(bc)?.auto).toBeUndefined();
+    move(650, 0);
+    up(650, 0);
+    expect(store.getState().edgeLayouts.get(bc)).toEqual(rightAuto);
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('"Reset line" still resets an auto shape', () => {
+    resetEdgeWaypoints(bc);
+    expect(store.getState().edgeLayouts.has(bc)).toBe(false);
+    expect(store.getState().past).toHaveLength(1);
+  });
+});
+
+describe('dep waypoint edits (spec 18)', () => {
+  const dk = depKey('a', [], 'b', []);
+  const shape: EdgeLayout = { waypoints: [{ x: 250, y: 100 }, { x: 300, y: 200 }], color: '#3b82f6' };
+
+  beforeEach(() => {
+    store.setState({
+      schema: { tables: [], refs: [], groups: [], deps: [{ name: null, edges: [{ id: 'd', upstream: { table: 'a', columns: [] }, downstream: { table: 'b', columns: [] } }] }] },
+      edgeLayouts: new Map([[dk, shape]]),
+    });
+  });
+
+  it('are ignored while the canvas is read-only', () => {
+    store.setState({ gitView: { kind: 'diff', baseLabel: 'HEAD', headLabel: 'Working tree' } });
+    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    expect(listeners.size).toBe(0);
+    startDepWaypointInsert(dk, 1, { x: 270, y: 150 }, ptr(320, 170), fakeNode());
+    expect(listeners.size).toBe(0);
+    deleteDepWaypoint(dk, 0);
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('never carry the A* marker, even over a sidecar that smuggled one in', () => {
+    // Bypasses writeLayout on purpose: a hand-edited sidecar is the only way a dep key could hold it.
+    store.setState({ edgeLayouts: new Map([[dk, { ...shape, auto: true }]]) });
+    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    move(300, 120);
+    up(300, 120);
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    move(340, 160);
+    up(340, 160);
+    expect(store.getState().edgeLayouts.get(dk)?.auto).toBeUndefined();
+    store.getState().undo();
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+  });
+
+  it('a table drag over both endpoints leaves the dep waypoints where they are', () => {
+    store.setState({ selection: new Set(['a', 'b']) });
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(400, 300);
+    up(400, 300);
+    expect(store.getState().positions.get('b')).not.toEqual({ x: 500, y: 0 });
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
   });
 });

@@ -68,21 +68,22 @@ function useCulledSet<S>(
   query: (source: S, box: Bbox) => Set<string>,
   rect: ViewportRect,
   ready: boolean,
+  revision = 0,
 ): Set<string> | null {
   const [, force] = useReducer((c: number, _a: void) => c + 1, 0);
   const lastRef = useRef<Set<string> | null>(null);
-  const depsRef = useRef<[S, number, number, boolean] | null>(null);
+  const depsRef = useRef<[S, number, number, boolean, number] | null>(null);
   const run = (vp: ViewportLayout): Set<string> | null => {
     const box = cullingBox(rect, ready, vp);
     return box ? query(source, box) : null;
   };
 
-  // Synchronous recompute when the non-viewport inputs change (new source after a move, resize,
-  // ready flip). Refs are mutated during render on purpose: Preact renders synchronously, so this
+  // Synchronous recompute when the non-viewport inputs change (new or mutated source after a move,
+  // resize, ready flip). Refs are mutated during render on purpose: Preact renders synchronously, so this
   // is the cheapest way to keep the value coherent with the current inputs without an extra pass.
   const d = depsRef.current;
-  if (!d || d[0] !== source || d[1] !== rect.w || d[2] !== rect.h || d[3] !== ready) {
-    depsRef.current = [source, rect.w, rect.h, ready];
+  if (!d || d[0] !== source || d[1] !== rect.w || d[2] !== rect.h || d[3] !== ready || d[4] !== revision) {
+    depsRef.current = [source, rect.w, rect.h, ready, revision];
     const next = run(store.getState().viewport);
     if (!sameNameSet(lastRef.current, next)) lastRef.current = next;
   }
@@ -102,9 +103,12 @@ function useCulledSet<S>(
 
 const queryIndex = (index: SpatialIndex, box: Bbox) => index.query(box);
 
-/** Culled node names (tables, collapsed groups, containers) from the spatial index. */
+/**
+ * Culled node names (tables, collapsed groups, containers) from the spatial index. A drag moves
+ * entries of the same index instance in place, so its `version` is part of the cache key.
+ */
 export function useVisibleNames(index: SpatialIndex, rect: ViewportRect, ready: boolean): Set<QualifiedName> | null {
-  return useCulledSet(index, queryIndex, rect, ready);
+  return useCulledSet(index, queryIndex, rect, ready, index.version);
 }
 
 /** Culled edge ids: an edge stays mounted while its box crosses the viewport, even with both tables off-screen. */

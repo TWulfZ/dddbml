@@ -70,6 +70,7 @@ desde los flags del sidecar y el siguiente persist lo guarda. Time-travel nunca 
 | `edges.*.color` | string | opcional | Color de trazo por arista (valor de paleta BC o hex custom). Ausente = color de tema. Ver spec 05 §5. |
 | `edges.*.sourceSide` | string | opcional | `"left"` \| `"right"`. Override del lado de puerto origen elegido por `chooseSides`. Ver spec 05 §4. |
 | `edges.*.targetSide` | string | opcional | `"left"` \| `"right"`. Override del lado de puerto destino. Ver spec 05 §4. |
+| `edges.*.auto` | boolean | opcional | Sólo `true`. La forma (`waypoints` / lados) la escribió el ordenamiento A\* (spec 05 §9, F20), no el usuario: no cuenta como manual y se descarta al mover un extremo. Cualquier edición del usuario de la forma lo borra; el color no. Se omite si no hay forma. Aditivo: un sidecar sin él carga igual (todo cuenta como manual, como antes). Nunca en una clave `dep:` (spec 18): se ignora al leer y no se escribe. |
 | `edges.*.dx` | integer | opcional | **Legacy v1.** Offset del midX para H-V-H simple. Soft-migrate a `waypoints` en el siguiente persist. |
 | `edges.*.dy` | integer | opcional | **Legacy v1.** Ver `dx`. |
 
@@ -91,7 +92,8 @@ Reglas:
 - Cada waypoint en su propia línea, claves alfabéticas (`x` antes que `y`), enteros.
 - Si `waypoints` está presente y no vacío, `dx`/`dy` se omiten (los waypoints son la fuente de verdad).
 - Si `waypoints` está vacío o ausente y `dx`/`dy` están presentes, se preservan tal cual (legacy).
-- Entrada `edges[id]` se omite por completo si no tiene ningún campo con datos: ni `waypoints`, `color`, `sourceSide`, `targetSide`, `dx`, ni `dy`.
+- Entrada `edges[id]` se omite por completo si no tiene ningún campo con datos: ni `waypoints`, `color`, `sourceSide`, `targetSide`, `dx`, ni `dy` (`auto` no cuenta como dato).
+- `"auto": true` se escribe primero entre los escalares (orden alfabético: `auto`, `color`, `sourceSide`, `targetSide`), sólo si hay `waypoints` o lados; cualquier valor distinto de `true` se ignora al leer.
 - La clave es siempre la compuesta (`render/edgeKey.ts`), nunca el `Ref.id` estable del parser. Versiones ≤0.2.8 del ordenamiento A* / reset de relaciones escribían entradas bajo `Ref.id` (`a(cols)->b(cols)`) que ninguna arista resolvía; al cargar se descartan las claves sin `::`, y el siguiente persist las elimina del sidecar.
 
 ### Claves `dep:` (spec 18)

@@ -72,3 +72,12 @@ describe('locally hidden table with no sidecar entry (F66)', () => {
     expect(persists().at(-1)![0]).toMatchObject({ payload: { tables: { 'public.t': { x: 10, y: 20, hidden: true } }, hiddenUnplaced: [] } });
   });
 });
+
+describe('A* auto marker (F20)', () => {
+  it('rides the persist payload with its shape, so a reopened diagram still re-orders the edge', () => {
+    store.setState({ edgeLayouts: new Map([['k', { waypoints: [{ x: 1, y: 2 }], sourceSide: 'top', auto: true }]]) });
+    schedulePersist();
+    const [persist] = persists().at(-1)!;
+    expect(persist.type === 'layout:persist' && persist.payload.edges?.['k']).toEqual({ waypoints: [{ x: 1, y: 2 }], sourceSide: 'top', auto: true });
+  });
+});

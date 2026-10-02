@@ -43,17 +43,82 @@ export function routeDeps(
 ): DepRoute[] {
   const out: DepRoute[] = [];
   for (const d of deps) {
-    const a = bboxOf(d.upstream.table);
-    const b = bboxOf(d.downstream.table);
-    if (!a || !b) continue;
-    out.push(routeDep(
-      d.id,
-      { bbox: a, portY: portY(d.upstream.table, d.upstream.columns, a) },
-      { bbox: b, portY: portY(d.downstream.table, d.downstream.columns, b) },
-      layoutOf(d.id)?.waypoints ?? [],
-    ));
+    const r = routeKeyedDep(d, bboxOf, portY, layoutOf);
+    if (r) out.push(r);
   }
   return out;
+}
+
+function routeKeyedDep(
+  d: KeyedDepEdge,
+  bboxOf: (name: QualifiedName) => Bbox | undefined,
+  portY: DepPortY,
+  layoutOf: (id: string) => EdgeLayout | undefined,
+): DepRoute | null {
+  const a = bboxOf(d.upstream.table);
+  const b = bboxOf(d.downstream.table);
+  if (!a || !b) return null;
+  return routeDep(
+    d.id,
+    { bbox: a, portY: portY(d.upstream.table, d.upstream.columns, a) },
+    { bbox: b, portY: portY(d.downstream.table, d.downstream.columns, b) },
+    layoutOf(d.id)?.waypoints ?? [],
+  );
+}
+
+/**
+ * `routeDeps` with drag-frame reuse: a dep's route depends only on its two endpoint rects and its own
+ * waypoints (no port spreading, unlike refs), so after a positions-only change just the deps touching
+ * a moved table are re-routed and every other route keeps its identity (spec 04, spec 18).
+ */
+export class DepRouteCache {
+  private deps: readonly KeyedDepEdge[] = [];
+  private routes: Array<DepRoute | null> = [];
+  private readonly depsByTable = new Map<QualifiedName, number[]>();
+  private out: DepRoute[] = [];
+
+  public routeAll(
+    deps: readonly KeyedDepEdge[],
+    bboxOf: (name: QualifiedName) => Bbox | undefined,
+    portY: DepPortY,
+    layoutOf: (id: string) => EdgeLayout | undefined,
+  ): DepRoute[] {
+    this.deps = deps;
+    this.depsByTable.clear();
+    deps.forEach((d, i) => {
+      this.index(d.upstream.table, i);
+      if (d.downstream.table !== d.upstream.table) this.index(d.downstream.table, i);
+    });
+    this.routes = deps.map((d) => routeKeyedDep(d, bboxOf, portY, layoutOf));
+    return this.collect();
+  }
+
+  /** Same contract as `EdgeRouteCache.routeMoved`: every input but positions equals the last call. */
+  public routeMoved(
+    moved: Iterable<QualifiedName>,
+    bboxOf: (name: QualifiedName) => Bbox | undefined,
+    portY: DepPortY,
+    layoutOf: (id: string) => EdgeLayout | undefined,
+  ): DepRoute[] {
+    const affected = new Set<number>();
+    for (const t of moved) for (const i of this.depsByTable.get(t) ?? []) affected.add(i);
+    if (affected.size === 0) return this.out;
+    for (const i of affected) this.routes[i] = routeKeyedDep(this.deps[i]!, bboxOf, portY, layoutOf);
+    return this.collect();
+  }
+
+  private index(table: QualifiedName, i: number): void {
+    const list = this.depsByTable.get(table);
+    if (list) list.push(i);
+    else this.depsByTable.set(table, [i]);
+  }
+
+  private collect(): DepRoute[] {
+    const out: DepRoute[] = [];
+    for (const r of this.routes) if (r) out.push(r);
+    this.out = out;
+    return out;
+  }
 }
 
 export function depColor(dep: KeyedDepEdge | undefined, layout: EdgeLayout | undefined): string | undefined {

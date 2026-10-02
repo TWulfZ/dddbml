@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import type { EdgeLayout, QualifiedName } from '../../shared/types';
 import type { KeyedDepEdge } from './edgeKey';
 import { depColor, type DepRoute } from './depRouter';
@@ -25,6 +26,26 @@ interface DepPathsProps {
   isFocused: (dep: KeyedDepEdge, id: string) => boolean;
 }
 
+interface DepStrokeProps {
+  route: DepRoute;
+  color: string | undefined;
+  focused: boolean;
+  lowZoom: boolean;
+}
+
+/** Memoized on the route object like `EdgeStroke`: a drag frame only re-diffs the deps it re-routed. */
+const DepStroke = memo(function DepStroke({ route: r, color, focused, lowZoom }: DepStrokeProps) {
+  return (
+    <g class={`ddd-dep-group${focused ? ' is-focused' : ''}`} style={color ? { color } : undefined}>
+      <path
+        d={lowZoom ? `M ${r.source.x} ${r.source.y} L ${r.target.x} ${r.target.y}` : r.d}
+        class="ddd-dep"
+        marker-end={lowZoom ? undefined : 'url(#ddd-mk-dep)'}
+      />
+    </g>
+  );
+});
+
 /** Base-layer strokes (behind tables), in the same SVG as FK edges. */
 export function DepPaths({ routes, depById, edgeLayouts, lowZoom, isFocused }: DepPathsProps) {
   return (
@@ -32,15 +53,14 @@ export function DepPaths({ routes, depById, edgeLayouts, lowZoom, isFocused }: D
       {routes.map((r) => {
         const dep = depById.get(r.id);
         if (!dep) return null;
-        const color = depColor(dep, edgeLayouts.get(r.id));
         return (
-          <g key={r.id} class={`ddd-dep-group${isFocused(dep, r.id) ? ' is-focused' : ''}`} style={color ? { color } : undefined}>
-            <path
-              d={lowZoom ? `M ${r.source.x} ${r.source.y} L ${r.target.x} ${r.target.y}` : r.d}
-              class="ddd-dep"
-              marker-end={lowZoom ? undefined : 'url(#ddd-mk-dep)'}
-            />
-          </g>
+          <DepStroke
+            key={r.id}
+            route={r}
+            color={depColor(dep, edgeLayouts.get(r.id))}
+            focused={isFocused(dep, r.id)}
+            lowZoom={lowZoom}
+          />
         );
       })}
     </>

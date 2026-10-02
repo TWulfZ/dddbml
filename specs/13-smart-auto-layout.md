@@ -194,11 +194,12 @@ Constantes afinables: `INTRA_NODESEP=32`, `INTRA_RANKSEP=64`, `INTER_NODESEP=96`
 
 `runSmartLayout(mode)` es **async**. Toma snapshot de `positions` y `edgeLayouts` antes del `await`;
 ejecuta `smartLayout`; calcula el conjunto movido; resetea waypoints (+ `dx/dy`) de aristas con ambos
-extremos en el conjunto movido (conservando `color`/sides); aplica posiciones + reseteos; arma un
+extremos en el conjunto movido (conservando `color`/sides) y descarta la forma entera de las aristas
+de A\* (`auto`, spec 05 §9) con **cualquier** extremo movido (conservando `color`, F20); aplica posiciones + reseteos; arma un
 `ArrangeCommand` compuesto y lo empuja al historial; agenda persistencia. `selection` con selección
 vacía es un **no-op con aviso** ("Select tables first"): no mueve tablas ni re-rutea aristas
-(decisión 2026-10-01, F89). `new` sin ninguna tabla que colocar es un **no-op** (sin comando y
-sin re-rutear aristas con A\*).
+(decisión 2026-10-01, F89). `runSmartLayout` sólo acepta los modos de usuario (`AutoArrangeMode`);
+`new` no le llega (F19b).
 
 **Colocación automática de tablas nuevas (`app.tsx`).** Tablas sin posición: si el canvas está
 vacío se usa el `autoLayout` plano; si ya hay tablas colocadas, las faltantes se colocan con
@@ -215,8 +216,8 @@ corrida reemplazada no oculta el overlay ni desengancha el Cancel de la nueva.
 ### Reset manual de relaciones (selección)
 
 Acción independiente del auto-arrange: "resetear las relaciones de las tablas seleccionadas". Para
-cada arista que **toca** la selección (source **o** target seleccionado) y que tiene forma manual
-(waypoints / `dx,dy` / `sourceSide,targetSide`), se resetea a ruteo por defecto — se limpian
+cada arista que **toca** la selección (source **o** target seleccionado) y que tiene forma, manual o
+de A\* (waypoints / `dx,dy` / `sourceSide,targetSide`), se resetea a ruteo por defecto — se limpian
 waypoints + legacy + sides, se **conserva el color** (misma semántica que "Reset line" por arista). Es
 un único paso deshacible (reusa `ArrangeCommand` con posiciones vacías, vía `buildEdgesResetCommand`).
 Deja al usuario limpiar el ruteo de un conjunto de tablas sin reposicionarlas. Disparador: ítem
@@ -226,7 +227,8 @@ runtime en `resetSelectedEdges` (`runner.ts`).
 
 ## Modelo de datos / tipos afectados
 
-- `src/shared/types.ts`: nuevo `AutoArrangeMode = 'all' | 'new' | 'selection'`; nuevo miembro en
+- `src/shared/types.ts`: nuevo `AutoArrangeMode = 'all' | 'selection'` (sólo modos de usuario; `new`
+  vive en `SmartLayoutMode` del motor, F19b); nuevo miembro en
   `HostToWebview`: `{ type: 'command:autoArrange'; payload: { mode: AutoArrangeMode } }`. El **schema
   del layout sidecar no cambia** (`EdgeLayout.waypoints[]` intacto; la reescritura de aristas de 0.2.2
   no alteró el formato).
@@ -263,7 +265,8 @@ runtime en `resetSelectedEdges` (`runner.ts`).
 ## Protocolo host↔webview
 
 Nuevo mensaje **host → webview**: `{ type: 'command:autoArrange'; payload: { mode: AutoArrangeMode } }`.
-`extension.ts` registra `dddbml.autoArrange` → QuickPick de 3 modos → `panel.sendAutoArrange(mode)` →
+`extension.ts` registra `dddbml.autoArrange` → QuickPick (Re-arrange all / Re-arrange selection /
+Order edges only) → `panel.sendAutoArrange(mode)` (u `sendEdgeOrderOnly`) →
 `post(...)`. El webview (`main.tsx`) despacha `case 'command:autoArrange'` → `void runSmartLayout(mode)`.
 Las otras dos superficies (ActionsPanel, menú contextual) llaman `runSmartLayout` directo, sin salto al
 host.

@@ -1,11 +1,12 @@
 import { createStore } from 'zustand/vanilla';
 import { useEffect, useReducer, useRef } from 'preact/hooks';
 import type { AppSettings, ColumnDiffEntry, EdgeLayout, EdgeSide, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
-import { defaultSettings, isEdgeSide } from '../../shared/types';
+import { defaultSettings, hasAutoShape, isEdgeSide } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, WaypointCommand } from './history';
 import { isEdgeKey } from '../render/edgeKey';
 import { densityMetrics, type DensityMetrics } from '../layout/density';
+import { recordPositionsDelta } from './positionsDelta';
 
 export interface TooltipState {
   title: string;
@@ -326,6 +327,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       if (eo.color) e.color = eo.color;
       if (isEdgeSide(eo.sourceSide)) e.sourceSide = eo.sourceSide;
       if (isEdgeSide(eo.targetSide)) e.targetSide = eo.targetSide;
+      if (eo.auto === true && hasAutoShape(id, { ...e, auto: true })) e.auto = true;
       if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
         edgeLayouts.set(id, e);
       }
@@ -346,13 +348,19 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     set((s) => {
       const next = new Map(s.positions);
       next.set(name, { x: Math.round(x), y: Math.round(y) });
+      recordPositionsDelta(s.positions, next, [name]);
       return { positions: next };
     });
   },
   setPositionsBatch(entries) {
     set((s) => {
       const next = new Map(s.positions);
-      for (const [name, pos] of entries) next.set(name, { x: Math.round(pos.x), y: Math.round(pos.y) });
+      const names: QualifiedName[] = [];
+      for (const [name, pos] of entries) {
+        next.set(name, { x: Math.round(pos.x), y: Math.round(pos.y) });
+        names.push(name);
+      }
+      recordPositionsDelta(s.positions, next, names);
       return { positions: next };
     });
   },
@@ -413,6 +421,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       const next = new Map(s.edgeLayouts);
       const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
       if (wps.length > 0) merged.waypoints = wps; else delete merged.waypoints;
+      delete merged.auto;
       writeLayout(next, refId, merged);
       return { edgeLayouts: next };
     });
@@ -449,6 +458,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       } else {
         if (side) merged.targetSide = side; else delete merged.targetSide;
       }
+      delete merged.auto;
       writeLayout(next, refId, merged);
       return { edgeLayouts: next };
     });
@@ -758,6 +768,7 @@ function applyCommand(
     if (t.color !== undefined) merged.color = t.color; else delete merged.color;
     if (t.sourceSide !== undefined) merged.sourceSide = t.sourceSide; else delete merged.sourceSide;
     if (t.targetSide !== undefined) merged.targetSide = t.targetSide; else delete merged.targetSide;
+    if (t.auto) merged.auto = true; else delete merged.auto;
     writeLayout(edgeLayouts, cmd.refId, merged);
     return { edgeLayouts };
   }
@@ -778,6 +789,7 @@ function applyCommand(
   const target = direction === 'undo' ? cmd.from : cmd.to;
   if (target.length === 0) delete merged.waypoints;
   else merged.waypoints = target.map((w) => ({ x: w.x, y: w.y }));
+  if (direction === 'undo' && cmd.fromAuto) merged.auto = true; else delete merged.auto;
   writeLayout(edgeLayouts, cmd.refId, merged);
   return { edgeLayouts };
 }
@@ -786,6 +798,7 @@ function applyCommand(
 function writeLayout(map: Map<string, EdgeLayout>, refId: string, layout: EdgeLayout): void {
   const clean: EdgeLayout = { ...layout };
   if (clean.waypoints && clean.waypoints.length === 0) delete clean.waypoints;
+  if (clean.auto && !hasAutoShape(refId, clean)) delete clean.auto;
   const hasData =
     (clean.waypoints !== undefined) ||
     clean.color !== undefined ||

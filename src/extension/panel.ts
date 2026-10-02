@@ -29,6 +29,8 @@ type DiffPayload = Extract<HostToWebview, { type: 'git:diff:enter' }>['payload']
 
 /** The git overlay on screen; time travel keeps its payload so a reloaded webview gets it back. */
 type GitOverlay = { kind: 'timeTravel'; enter: TimeTravelPayload } | { kind: 'diff' };
+/** `abortIf` is checked after the async parse, right before posting (F21 overlay-entry race). */
+type SchemaSendOptions = { skipIfUnchanged?: boolean; abortIf?: () => boolean };
 
 export class DiagramPanel {
   private static panels = new Map<string, DiagramPanel>();
@@ -80,6 +82,9 @@ export class DiagramPanel {
   private gitOverlay: GitOverlay | null = null;
   /** A watcher or git-op reload that arrived during a git overlay; replayed when it ends (F21). */
   private reloadDeferred = false;
+  /** Bumped each time a git overlay goes on screen. An external reload that passed its overlay check
+   *  under an older value must not post: it would replace the revision under the banner (F21). */
+  private overlayGeneration = 0;
   /** A layout:persist was dropped by the gate: the webview shows an edit the host never took, so
    *  the next overlay exit must re-send the layout even when nothing else changed. */
   private webviewDiverged = false;
@@ -114,6 +119,7 @@ export class DiagramPanel {
   private lastPostedSchema: string | null = null;
   /** The most recent sendSchema; a superseded parse waits on it so callers still see schema posted. */
   private latestSchemaSend: Promise<void> = Promise.resolve();
+  private schemaPosts = 0;
   /** Set while a conflicted sidecar awaits in-webview resolution; null otherwise. Holds the
    *  retained host-side conflicts so the webview only has to return per-conflict decisions. */
   private pendingMerge: { conflicts: MergeConflict[]; merged: Layout; repoRoot: string; relpath: string } | null = null;
@@ -520,13 +526,14 @@ export class DiagramPanel {
    * hand the webview a fresh schema object and force every derived memo to recompute. Direct
    * callers (hydrate, time-travel exit) must always post, since the webview state differs.
    */
-  private sendSchema(opts: { skipIfUnchanged?: boolean } = {}): Promise<void> {
+  private sendSchema(opts: SchemaSendOptions = {}): Promise<void> {
     const send = this.parseAndPostSchema(opts);
     this.latestSchemaSend = send;
     return send;
   }
 
-  private async parseAndPostSchema(opts: { skipIfUnchanged?: boolean }): Promise<void> {
+  private async parseAndPostSchema(opts: SchemaSendOptions): Promise<void> {
+    const postsBefore = this.schemaPosts;
     let payload: { schema: Schema; parseError: ParseError | null };
     try {
       const bytes = await vscode.workspace.fs.readFile(this.dbmlUri);
@@ -537,7 +544,11 @@ export class DiagramPanel {
       if (result === null) {
         // Only sendSchema parses on the live channel, so latestSchemaSend is that newer call.
         await this.latestSchemaSend;
-        return;
+        // That newer send may have skipped (unchanged payload) or aborted (an overlay went up); a
+        // caller that must post (hydrate, overlay exit) re-parses instead of leaving the webview on
+        // a revision schema under an unlocked editor.
+        if (opts.skipIfUnchanged || opts.abortIf?.() || this.disposed || this.schemaPosts !== postsBefore) return;
+        return this.sendSchema(opts);
       }
       if (this.disposed) return;
       if (result.error) {
@@ -553,9 +564,11 @@ export class DiagramPanel {
       this.lastParseOk = false;
       payload = { schema: this.lastValidSchema, parseError: { message } };
     }
+    if (opts.abortIf?.()) return;
     const serialized = JSON.stringify(payload);
     if (opts.skipIfUnchanged && serialized === this.lastPostedSchema) return;
     this.lastPostedSchema = serialized;
+    this.schemaPosts++;
     this.post({ type: 'schema:update', payload });
   }
 
@@ -571,9 +584,17 @@ export class DiagramPanel {
   /** `'ifChanged'` (overlay exit / diff entry): external only when the sidecar text moved since it
    *  was last seen. The webview drops its stashed undo history on an external change (F76), and a
    *  peek that changed nothing on disk must not cost it. */
-  private async sendLayout(isExternal: boolean | 'ifChanged' = false): Promise<void> {
+  private async sendLayout(isExternal: boolean | 'ifChanged' = false, abortIf?: () => boolean): Promise<void> {
     const seen = this.diskSidecarText;
-    this.currentLayout = await this.loadFullLayout();
+    const seenShared = this.diskSharedSerialized;
+    const layout = await this.loadFullLayout();
+    if (abortIf?.()) {
+      // Never shown: un-see the text so the replay (or the next reload) still posts it as external.
+      this.diskSidecarText = seen;
+      this.diskSharedSerialized = seenShared;
+      return;
+    }
+    this.currentLayout = layout;
     // The webview is about to show this layout; a persist accepted against what it showed before
     // (another revision, or a reload that raced it) must not be written over it.
     this.cancelPendingPersist();
@@ -966,6 +987,7 @@ export class DiagramPanel {
     const layout = applyViewState(shared, vs);
     await this.flushPendingPersistNow(); // the last working edit lands before the gate closes
     const enter: TimeTravelPayload = { rev: sha, label, schema, layout };
+    this.overlayGeneration++;
     this.gitOverlay = { kind: 'timeTravel', enter };
     this.post({ type: 'git:timeTravel:enter', payload: enter });
   }
@@ -1016,6 +1038,7 @@ export class DiagramPanel {
     if (!diff) return;
     await this.flushPendingPersistNow();
     const fromTimeTravel = this.gitOverlay?.kind === 'timeTravel';
+    this.overlayGeneration++;
     this.gitOverlay = { kind: 'diff' };
     if (fromTimeTravel || this.reloadDeferred) {
       // The diff overlays the WORKING tree; a past revision left on screen would be what its Exit
@@ -1216,15 +1239,30 @@ export class DiagramPanel {
       this.reloadDeferred = true;
       return;
     }
-    await this.sendSchema({ skipIfUnchanged: true });
+    const generation = this.overlayGeneration;
+    const superseded = (): boolean => generation !== this.overlayGeneration;
+    await this.sendSchema({ skipIfUnchanged: true, abortIf: superseded });
+    if (superseded()) return this.supersedeReload(sidecarTouched);
     if (!sidecarTouched) return;
     const text = await readSidecarText(this.dbmlUri);
+    if (superseded()) return this.supersedeReload(sidecarTouched);
     if (text === this.diskSidecarText) return; // our own write's echo, or no net change
     // The webview is about to show the external layout; a queued write of the old one would
     // overwrite what just arrived on disk.
     this.cancelPendingPersist();
-    await this.sendLayout(true);
+    await this.sendLayout(true, superseded);
+    if (superseded()) return this.supersedeReload(sidecarTouched);
     this.maybePostMerge(); // external pull/merge may have introduced conflicts
+  }
+
+  /** An overlay went on screen while a reload awaited: defer it to the overlay's exit like one that
+   *  arrived during it, or, if the overlay is already gone again, start over from fresh reads. */
+  private supersedeReload(sidecarTouched: boolean): void {
+    if (this.gitOverlay) {
+      this.reloadDeferred = true;
+      return;
+    }
+    this.scheduleExternalReload(sidecarTouched);
   }
 
   private cancelPendingPersist(): void {
