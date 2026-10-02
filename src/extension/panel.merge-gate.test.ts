@@ -143,10 +143,10 @@ describe('a merge that lands while a persist is debounced (F27)', () => {
     try { git('merge', '-q', 'other'); } catch { /* conflict expected */ }
     await settle(300); // the watcher event arrives only after the host's persist debounce ran out
     await fake.fireFsEvent('change', h.sidecar);
-    await settle(400);
+    // The reload awaits the worker parse before reading the sidecar; under load a fixed sleep overran.
+    await vi.waitFor(() => expect(h.since('merge:begin')).toHaveLength(1), { timeout: 5000 });
     await DiagramPanel.settle();
     expect(h.readSidecar()).toContain(MARKER);
-    expect(h.since('merge:begin')).toHaveLength(1);
   });
 });
 

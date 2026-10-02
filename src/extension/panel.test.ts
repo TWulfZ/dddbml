@@ -139,7 +139,7 @@ describe('external reloads (watchers)', () => {
     h.mark();
     writeFileSync(join(h.dir, 'd.dbml'), DBML_AC);
     await fake.fireFsEvent('create', h.dbml);
-    await vi.waitFor(() => expect(h.since('schema:update')).toHaveLength(1));
+    await vi.waitFor(() => expect(h.since('schema:update')).toHaveLength(1), { timeout: 5000 });
   });
 
   it('drops a pending persist that an external change supersedes', async () => {
