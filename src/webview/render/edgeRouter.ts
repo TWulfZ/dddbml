@@ -61,139 +61,254 @@ export type ColumnYResolver = (table: QualifiedName, column: string) => number |
 /** Resolves the EdgeLayout (waypoints + legacy dx/dy) for an edge, keyed by ref id. */
 export type EdgeLayoutResolver = (refId: string) => EdgeLayout | undefined;
 
-interface PortAssignment {
+interface SideDecision {
+  ref: Ref;
+  srcBbox: Bbox;
+  tgtBbox: Bbox;
   sourceSide: Side;
   targetSide: Side;
-  sourceRatio: number; // 0..1 along the side
-  targetRatio: number;
+}
+
+/** One edge end sitting on a (table, side) port group. */
+interface PortEntry {
+  edgeIdx: number;
+  role: 'source' | 'target';
+  /** Coordinate of the far end's centre the group is sorted by. */
+  otherCenter: number;
+  refId: string;
+}
+
+const portKey = (table: QualifiedName, side: Side): string => `${table}|${side}`;
+
+function decideSides(r: Ref, bboxOf: (name: QualifiedName) => Bbox | undefined, layoutResolver?: EdgeLayoutResolver): SideDecision | null {
+  const srcBbox = bboxOf(r.source.table);
+  const tgtBbox = bboxOf(r.target.table);
+  if (!srcBbox || !tgtBbox) return null;
+  const auto = chooseSides(srcBbox, tgtBbox);
+  const layout = layoutResolver?.(r.id);
+  return {
+    ref: r,
+    srcBbox,
+    tgtBbox,
+    sourceSide: layout?.sourceSide ?? auto.sourceSide,
+    targetSide: layout?.targetSide ?? auto.targetSide,
+  };
 }
 
 /**
- * Routes every ref orthogonally (Manhattan) and distributes ports along each
- * table side to minimize overlap when multiple edges share a side.
- *
- * Routing modes per edge:
- *   1. `EdgeLayout.waypoints` present → multi-waypoint Manhattan, alternating axes.
- *   2. Legacy `EdgeLayout.dx` (no waypoints) → original H-V-H with midX offset (back-compat).
- *   3. No layout → automatic H-V-H with midpoint between ports.
- *
- * Returns an ordered list matching refs[] order — callers can filter by visibility.
+ * Barycentric crossing reduction: the edge whose far end sits higher/left gets the higher/left port.
+ * Ties break by ref id, so the order depends only on geometry + stable ids, never on the refs[]
+ * order (which @dbml/core can shuffle on re-parse) — the same schema yields the same routed ports.
+ * The last two keys reproduce the insertion order (edge index, source before target), which keeps
+ * an incremental re-sort identical to a full one even for entries of the same ref.
  */
+function comparePorts(a: PortEntry, b: PortEntry): number {
+  return (a.otherCenter - b.otherCenter)
+    || (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0)
+    || (a.edgeIdx - b.edgeIdx)
+    || (a.role === b.role ? 0 : a.role === 'source' ? -1 : 1);
+}
+
+function buildRoute(
+  d: SideDecision,
+  sourceRatio: number,
+  targetRatio: number,
+  columnYResolver?: ColumnYResolver,
+  layoutResolver?: EdgeLayoutResolver,
+): EdgeRoute {
+  let sourceY: number | undefined;
+  let targetY: number | undefined;
+  if (columnYResolver) {
+    if (d.sourceSide === 'left' || d.sourceSide === 'right') {
+      const offset = d.ref.source.columns[0] ? columnYResolver(d.ref.source.table, d.ref.source.columns[0]) : undefined;
+      if (offset !== undefined) sourceY = d.srcBbox.y + offset;
+    }
+    if (d.targetSide === 'left' || d.targetSide === 'right') {
+      const offset = d.ref.target.columns[0] ? columnYResolver(d.ref.target.table, d.ref.target.columns[0]) : undefined;
+      if (offset !== undefined) targetY = d.tgtBbox.y + offset;
+    }
+  }
+
+  const a = portPoint(d.srcBbox, d.sourceSide, sourceRatio, sourceY);
+  const b = portPoint(d.tgtBbox, d.targetSide, targetRatio, targetY);
+
+  const layout = layoutResolver?.(d.ref.id);
+  const waypoints = layout?.waypoints && layout.waypoints.length > 0 ? layout.waypoints : [];
+  const legacyDx = waypoints.length === 0 && layout?.dx !== undefined ? layout.dx : 0;
+
+  const { corners, aStub, bStub } = buildPath(a, b, waypoints, legacyDx, d.sourceSide, d.targetSide);
+  return {
+    id: d.ref.id,
+    d: roundedPathString(corners, CORNER_RADIUS),
+    waypoints: waypoints.map((w) => ({ x: w.x, y: w.y })),
+    segments: buildSegments(corners, waypoints),
+    source: a,
+    target: b,
+    sourceStub: aStub,
+    targetStub: bStub,
+  };
+}
+
+/**
+ * Routing state kept between calls so a table drag re-routes only what the move can change
+ * (spec 04, "Commit del drag por frame"): the refs touching a moved table, plus every ref sharing a
+ * port group (table + side) with one of them — the stubs on a side are spread by sorting the group,
+ * so a moved far end can reorder (and re-space) its siblings. Every other route keeps its identity.
+ */
+export class EdgeRouteCache {
+  private refs: readonly Ref[] = [];
+  private decisions: Array<SideDecision | null> = [];
+  private sourceRatio: number[] = [];
+  private targetRatio: number[] = [];
+  private routes: Array<EdgeRoute | null> = [];
+  private readonly ports = new Map<string, PortEntry[]>();
+  private readonly edgesByTable = new Map<QualifiedName, number[]>();
+  private out: EdgeRoute[] = [];
+
+  /**
+   * Routes every ref orthogonally (Manhattan) and distributes ports along each
+   * table side to minimize overlap when multiple edges share a side.
+   *
+   * Routing modes per edge:
+   *   1. `EdgeLayout.waypoints` present → multi-waypoint Manhattan, alternating axes.
+   *   2. Legacy `EdgeLayout.dx` (no waypoints) → original H-V-H with midX offset (back-compat).
+   *   3. No layout → automatic H-V-H with midpoint between ports.
+   *
+   * Returns an ordered list matching refs[] order — callers can filter by visibility.
+   */
+  public routeAll(
+    refs: readonly Ref[],
+    bboxOf: (name: QualifiedName) => Bbox | undefined,
+    columnYResolver?: ColumnYResolver,
+    layoutResolver?: EdgeLayoutResolver,
+  ): EdgeRoute[] {
+    this.refs = refs;
+    this.decisions = refs.map((r) => decideSides(r, bboxOf, layoutResolver));
+    this.sourceRatio = refs.map(() => 0.5);
+    this.targetRatio = refs.map(() => 0.5);
+    this.ports.clear();
+    this.edgesByTable.clear();
+    refs.forEach((r, i) => {
+      this.indexTable(r.source.table, i);
+      if (r.target.table !== r.source.table) this.indexTable(r.target.table, i);
+      const d = this.decisions[i];
+      if (d) this.addPorts(d, i, null);
+    });
+    for (const key of this.ports.keys()) this.spreadPorts(key, null);
+    this.routes = this.decisions.map((d, i) =>
+      d ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, layoutResolver) : null,
+    );
+    return this.collect();
+  }
+
+  /**
+   * Re-routes after only the tables in `moved` changed position, with every other input (refs, sizes,
+   * rows, layouts) identical to the last call. Returns the previous array when no ref is affected.
+   */
+  public routeMoved(
+    moved: Iterable<QualifiedName>,
+    bboxOf: (name: QualifiedName) => Bbox | undefined,
+    columnYResolver?: ColumnYResolver,
+    layoutResolver?: EdgeLayoutResolver,
+  ): EdgeRoute[] {
+    const affected = new Set<number>();
+    for (const t of moved) for (const i of this.edgesByTable.get(t) ?? []) affected.add(i);
+    if (affected.size === 0) return this.out;
+
+    const touched = new Set<string>();
+    for (const i of affected) {
+      const old = this.decisions[i];
+      if (old) {
+        this.removePorts(portKey(old.ref.source.table, old.sourceSide), i, touched);
+        this.removePorts(portKey(old.ref.target.table, old.targetSide), i, touched);
+      }
+      const d = decideSides(this.refs[i]!, bboxOf, layoutResolver);
+      this.decisions[i] = d;
+      if (d) this.addPorts(d, i, touched);
+    }
+    const dirty = new Set<number>(affected);
+    for (const key of touched) this.spreadPorts(key, dirty);
+    for (const i of dirty) {
+      const d = this.decisions[i];
+      this.routes[i] = d ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, layoutResolver) : null;
+    }
+    return this.collect();
+  }
+
+  private collect(): EdgeRoute[] {
+    const out: EdgeRoute[] = [];
+    for (const r of this.routes) if (r) out.push(r);
+    this.out = out;
+    return out;
+  }
+
+  private indexTable(table: QualifiedName, edgeIdx: number): void {
+    const list = this.edgesByTable.get(table);
+    if (list) list.push(edgeIdx);
+    else this.edgesByTable.set(table, [edgeIdx]);
+  }
+
+  private addPorts(d: SideDecision, edgeIdx: number, touched: Set<string> | null): void {
+    const tgtCenter = centerOf(d.tgtBbox);
+    const srcCenter = centerOf(d.srcBbox);
+    const srcKey = portKey(d.ref.source.table, d.sourceSide);
+    const tgtKey = portKey(d.ref.target.table, d.targetSide);
+    this.pushPort(srcKey, {
+      edgeIdx,
+      role: 'source',
+      otherCenter: orientationOfSide(d.sourceSide) === 'v' ? tgtCenter.y : tgtCenter.x,
+      refId: d.ref.id,
+    });
+    this.pushPort(tgtKey, {
+      edgeIdx,
+      role: 'target',
+      otherCenter: orientationOfSide(d.targetSide) === 'v' ? srcCenter.y : srcCenter.x,
+      refId: d.ref.id,
+    });
+    touched?.add(srcKey);
+    touched?.add(tgtKey);
+  }
+
+  private pushPort(key: string, entry: PortEntry): void {
+    const list = this.ports.get(key);
+    if (list) list.push(entry);
+    else this.ports.set(key, [entry]);
+  }
+
+  private removePorts(key: string, edgeIdx: number, touched: Set<string>): void {
+    const list = this.ports.get(key);
+    if (!list) return;
+    const kept = list.filter((e) => e.edgeIdx !== edgeIdx);
+    if (kept.length === 0) this.ports.delete(key);
+    else this.ports.set(key, kept);
+    touched.add(key);
+  }
+
+  /** Sorts a port group and spaces its ends evenly; records in `dirty` every edge whose ratio moved. */
+  private spreadPorts(key: string, dirty: Set<number> | null): void {
+    const entries = this.ports.get(key);
+    if (!entries) return;
+    entries.sort(comparePorts);
+    const count = entries.length;
+    for (let i = 0; i < count; i++) {
+      const e = entries[i]!;
+      const ratio = (i + 1) / (count + 1);
+      const ratios = e.role === 'source' ? this.sourceRatio : this.targetRatio;
+      if (ratios[e.edgeIdx] === ratio) continue;
+      ratios[e.edgeIdx] = ratio;
+      dirty?.add(e.edgeIdx);
+    }
+  }
+}
+
+/** One-shot routing of every ref; see `EdgeRouteCache.routeAll`. */
 export function routeRefs(
   refs: Ref[],
   bboxOf: (name: QualifiedName) => Bbox | undefined,
   columnYResolver?: ColumnYResolver,
   layoutResolver?: EdgeLayoutResolver,
 ): EdgeRoute[] {
-  // 1. decide sides for each edge
-  const decisions: Array<{ ref: Ref; srcBbox: Bbox; tgtBbox: Bbox; sourceSide: Side; targetSide: Side } | null> = [];
-  for (const r of refs) {
-    const srcBbox = bboxOf(r.source.table);
-    const tgtBbox = bboxOf(r.target.table);
-    if (!srcBbox || !tgtBbox) {
-      decisions.push(null);
-      continue;
-    }
-    const auto = chooseSides(srcBbox, tgtBbox);
-    const layout = layoutResolver?.(r.id);
-    const sourceSide: Side = layout?.sourceSide ?? auto.sourceSide;
-    const targetSide: Side = layout?.targetSide ?? auto.targetSide;
-    decisions.push({ ref: r, srcBbox, tgtBbox, sourceSide, targetSide });
-  }
-
-  // 2. group by (table, side) to compute port offsets
-  type Group = Array<{ edgeIdx: number; role: 'source' | 'target'; otherCenter: number; refId: string; orientation: 'h' | 'v' }>;
-  const groups = new Map<string, Group>();
-
-  for (let i = 0; i < decisions.length; i++) {
-    const d = decisions[i];
-    if (!d) continue;
-
-    const srcKey = `${d.ref.source.table}|${d.sourceSide}`;
-    const tgtKey = `${d.ref.target.table}|${d.targetSide}`;
-    const srcOrientation = orientationOfSide(d.sourceSide);
-    const tgtOrientation = orientationOfSide(d.targetSide);
-
-    const tgtCenter = centerOf(d.tgtBbox);
-    const srcCenter = centerOf(d.srcBbox);
-
-    const srcOther = srcOrientation === 'v' ? tgtCenter.y : tgtCenter.x;
-    const tgtOther = tgtOrientation === 'v' ? srcCenter.y : srcCenter.x;
-
-    pushGroup(groups, srcKey, { edgeIdx: i, role: 'source', otherCenter: srcOther, refId: d.ref.id, orientation: srcOrientation });
-    pushGroup(groups, tgtKey, { edgeIdx: i, role: 'target', otherCenter: tgtOther, refId: d.ref.id, orientation: tgtOrientation });
-  }
-
-  // 3. assign port ratios: sort group by the other endpoint's center (barycentric crossing
-  // reduction — the edge whose far end sits higher/left gets the higher/left port), then
-  // distribute evenly. Tie-break by ref id so the assignment depends only on geometry + stable
-  // ids, never on the refs[] array order (which @dbml/core can shuffle on re-parse) — preserving
-  // the git-friendly invariant that the same schema yields the same routed ports.
-  const portAssign: PortAssignment[] = decisions.map(() => ({
-    sourceSide: 'right',
-    targetSide: 'left',
-    sourceRatio: 0.5,
-    targetRatio: 0.5,
-  }));
-
-  for (const [, entries] of groups) {
-    entries.sort((a, b) => (a.otherCenter - b.otherCenter) || (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0));
-    const count = entries.length;
-    for (let i = 0; i < count; i++) {
-      const entry = entries[i]!;
-      const ratio = (i + 1) / (count + 1);
-      const d = decisions[entry.edgeIdx]!;
-      const assign = portAssign[entry.edgeIdx]!;
-      assign.sourceSide = d.sourceSide;
-      assign.targetSide = d.targetSide;
-      if (entry.role === 'source') assign.sourceRatio = ratio;
-      else assign.targetRatio = ratio;
-    }
-  }
-
-  // 4. build paths
-  const out: EdgeRoute[] = [];
-  for (let i = 0; i < decisions.length; i++) {
-    const d = decisions[i];
-    if (!d) continue;
-    const assign = portAssign[i]!;
-
-    let sourceY: number | undefined;
-    let targetY: number | undefined;
-    if (columnYResolver) {
-      if (assign.sourceSide === 'left' || assign.sourceSide === 'right') {
-        const offset = d.ref.source.columns[0] ? columnYResolver(d.ref.source.table, d.ref.source.columns[0]) : undefined;
-        if (offset !== undefined) sourceY = d.srcBbox.y + offset;
-      }
-      if (assign.targetSide === 'left' || assign.targetSide === 'right') {
-        const offset = d.ref.target.columns[0] ? columnYResolver(d.ref.target.table, d.ref.target.columns[0]) : undefined;
-        if (offset !== undefined) targetY = d.tgtBbox.y + offset;
-      }
-    }
-
-    const a = portPoint(d.srcBbox, assign.sourceSide, assign.sourceRatio, sourceY);
-    const b = portPoint(d.tgtBbox, assign.targetSide, assign.targetRatio, targetY);
-
-    const layout = layoutResolver?.(d.ref.id);
-    const waypoints = layout?.waypoints && layout.waypoints.length > 0 ? layout.waypoints : [];
-    const legacyDx = waypoints.length === 0 && layout?.dx !== undefined ? layout.dx : 0;
-
-    const { corners, aStub, bStub } = buildPath(a, b, waypoints, legacyDx, d.sourceSide, d.targetSide);
-    const d_str = roundedPathString(corners, CORNER_RADIUS);
-    const segments = buildSegments(corners, waypoints);
-
-    out.push({
-      id: d.ref.id,
-      d: d_str,
-      waypoints: waypoints.map((w) => ({ x: w.x, y: w.y })),
-      segments,
-      source: a,
-      target: b,
-      sourceStub: aStub,
-      targetStub: bStub,
-    });
-  }
-  return out;
+  return new EdgeRouteCache().routeAll(refs, bboxOf, columnYResolver, layoutResolver);
 }
 
 /**
@@ -600,19 +715,6 @@ export function deleteNotch(route: EdgeRoute, segIndex: number): Waypoint[] {
   if (!isDip(corners, j, p1.y === p2.y ? 'h' : 'v')) return corners.slice(1, -1);
   corners.splice(j - 1, 4);
   return corners.slice(1, -1);
-}
-
-function pushGroup(
-  groups: Map<string, Array<{ edgeIdx: number; role: 'source' | 'target'; otherCenter: number; refId: string; orientation: 'h' | 'v' }>>,
-  key: string,
-  entry: { edgeIdx: number; role: 'source' | 'target'; otherCenter: number; refId: string; orientation: 'h' | 'v' },
-): void {
-  let arr = groups.get(key);
-  if (!arr) {
-    arr = [];
-    groups.set(key, arr);
-  }
-  arr.push(entry);
 }
 
 function orientationOfSide(side: Side): 'h' | 'v' {

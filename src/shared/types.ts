@@ -135,6 +135,11 @@ export function isEdgeSide(v: unknown): v is EdgeSide {
   return v === 'left' || v === 'right' || v === 'top' || v === 'bottom';
 }
 
+/** Whether `e.auto` should survive a write: only A*-shaped edges carry it (spec 03 `edges.*.auto`). */
+export function hasAutoShape(e: EdgeLayout): boolean {
+  return e.auto === true && ((e.waypoints?.length ?? 0) > 0 || e.sourceSide !== undefined || e.targetSide !== undefined);
+}
+
 export interface EdgeLayout {
   /**
    * Orthogonal bend vertices in absolute world coords. Empty/undefined = auto H-V-H routing.
@@ -154,6 +159,12 @@ export interface EdgeLayout {
   sourceSide?: EdgeSide;
   /** Manual override of the auto-chosen target port side. Absent = `chooseSides`. See `sourceSide`. */
   targetSide?: EdgeSide;
+  /**
+   * The shape (waypoints + sides) came from the A* pass, not the user (spec 05, F20): it does not
+   * count as manual and is dropped when an endpoint moves. Any user edit of the shape clears it.
+   * Meaningless without a shape, so it is pruned when none is left.
+   */
+  auto?: true;
   /** @deprecated v1 — single H-V-H midX offset. Migrated to a single waypoint on first persist. */
   dx?: number;
   /** @deprecated v1 — see `dx`. */
@@ -354,8 +365,11 @@ export function clampSetting(key: NumericSettingKey, v: unknown, fallback: numbe
 
 export type ViewportCommand = 'zoomIn' | 'zoomOut' | 'resetView' | 'fitToContent';
 
-/** Smart auto-layout modes. See specs/13-smart-auto-layout.md. */
-export type AutoArrangeMode = 'all' | 'new' | 'selection';
+/**
+ * User-facing smart auto-layout modes (specs/13). The layout engine's internal 'new' mode is not one:
+ * new tables are placed as soon as they appear (F19b).
+ */
+export type AutoArrangeMode = 'all' | 'selection';
 
 export type HostToWebview =
   | { type: 'schema:update'; payload: { schema: Schema; parseError: ParseError | null } }

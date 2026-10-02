@@ -1,7 +1,7 @@
 import { estimateSize } from '../layout/autoLayout';
 import { GROUP_CONTAINER_HEADER, GROUP_CONTAINER_PADDING } from '../layout/density';
 import { bcColorFor } from '../groups/bcPalette';
-import type { GroupLayout, QualifiedName, Schema, Table } from '../../shared/types';
+import type { GroupLayout, QualifiedName, Schema, Table, TableGroup } from '../../shared/types';
 import type { Bbox } from './spatialIndex';
 
 export const GROUP_NODE_W = 220;
@@ -51,32 +51,10 @@ export function deriveSceneGeometry(
       continue;
     }
     if (!st?.collapsed) {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, maxYFull = -Infinity;
-      let n = 0;
-      for (const t of g.tables) {
-        if (hiddenTables.has(t)) continue;
-        const pos = positions.get(t);
-        if (!pos) continue;
-        const size = estimateSize(rows(t));
-        if (pos.x < minX) minX = pos.x;
-        if (pos.y < minY) minY = pos.y;
-        if (pos.x + size.width > maxX) maxX = pos.x + size.width;
-        if (pos.y + size.height > maxY) maxY = pos.y + size.height;
-        const fullBottom = pos.y + estimateSize(fullRows(t)).height;
-        if (fullBottom > maxYFull) maxYFull = fullBottom;
-        n++;
-      }
-      if (n > 0) {
-        const box = (bottom: number): SceneRect => ({
-          name: g.name,
-          x: Math.round(minX - GROUP_CONTAINER_PADDING),
-          y: Math.round(minY - GROUP_CONTAINER_PADDING - GROUP_CONTAINER_HEADER),
-          w: Math.round(maxX - minX + GROUP_CONTAINER_PADDING * 2),
-          h: Math.round(bottom - minY + GROUP_CONTAINER_PADDING * 2 + GROUP_CONTAINER_HEADER),
-          color: st?.color ?? bcColorFor(g.name),
-        });
-        containers.push(box(maxY));
-        exportContainers.push(box(maxYFull));
+      const rects = groupContainerRects(g, st?.color ?? bcColorFor(g.name), positions, hiddenTables, rows, fullRows);
+      if (rects) {
+        containers.push(rects.container);
+        exportContainers.push(rects.exportContainer);
       }
       continue;
     }
@@ -104,6 +82,46 @@ export function deriveSceneGeometry(
   }
 
   return { hiddenTables, collapsedTables, collapsedNodes, containers, exportContainers };
+}
+
+/**
+ * Box of an expanded group around its visible placed members, plus its export twin sized by full
+ * column lists; null when no member is placed. Shared by the full derive and the incremental drag
+ * update so both produce the same rects.
+ */
+export function groupContainerRects(
+  group: TableGroup,
+  color: string,
+  positions: ReadonlyMap<QualifiedName, { x: number; y: number }>,
+  hiddenTables: ReadonlySet<QualifiedName>,
+  rows: RowCount,
+  fullRows: RowCount,
+): { container: SceneRect; exportContainer: SceneRect } | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, maxYFull = -Infinity;
+  let n = 0;
+  for (const t of group.tables) {
+    if (hiddenTables.has(t)) continue;
+    const pos = positions.get(t);
+    if (!pos) continue;
+    const size = estimateSize(rows(t));
+    if (pos.x < minX) minX = pos.x;
+    if (pos.y < minY) minY = pos.y;
+    if (pos.x + size.width > maxX) maxX = pos.x + size.width;
+    if (pos.y + size.height > maxY) maxY = pos.y + size.height;
+    const fullBottom = pos.y + estimateSize(fullRows(t)).height;
+    if (fullBottom > maxYFull) maxYFull = fullBottom;
+    n++;
+  }
+  if (n === 0) return null;
+  const box = (bottom: number): SceneRect => ({
+    name: group.name,
+    x: Math.round(minX - GROUP_CONTAINER_PADDING),
+    y: Math.round(minY - GROUP_CONTAINER_PADDING - GROUP_CONTAINER_HEADER),
+    w: Math.round(maxX - minX + GROUP_CONTAINER_PADDING * 2),
+    h: Math.round(bottom - minY + GROUP_CONTAINER_PADDING * 2 + GROUP_CONTAINER_HEADER),
+    color,
+  });
+  return { container: box(maxY), exportContainer: box(maxYFull) };
 }
 
 /** Union of every rendered table, collapsed group node and group container; null when nothing is drawn. */

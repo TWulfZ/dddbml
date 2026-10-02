@@ -84,12 +84,13 @@ Discriminator `kind` permite agregar nuevas variantes (próximos: `SetTableColor
 
 | Evento | Efecto sobre `past`/`future` |
 |---|---|
-| `pointerup` de drag con desplazamiento neto > 0 | Push `MoveCommand` a `past`; `future` limpio. Si `past.length > capacity`, FIFO drop del head. |
+| `pointerup` de drag con desplazamiento neto > 0 | Push `MoveCommand` a `past`; `future` limpio. Si `past.length > capacity`, FIFO drop del head. Si alguna arista de A\* (`auto`, spec 05 §9) toca una tabla movida, su forma se descarta en el mismo paso: se empuja un `ArrangeCommand` (posiciones + `EdgeLayout` antes/después, label `Move …`) en lugar del `MoveCommand`, así un Ctrl+Z devuelve tabla y forma. |
 | `pointerup` de drag sin desplazamiento (click sostenido) | No-op. `buildMoveCommand` retorna `null`. |
 | `pointerup` de waypoint drag con cambio neto en `waypoints[]` | Push `WaypointCommand` con `op = 'move'` (o `'remove'` si la operación colapsó a un vecino). |
 | `pointerup` de click-en-segmento (agregar) | Push `WaypointCommand` con `op = 'add'`. |
 | `dblclick` sobre círculo de waypoint | Remueve waypoint, push `WaypointCommand` con `op = 'remove'`. |
-| Toolbar "Reset line" | Limpia la forma (waypoints + sides + `dx/dy` legacy, conserva color) y push **un** `ArrangeCommand` de sólo aristas (`buildEdgesResetCommand`, label `Reset line`) con el `EdgeLayout` completo antes/después. Sin forma manual → no-op. |
+| Toolbar "Reset line" | Limpia la forma (waypoints + sides + `dx/dy` legacy, conserva color) y push **un** `ArrangeCommand` de sólo aristas (`buildEdgesResetCommand`, label `Reset line`) con el `EdgeLayout` completo antes/después. Sin forma (manual o `auto`) → no-op. |
+| Marcador `auto` de A\* (F20) | Una edición de waypoints o de lado lo borra; `WaypointCommand.fromAuto` y `EdgeStyle.auto` lo guardan, así undo de la primera edición devuelve la forma como `auto` y redo la vuelve del usuario. Un cambio de color lo conserva. |
 | Llamada `undo()` con `past` no vacío | Pop tail. Switch por `cmd.kind`: `'move'` → restaura `positions`; `'waypoint'` → restaura `edgeLayouts[refId].waypoints`. Push cmd a `future`. Llamador dispara `schedulePersist()`. |
 | Llamada `redo()` con `future` no vacío | Simétrico. |
 | `undo()` / `redo()` con stack vacío | No-op silencioso. |

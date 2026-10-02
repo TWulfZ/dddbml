@@ -30,7 +30,7 @@ Open a `.dbml` file and run **`dddbml: Open Diagram`** (command palette or the e
 **Relationships**
 - Orthogonal edges that leave and enter at the FK/PK column rows, with crow's-foot / bar cardinality markers.
 - Edit an edge by sliding a segment or dragging a ghost handle to add a notch; flip the port side by dragging an endpoint; recolor; "Reset line" to tidy.
-- **Auto-arrange** (whole diagram, new tables only, or the selection) with an obstacle-avoiding edge router, cancelable with real progress.
+- **Auto-arrange** (whole diagram or the selection) with an obstacle-avoiding edge router, cancelable with real progress.
 
 **DBML `records` and `Dep`**
 - Tables with sample `records` show a row-count badge; click it for a read-only grid of the values.

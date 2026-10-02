@@ -47,3 +47,13 @@ describe('dddbml.openDiagram', () => {
     expect(fake.messages.some((m) => m.level === 'error')).toBe(true);
   });
 });
+
+describe('dddbml.autoArrange', () => {
+  it('offers no "place new tables" scope: new tables are placed as soon as they appear (F19b)', async () => {
+    const uri = Uri.file(join(dir, 'a.dbml'));
+    await commands.executeCommand('dddbml.openDiagram', uri);
+    await commands.executeCommand('dddbml.autoArrange');
+    expect(fake.quickPicks).toHaveLength(1);
+    expect(fake.quickPicks[0]!.map((i) => i.label)).toEqual(['Re-arrange all', 'Re-arrange selection', 'Order edges only']);
+  });
+});

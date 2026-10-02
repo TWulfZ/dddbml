@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { EdgeLayout, Layout, GroupLayout, TableLayout, Waypoint } from '../shared/types';
-import { isEdgeSide } from '../shared/types';
+import { hasAutoShape, isEdgeSide } from '../shared/types';
 import { cmpCodeUnit } from '../shared/compare';
 
 export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
@@ -141,6 +141,8 @@ function toEdges(raw: unknown): Record<string, EdgeLayout> {
     if (typeof vv.color === 'string' && vv.color.length > 0) e.color = vv.color;
     if (isEdgeSide(vv.sourceSide)) e.sourceSide = vv.sourceSide;
     if (isEdgeSide(vv.targetSide)) e.targetSide = vv.targetSide;
+    if (vv.auto === true) e.auto = true;
+    if (e.auto && !hasAutoShape(e)) delete e.auto;
     if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) out[k] = e;
   }
   return out;
@@ -270,6 +272,7 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
       const hasWaypoints = !!(v.waypoints && v.waypoints.length > 0);
       // Scalar fields in deterministic key order. Waypoints prevail over legacy dx/dy.
       const scalars: string[] = [];
+      if (hasAutoShape(v)) scalars.push('"auto": true');
       if (v.color) scalars.push(`"color": ${JSON.stringify(v.color)}`);
       if (v.sourceSide) scalars.push(`"sourceSide": ${JSON.stringify(v.sourceSide)}`);
       if (v.targetSide) scalars.push(`"targetSide": ${JSON.stringify(v.targetSide)}`);

@@ -153,6 +153,29 @@ describe('computeEdgeOrdering — sides persist only when they carry information
   });
 });
 
+describe('computeEdgeOrdering — A* output is marked auto (F20)', () => {
+  it('a top/bottom detour is auto, so a second preserve-manual run still re-orders it', async () => {
+    const ID = 'public.a(c0)->public.b(c0)';
+    const schema: Schema = {
+      tables: [mkTable('public.a'), mkTable('public.b'), mkTable('public.m')],
+      refs: [mkRef(ID, 'public.a', 'public.b')],
+      groups: [],
+    };
+    const positions = new Map<string, { x: number; y: number }>([
+      ['public.a', { x: 0, y: 0 }],
+      ['public.m', { x: 0, y: 300 }],
+      ['public.b', { x: 0, y: 600 }],
+    ]);
+    const first = await computeEdgeOrdering({ schema, positions, existingLayouts: new Map(), preserveManual: true });
+    const layout = first.resets.find(([id]) => id === ID)![1];
+    expect(layout.sourceSide).toBe('bottom');
+    expect(layout.auto).toBe(true);
+
+    const second = await computeEdgeOrdering({ schema, positions, existingLayouts: new Map(first.resets), preserveManual: true });
+    expect(second.resets.some(([id]) => id === ID)).toBe(true);
+  });
+});
+
 describe('computeEdgeOrdering — determinism', () => {
   it('produces byte-identical results across two runs', async () => {
     const { schema, positions } = obstacleSchema();

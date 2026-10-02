@@ -132,7 +132,11 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
   cambio 1 y el primer *prev* el último (`diffNavIndex`). Los objetivos (`buildDiffTargets`) y
   los extremos de las refs eliminadas pasan por los filtros de vista (`liveViewBox`): una tabla
   **oculta** no es objetivo y su línea no se dibuja, pero el contador las suma aparte
-  (`– / N · +k hidden`) para que el usuario sepa que existen (decisión 2026-10-01); una tabla dentro de un grupo **colapsado**
+  (`– / N · +k hidden`) para que el usuario sepa que existen (decisión 2026-10-01). Cuenta las
+  tablas con cambios que el filtro de vista oculta (`countHiddenChanges`, ocultas sueltas o por
+  grupo oculto); el texto lo arma `diffCounterLabel`. Si **todos** los cambios están ocultos, la
+  barra muestra sólo `+k hidden`, sin prev/next; el tooltip del contador avisa que prev/next las
+  salta. Una tabla dentro de un grupo **colapsado**
   apunta al nodo del grupo (un objetivo por grupo), nunca a su posición cruda.
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
   layer); **cambiadas** (`'changed'`: mismo id pero otra cardinalidad, dirección o
@@ -188,8 +192,13 @@ pueden desincronizarse con una bandera aparte. Entrar en time-travel o diff vuel
 pendiente del host (la última edición de trabajo llega al disco); el webview no tiene persist
 pendiente (postea cada edición al instante). Diff desde time-travel: el host re-envía primero el schema+layout de trabajo y
 luego `git:diff:enter` (el diff siempre cubre el working tree). Un reload del watcher o de una
-operación git (stash/revert) durante un overlay se marca `reloadDeferred` y se aplica al salir;
-el host postea el `exit` **al final** (schema → layout → `merge:begin` si apareció → exit), así el
+operación git (stash/revert) durante un overlay se marca `reloadDeferred` y se aplica al salir.
+Lo mismo vale para un reload que ya había pasado ese chequeo cuando el overlay se abrió mientras
+esperaba sus lecturas: `runExternalReload` toma `overlayGeneration` (se incrementa en cada entrada a
+time-travel o diff) al empezar y, si cambió, no postea `schema:update` ni el layout — se difiere al
+exit, o vuelve a correr con lecturas frescas si el overlay ya se cerró. Un layout leído pero no
+posteado no cuenta como visto (`diskSidecarText` vuelve al valor previo), así la reproducción sale
+como `layout:external-change`. El host postea el `exit` **al final** (schema → layout → `merge:begin` si apareció → exit), así el
 webview nunca queda editable con la revisión pasada. Ese layout (y el que precede a un diff abierto
 desde time-travel) va como `layout:external-change` sólo si el texto del sidecar cambió desde la
 última vez que el host lo vio; si no, `layout:loaded` — el webview conserva el historial de undo

@@ -43,6 +43,24 @@ export function buildDiffTargets(
   return targets.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Changed live tables the view filters hide: never nav targets, but the counter reports them (spec 16). */
+export function countHiddenChanges(
+  diffByTable: Map<QualifiedName, TableDiffStatus> | null,
+  filters: Pick<DiffViewFilters, 'hiddenTables'>,
+): number {
+  let n = 0;
+  for (const [name] of diffByTable ?? []) if (filters.hiddenTables.has(name)) n++;
+  return n;
+}
+
+/** Banner counter: `– / N` (or `i / N`) for the navigable changes, then `· +k hidden`. */
+export function diffCounterLabel(cursor: number, n: number, hidden: number): string {
+  const parts: string[] = [];
+  if (n > 0) parts.push(`${cursor >= 0 && cursor < n ? cursor + 1 : '–'} / ${n}`);
+  if (hidden > 0) parts.push(`+${hidden} hidden`);
+  return parts.join(' · ');
+}
+
 /** Next/prev change index. A cursor outside [0, n) means "nothing focused yet" (fresh diff, or the
  *  target list shrank), so Next starts at the first change and Prev at the last. */
 export function diffNavIndex(cursor: number, n: number, dir: 1 | -1): number {
@@ -56,7 +74,7 @@ export function diffNavIndex(cursor: number, n: number, dir: 1 | -1): number {
  * Time-travel shows the commit label; diff shows base→current, prev/next camera nav over the
  * changes, and a "Blur background tables" toggle to focus the diff. English-only UI.
  */
-export function GitBanner({ diffTargets = [] }: { diffTargets?: DiffTarget[] }) {
+export function GitBanner({ diffTargets = [], hiddenChanges = 0 }: { diffTargets?: DiffTarget[]; hiddenChanges?: number }) {
   const gitView = useAppStore((s) => s.gitView);
   const blur = useAppStore((s) => s.focusDimming);
   const cursor = useAppStore((s) => s.diffCursor);
@@ -85,6 +103,7 @@ export function GitBanner({ diffTargets = [] }: { diffTargets?: DiffTarget[] }) 
   const n = diffTargets.length;
   const next = () => n && focus(diffNavIndex(cursor, n, 1));
   const prev = () => n && focus(diffNavIndex(cursor, n, -1));
+  const counter = diffCounterLabel(cursor, n, hiddenChanges);
 
   return (
     <div class="ddd-git-bar" role="status" aria-label="Diff view (read-only)">
@@ -92,15 +111,25 @@ export function GitBanner({ diffTargets = [] }: { diffTargets?: DiffTarget[] }) 
       <span class="ddd-git-bar__label">
         Diff <strong>{gitView.baseLabel}</strong> → <strong>{gitView.headLabel}</strong>
       </span>
-      {n > 0 ? (
+      {counter ? (
         <span class="ddd-git-bar__nav">
-          <Button variant="history" size="tool" onClick={prev} title="Previous change" aria-label="Previous change">
-            <IconChevronRight flipX size={14} />
-          </Button>
-          <span class="ddd-git-bar__count" aria-live="polite">{cursor >= 0 && cursor < n ? cursor + 1 : '–'} / {n}</span>
-          <Button variant="history" size="tool" onClick={next} title="Next change" aria-label="Next change">
-            <IconChevronRight size={14} />
-          </Button>
+          {n > 0 ? (
+            <Button variant="history" size="tool" onClick={prev} title="Previous change" aria-label="Previous change">
+              <IconChevronRight flipX size={14} />
+            </Button>
+          ) : null}
+          <span
+            class="ddd-git-bar__count"
+            aria-live="polite"
+            title={hiddenChanges > 0 ? 'Changed tables you hid are skipped by Previous/Next' : undefined}
+          >
+            {counter}
+          </span>
+          {n > 0 ? (
+            <Button variant="history" size="tool" onClick={next} title="Next change" aria-label="Next change">
+              <IconChevronRight size={14} />
+            </Button>
+          ) : null}
         </span>
       ) : null}
       <label class="ddd-git-bar__check">

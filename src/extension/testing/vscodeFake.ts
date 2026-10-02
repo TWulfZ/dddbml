@@ -110,10 +110,13 @@ export const fake = {
   nextChoice: undefined as string | undefined,
   activeEditorUri: null as Uri | null,
   shownDocuments: [] as Array<{ doc: unknown; line: number | undefined }>,
+  /** Item lists offered by `showQuickPick`, which always resolves as dismissed. */
+  quickPicks: [] as Array<Array<{ label: string }>>,
   reset(): void {
     this.panels = [];
     this.messages = [];
     this.shownDocuments = [];
+    this.quickPicks = [];
     this.nextChoice = undefined;
     this.activeEditorUri = null;
     watchers.length = 0;
@@ -161,6 +164,10 @@ export const window = {
     return Promise.resolve(undefined);
   },
   showSaveDialog: () => Promise.resolve(undefined),
+  showQuickPick: (items: Array<{ label: string }>) => {
+    fake.quickPicks.push(items);
+    return Promise.resolve(undefined);
+  },
 };
 
 export const commands = {

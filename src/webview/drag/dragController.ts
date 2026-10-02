@@ -1,19 +1,20 @@
 import { store, isCanvasReadOnly } from '../state/store';
-import { buildEdgeStyleCommand, buildEdgesResetCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle } from '../state/history';
+import { buildArrangeCommand, buildEdgeStyleCommand, buildEdgesResetCommand, buildMoveCommand, buildWaypointCommand, type EdgeStyle, type MoveCommand } from '../state/history';
 import { schedulePersist } from '../persistence';
 import { slideSegment, notchAtQuarter, deleteNotch, type EdgeRoute } from '../render/edgeRouter';
 import { screenToWorld, type Point } from '../render/viewport';
 import { gridSnapper } from '../layout/grid';
-import { hasManualShape } from '../layout/smartLayout/edgeReset';
+import { computeAutoShapeDrops, hasShape, movedNames, rawLayoutRefs } from '../layout/smartLayout/edgeReset';
 import type { Waypoint } from '../../shared/types';
 
 /**
  * Pointer-driven drag for a table node.
  *
  * During drag:
- *   - Mutates the dragged node's transform directly (GPU compositing, no Preact re-render for the move).
- *   - Writes to the store on every frame so Preact re-renders edges + LOD in sync with the move.
- *     For large diagrams this stays at 60fps because only the visible subset renders (M3 culling).
+ *   - Pointer/camera events only record the latest pointer; the move is applied at most once per
+ *     animation frame (spec 04, "Commit del drag por frame"): the dragged node's transform is written
+ *     directly and the store gets one positions commit, so edges follow the table live while the
+ *     scene and the router update incrementally from that positions-only delta.
  *
  * On drop:
  *   - Final store commit.
@@ -96,11 +97,13 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
   try { node.setPointerCapture(e.pointerId); } catch { /* noop */ }
   document.body.classList.add('ddd-is-dragging');
 
+  let frame: number | null = null;
+  /** The positions map this drag last wrote; identity per entry tells a drag frame from an overlay reload. */
+  let committed: Map<string, { x: number; y: number }> | null = null;
   const apply = () => {
-    if (!dragging) {
-      if (Math.hypot(lastX - pointerStartX, lastY - pointerStartY) < CLICK_THRESHOLD_PX) return;
-      dragging = true;
-    }
+    frame = null;
+    // A merge / git overlay can lock the canvas while a deferred frame is still pending.
+    if (!dragging || isCanvasReadOnly(store.getState())) return;
     const snap = gridSnapper();
     const cur = clientToWorld(lastX, lastY, origin);
     const dx = cur.x - grab.x;
@@ -115,20 +118,33 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
       }
     }
     store.getState().setPositionsBatch(entries);
+    committed = store.getState().positions;
+  };
+
+  const schedule = () => {
+    if (dragging && frame === null) frame = requestAnimationFrame(apply);
   };
 
   const onMove = (ev: PointerEvent) => {
     lastX = ev.clientX;
     lastY = ev.clientY;
-    apply();
+    // Latched per pointer event, not per frame: an excursion past the threshold that a later event
+    // in the same frame undoes is still a drag.
+    if (!dragging && Math.hypot(lastX - pointerStartX, lastY - pointerStartY) >= CLICK_THRESHOLD_PX) dragging = true;
+    schedule();
   };
   const unsubViewport = store.subscribe((s, prev) => {
-    if (s.viewport !== prev.viewport) apply();
+    if (s.viewport !== prev.viewport) schedule();
   });
 
   const onUp = (ev: PointerEvent) => {
     active = false;
     unsubViewport();
+    // The release must land where the pointer last was, even if that frame never got painted.
+    if (frame !== null) {
+      cancelAnimationFrame(frame);
+      apply();
+    }
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
@@ -151,14 +167,45 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
       return;
     }
 
-    const cmd = buildMoveCommand(origins, store.getState().positions);
-    if (cmd) store.getState().pushMoveCommand(cmd);
+    const s = store.getState();
+    if (isCanvasReadOnly(s)) {
+      // A lock mid-gesture pushes no command and persists nothing, so committed frames would linger
+      // with no undo; put back only entries this drag still owns (time travel swaps in its own layout).
+      const owned = committed;
+      if (owned === null) return;
+      const back = [...origins].filter(([n]) => s.positions.get(n) === owned.get(n));
+      if (back.length > 0) s.setPositionsBatch(back);
+      const home = origins.get(tableName);
+      if (home && back.some(([n]) => n === tableName)) node.style.transform = `translate(${home.x}px, ${home.y}px)`;
+      return;
+    }
+    const cmd = buildMoveCommand(origins, s.positions);
+    if (cmd) commitMove(cmd);
     schedulePersist();
   };
 
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
+}
+
+/**
+ * Push a table move. A* shapes touching a moved table were routed for the old geometry, so they
+ * are dropped in the same undo step (an arrange-kind command, which snapshots edge layouts) (F20).
+ */
+function commitMove(cmd: MoveCommand): void {
+  const s = store.getState();
+  const drops = isCanvasReadOnly(s)
+    ? []
+    : computeAutoShapeDrops(rawLayoutRefs(s.schema.refs), movedNames(new Map(cmd.from), new Map(cmd.to)), s.edgeLayouts);
+  if (drops.length === 0) {
+    s.pushMoveCommand(cmd);
+    return;
+  }
+  const edgesBefore = new Map(s.edgeLayouts);
+  s.applyEdgeLayouts(drops);
+  const arrange = buildArrangeCommand(new Map(cmd.from), new Map(cmd.to), edgesBefore, drops, cmd.label);
+  if (arrange) s.pushArrangeCommand(arrange);
 }
 
 function snapshotWaypoints(refId: string): Waypoint[] {
@@ -182,6 +229,7 @@ function runEdgeDrag(
   e.stopPropagation();
   e.preventDefault();
   const from = snapshotWaypoints(refId);
+  const before = store.getState().edgeLayouts.get(refId);
   const startX = e.clientX;
   const startY = e.clientY;
   const origin = viewportOrigin(target);
@@ -215,8 +263,10 @@ function runEdgeDrag(
 
     const to = snapshotWaypoints(refId);
     const op = to.length > from.length ? 'add' : to.length < from.length ? 'remove' : 'move';
-    const cmd = buildWaypointCommand(refId, from, to, op);
+    const cmd = buildWaypointCommand(refId, from, to, op, before?.auto === true);
     if (cmd) store.getState().pushWaypointCommand(cmd);
+    // A gesture that ended where it began edited nothing: hand back the pre-drag layout, `auto` included.
+    else if (before?.auto) store.getState().applyEdgeLayouts([[refId, before]]);
     schedulePersist();
   };
 
@@ -264,9 +314,10 @@ export function deleteEdgeNotch(route: EdgeRoute, segIndex: number): void {
   if (isCanvasReadOnly(store.getState())) return;
   const refId = route.id;
   const from = snapshotWaypoints(refId);
+  const fromAuto = store.getState().edgeLayouts.get(refId)?.auto === true;
   const to = deleteNotch(route, segIndex);
   store.getState().setEdgeWaypoints(refId, to);
-  const cmd = buildWaypointCommand(refId, from, to, to.length < from.length ? 'remove' : 'move');
+  const cmd = buildWaypointCommand(refId, from, to, to.length < from.length ? 'remove' : 'move', fromAuto);
   if (cmd) store.getState().pushWaypointCommand(cmd);
   schedulePersist();
 }
@@ -280,7 +331,7 @@ export function resetEdgeWaypoints(refId: string): void {
   const state = store.getState();
   if (isCanvasReadOnly(state)) return;
   const before = state.edgeLayouts.get(refId);
-  if (!before || !hasManualShape(before)) return; // nothing to reset: don't clear the redo stack
+  if (!before || !hasShape(before)) return; // nothing to reset: don't clear the redo stack
   state.resetEdgeShape(refId);
   const after = store.getState().edgeLayouts.get(refId) ?? null;
   const cmd = buildEdgesResetCommand(new Map([[refId, before]]), [[refId, after]], 'Reset line');
@@ -288,13 +339,14 @@ export function resetEdgeWaypoints(refId: string): void {
   schedulePersist();
 }
 
-/** Snapshot an edge's style (color + side overrides) for history diffing. */
+/** Snapshot an edge's style (color + side overrides + A* marker) for history diffing. */
 export function readEdgeStyle(refId: string): EdgeStyle {
   const l = store.getState().edgeLayouts.get(refId);
   const s: EdgeStyle = {};
   if (l?.color) s.color = l.color;
   if (l?.sourceSide) s.sourceSide = l.sourceSide;
   if (l?.targetSide) s.targetSide = l.targetSide;
+  if (l?.auto) s.auto = true;
   return s;
 }
 
@@ -340,6 +392,12 @@ export function startEndpointDrag(
     window.removeEventListener('pointercancel', onUp);
     try { target.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
     document.body.classList.remove('ddd-is-edge-dragging');
+    const after = readEdgeStyle(refId);
+    const current = store.getState().edgeLayouts.get(refId);
+    // Flipped and dragged back: no edit, so the shape stays A*'s and no history entry is pushed.
+    if (before.auto && current && after.sourceSide === before.sourceSide && after.targetSide === before.targetSide) {
+      store.getState().applyEdgeLayouts([[refId, { ...current, auto: true }]]);
+    }
     commitEdgeStyle(refId, before, 'Flip edge port');
   };
 

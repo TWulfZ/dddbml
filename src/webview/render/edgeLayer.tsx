@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { createPortal, memo } from 'preact/compat';
 import type { QualifiedName, Ref, RefDiffStatus } from '../../shared/types';
 import { columnCenterY, estimateSize, headerCenterY } from '../layout/autoLayout';
@@ -6,10 +6,11 @@ import type { KeyedDepEdge } from './edgeKey';
 import { DepMarkerDef, DepOverlay, DepPaths } from './depEdges';
 import { depColor, routeDeps } from './depRouter';
 import type { RowGeometry } from '../layout/tableRows';
-import { routeRefs, isDipRun, type EdgeRoute } from './edgeRouter';
+import { EdgeRouteCache, isDipRun, type EdgeRoute } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
 import type { LodLevel } from './lod';
 import { store, useAppStore, isCanvasReadOnly } from '../state/store';
+import { smallPositionsDelta } from '../state/positionsDelta';
 import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch } from '../drag/dragController';
 import type { EdgeStyle } from '../state/history';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
@@ -32,7 +33,8 @@ interface EdgeLayerProps {
   visibleRefIds: Set<string> | null;
   /** Current zoom LOD. `'rect'` (low zoom) → straight lines, no markers/dots/overlay. */
   lod: LodLevel;
-  positions: Map<QualifiedName, { x: number; y: number }>;
+  /** The store's table positions; collapsed group nodes are resolved from `groupSizes`. */
+  positions: ReadonlyMap<QualifiedName, { x: number; y: number }>;
   /** Rendered rows per table (PK/FK filter, inline diff) — sizes and column ports follow these. */
   rows: RowGeometry;
   groupSizes?: GroupSize[];
@@ -66,6 +68,76 @@ interface HoverState {
   /** Quarter handle nearest the cursor on the hovered run: 0.25 (first half) or 0.75 (second half). */
   near: number;
 }
+
+interface EdgeStrokeProps {
+  route: EdgeRoute;
+  edgeRef: Ref | undefined;
+  color: string | undefined;
+  diff: RefDiffStatus | undefined;
+  focused: boolean;
+  lowZoom: boolean;
+}
+
+const straightPath = (r: EdgeRoute) => `M ${r.source.x} ${r.source.y} L ${r.target.x} ${r.target.y}`;
+
+/**
+ * One edge stroke in the shared base SVG. Memoized on the route object: a drag frame keeps every
+ * route it cannot change by identity, so only the moved edges re-diff (spec 04).
+ */
+const EdgeStroke = memo(function EdgeStroke({ route: r, edgeRef: ref, color, diff, focused, lowZoom }: EdgeStrokeProps) {
+  const diffCls = diff ? ` is-diff-${diff}` : '';
+  const groupCls = `ddd-edge-group${focused ? ' is-focused' : ''}`;
+  if (lowZoom) {
+    // Bird's-eye: straight port-to-port line, no crow's-foot, no direction dots.
+    return (
+      <g class={groupCls}>
+        <path d={straightPath(r)} class={`ddd-edge${diffCls}`} style={color ? { stroke: color } : undefined} />
+      </g>
+    );
+  }
+  const startMarker = ref?.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)';
+  const endMarker = ref?.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)';
+  return (
+    <g class={groupCls} style={color ? { color } : undefined}>
+      <path
+        d={r.d}
+        class={`ddd-edge${diffCls}`}
+        style={color ? { stroke: color } : undefined}
+        marker-start={startMarker}
+        marker-end={endMarker}
+      />
+      {/* Direction dots (visual only): origin endpoint (PK) and destination endpoint (FK). */}
+      <circle class="ddd-edge-end-dot is-source" cx={r.source.x} cy={r.source.y} r={3} />
+      <circle class="ddd-edge-end-dot is-target" cx={r.target.x} cy={r.target.y} r={3} />
+    </g>
+  );
+});
+
+interface EdgeHitProps {
+  route: EdgeRoute;
+  color: string | undefined;
+  hovered: boolean;
+  onHover: (refId: string) => void;
+  onUnhover: (refId: string) => void;
+  onSelect: (refId: string, e: PointerEvent) => void;
+}
+
+/** Hit path (+ hover flow) of an unselected edge in the overlay SVG; memoized like EdgeStroke. */
+const EdgeHit = memo(function EdgeHit({ route: r, color, hovered, onHover, onUnhover, onSelect }: EdgeHitProps) {
+  return (
+    <g style={color ? { color } : undefined}>
+      {hovered ? <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} /> : null}
+      <path
+        d={r.d}
+        class="ddd-edge-hit"
+        stroke-width={SEGMENT_HOVER_THICKNESS}
+        onPointerEnter={() => onHover(r.id)}
+        onPointerLeave={() => onUnhover(r.id)}
+        onPointerDown={(e) => onSelect(r.id, e as unknown as PointerEvent)}
+      />
+    </g>
+  );
+});
 
 function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, worldBbox, refDiff, deps }: EdgeLayerProps) {
   const density = useAppStore((s) => s.settings.ui.density);
@@ -114,10 +186,20 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
   // what makes edges scale to thousands of relations: routing is O(refs) once per move, not per
   // frame. The bboxOf/columnY closures read exactly the deps below, so the cached result is valid
   // whenever the memo recomputes. See spec 05 §8.
-  const routes = useMemo(
-    () => routeRefs(refs, bboxOf, columnY, (id) => edgeLayouts.get(id)),
-    [refs, positions, rows, groupSizes, edgeLayouts],
-  );
+  // A positions-only delta recorded by the store (a drag frame) re-routes just the refs it can
+  // change and keeps every other route object, so the memoized strokes below skip their diff.
+  const [routeCache] = useState(() => new EdgeRouteCache());
+  const routedRef = useRef<{ refs: Ref[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts } | null>(null);
+  const routes = useMemo(() => {
+    const prev = routedRef.current;
+    routedRef.current = { refs, positions, rows, groupSizes, edgeLayouts };
+    const layoutOf = (id: string) => edgeLayouts.get(id);
+    if (prev && prev.refs === refs && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts) {
+      const moved = smallPositionsDelta(prev.positions, positions);
+      if (moved) return routeCache.routeMoved(moved, bboxOf, columnY, layoutOf);
+    }
+    return routeCache.routeAll(refs, bboxOf, columnY, layoutOf);
+  }, [refs, positions, rows, groupSizes, edgeLayouts]);
 
   const depRoutes = useMemo(() => {
     const headerCenter = headerCenterY();
@@ -150,7 +232,6 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
   // Low zoom (text illegible): draw each edge as a straight port-to-port line, no markers/dots,
   // and skip the interactive overlay entirely. See spec 05 §8.4.
   const lowZoom = lod === 'rect';
-  const straightPath = (r: EdgeRoute) => `M ${r.source.x} ${r.source.y} L ${r.target.x} ${r.target.y}`;
 
   const refById = useMemo(() => {
     const m = new Map<string, Ref>();
@@ -220,6 +301,15 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
     startEndpointDrag(r.id, end, cx, e, e.currentTarget as SVGElement, clientToWorldX);
   };
 
+  // Stable identities so the memoized per-edge hit paths only re-render when their own route changes.
+  const hoverEdge = useCallback((refId: string) => setHover({ refId, segIndex: -1, near: 0.25 }), []);
+  const unhoverEdge = useCallback((refId: string) => setHover((h) => (h && h.refId === refId ? null : h)), []);
+  const selectEdge = useCallback((refId: string, e: PointerEvent) => {
+    e.stopPropagation();
+    setClickPos({ x: e.clientX, y: e.clientY });
+    store.getState().setSelectedEdge(refId);
+  }, []);
+
   const clearHover = (refId: string, segIndex: number) =>
     setHover((h) => (h && h.refId === refId && h.segIndex === segIndex ? null : h));
 
@@ -285,9 +375,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
           <DepMarkerDef />
         </defs>
         {visibleRoutes.map((r) => {
-          const color = edgeLayouts.get(r.id)?.color;
           const diff = refDiff?.get(r.id);
-          const diffCls = diff ? ` is-diff-${diff}` : '';
           const ref = refById.get(r.id);
           const focused =
             diff != null || // a changed (added/removed) ref stays full in diff mode
@@ -295,30 +383,16 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
             hover?.refId === r.id ||
             (hoveredTable != null && (ref?.source.table === hoveredTable || ref?.target.table === hoveredTable)) ||
             (ref != null && (selection.has(ref.source.table) || selection.has(ref.target.table)));
-          const groupCls = `ddd-edge-group${focused ? ' is-focused' : ''}`;
-          if (lowZoom) {
-            // Bird's-eye: straight port-to-port line, no crow's-foot, no direction dots.
-            return (
-              <g key={r.id} class={groupCls}>
-                <path d={straightPath(r)} class={`ddd-edge${diffCls}`} style={color ? { stroke: color } : undefined} />
-              </g>
-            );
-          }
-          const startMarker = ref?.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)';
-          const endMarker = ref?.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)';
           return (
-            <g key={r.id} class={groupCls} style={color ? { color } : undefined}>
-              <path
-                d={r.d}
-                class={`ddd-edge${diffCls}`}
-                style={color ? { stroke: color } : undefined}
-                marker-start={startMarker}
-                marker-end={endMarker}
-              />
-              {/* Direction dots (visual only): origin endpoint (PK) and destination endpoint (FK). */}
-              <circle class="ddd-edge-end-dot is-source" cx={r.source.x} cy={r.source.y} r={3} />
-              <circle class="ddd-edge-end-dot is-target" cx={r.target.x} cy={r.target.y} r={3} />
-            </g>
+            <EdgeStroke
+              key={r.id}
+              route={r}
+              edgeRef={ref}
+              color={edgeLayouts.get(r.id)?.color}
+              diff={diff}
+              focused={focused}
+              lowZoom={lowZoom}
+            />
           );
         })}
         <DepPaths
@@ -340,23 +414,30 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
         {lowZoom || readOnly ? null : visibleRoutes.map((r) => {
           const selected = r.id === selectedEdgeId;
           const color = edgeLayouts.get(r.id)?.color;
+          if (!selected) {
+            return (
+              <EdgeHit
+                key={r.id}
+                route={r}
+                color={color}
+                hovered={hover?.refId === r.id}
+                onHover={hoverEdge}
+                onUnhover={unhoverEdge}
+                onSelect={selectEdge}
+              />
+            );
+          }
           return (
             <g key={r.id} style={color ? { color } : undefined}>
               {/* Selected highlight first, then the marching-dot flow ON TOP so it stays visible while
-                  selected (the opaque highlight used to cover it). Flow shows on hover and selected. */}
-              {selected ? (
-                <path d={r.d} class="ddd-edge is-selected" style={color ? { stroke: color } : undefined} />
-              ) : null}
-              {selected || hover?.refId === r.id ? (
-                <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} />
-              ) : null}
+                  selected (the opaque highlight used to cover it). */}
+              <path d={r.d} class="ddd-edge is-selected" style={color ? { stroke: color } : undefined} />
+              <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} />
               {/* Interactive editing DOM (per-segment slide/ghost handles + endpoint flips) is built
                   ONLY for the selected edge — see spec 05 §8.3. Every other visible edge gets a single
-                  transparent hit-path that handles select-on-click + hover-flow, instead of a hit-line
-                  per segment. This is what keeps the overlay's node/listener count flat at thousands
-                  of relations. */}
-              {selected ? (
-                <>
+                  transparent hit-path (EdgeHit) that handles select-on-click + hover-flow, instead of a
+                  hit-line per segment. This is what keeps the overlay's node/listener count flat at
+                  thousands of relations. */}
               {r.segments.map((s, i) => {
                 const len = Math.abs(s.x2 - s.x1) + Math.abs(s.y2 - s.y1);
                 const hot = hover?.refId === r.id && hover.segIndex === i;
@@ -366,7 +447,7 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
                 // local symmetric notch (a NEW vertex) and the rest of the run stays flat. Drag is
                 // 1-DOF perpendicular with an axis-aware resize cursor. Double-click a notch's
                 // dip-run → delete it. Rigid stubs / tiny legs get nothing; corners stay rounded.
-                const editable = selected && !s.rigid && len >= MIN_HANDLE_LEN;
+                const editable = !s.rigid && len >= MIN_HANDLE_LEN;
                 const showGhost = editable && len >= MIN_GHOST_LEN && hot;
                 const axisClass = s.axis === 'h' ? 'is-h' : 'is-v';
                 const at = (f: number) => ({ x: s.x1 + (s.x2 - s.x1) * f, y: s.y1 + (s.y2 - s.y1) * f });
@@ -424,38 +505,23 @@ function EdgeLayerImpl({ refs, visibleRefIds, lod, positions, rows, groupSizes, 
                   </g>
                 );
               })}
-                  {/* No handles on corners: bends are rounded turns (roundedPathString), and editing
-                      is done via the segment-midpoint handles above. Only the 2 endpoints get a
-                      handle (port-side flip). */}
-                  <circle
-                    class="ddd-edge-endpoint"
-                    cx={r.source.x}
-                    cy={r.source.y}
-                    r={5}
-                    onPointerDown={(e) => onEndpointPointerDown(r, 'source', e as unknown as PointerEvent)}
-                  />
-                  <circle
-                    class="ddd-edge-endpoint"
-                    cx={r.target.x}
-                    cy={r.target.y}
-                    r={5}
-                    onPointerDown={(e) => onEndpointPointerDown(r, 'target', e as unknown as PointerEvent)}
-                  />
-                </>
-              ) : (
-                <path
-                  d={r.d}
-                  class="ddd-edge-hit"
-                  stroke-width={SEGMENT_HOVER_THICKNESS}
-                  onPointerEnter={() => setHover({ refId: r.id, segIndex: -1, near: 0.25 })}
-                  onPointerLeave={() => setHover((h) => (h && h.refId === r.id ? null : h))}
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    setClickPos({ x: e.clientX, y: e.clientY });
-                    store.getState().setSelectedEdge(r.id);
-                  }}
+                {/* No handles on corners: bends are rounded turns (roundedPathString), and editing
+                    is done via the segment-midpoint handles above. Only the 2 endpoints get a
+                    handle (port-side flip). */}
+                <circle
+                  class="ddd-edge-endpoint"
+                  cx={r.source.x}
+                  cy={r.source.y}
+                  r={5}
+                  onPointerDown={(e) => onEndpointPointerDown(r, 'source', e as unknown as PointerEvent)}
                 />
-              )}
+                <circle
+                  class="ddd-edge-endpoint"
+                  cx={r.target.x}
+                  cy={r.target.y}
+                  r={5}
+                  onPointerDown={(e) => onEndpointPointerDown(r, 'target', e as unknown as PointerEvent)}
+                />
             </g>
           );
         })}

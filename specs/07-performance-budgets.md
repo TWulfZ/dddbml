@@ -28,6 +28,7 @@ DBML de 5000 tablas abierto en una laptop decente (Chromium webview, sin WebGL),
 | FPS pan continuo 10s | >= 55 avg, >= 30 p99 | DevTools Performance tab + `requestAnimationFrame` timing |
 | FPS zoom continuo | >= 55 avg | idem |
 | Drag single table | < 16.7ms por frame (60fps) | DevTools Performance, M5 |
+| JS por frame de drag (commit + escena + ruteo + culling, sin Preact/paint) | < 4ms (medido ~0.6ms, 1 tabla; ~0.75ms, 50 tablas; antes ~8ms) | `src/webview/render/dragFrame.perf.test.ts` sobre `huge.dbml` (spec 04 "Drag incremental") |
 | Write layout file | < 50ms | `performance.now()` alrededor del fs.write |
 
 ## Cómo medir FPS en webview
@@ -81,7 +82,8 @@ Librerías pesadas (cuidado):
 ## Regresiones conocidas a vigilar
 
 - **Re-render en cada pan frame**: síntoma = FPS cae a <30 durante pan y, en esquemas grandes, el chrome flotante desaparece/se parte (ocurrió en 2026-09). Check: `App` **no** debe seleccionar `s.viewport` (sólo `lodForZoom(...)`); el transform de `.ddd-world` se aplica imperativo; `useVisibleNames` devuelve la misma instancia si la membresía no cambió; ningún selector devuelve objeto nuevo (`preact/devtools` Profiler para confirmar). Ver spec 04 "Cámara fuera de Preact".
-- **Spatial index rebuild en pan**: `useEffect` deps incluye `viewport` por error. Check: effect de `idx.clear()` debe depender sólo de `schema` y `positions`, nunca viewport.
+- **Spatial index rebuild en pan**: el memo de la escena (`SceneCache.update` en `app.tsx`) incluye `viewport` por error. Check: sus deps son schema, positions, filtros, filas, `edgeLayouts` y densidad — nunca la cámara.
+- **Rebuild completo por frame de drag**: síntoma = drag a tirones con muchas tablas/refs. Check: `dragFrame.perf.test.ts` (incremental < 4ms y < ½ del rebuild); los setters de posiciones del store registran el delta (`recordPositionsDelta`) y los inputs no-posición de `SceneCache`/`EdgeLayer` son estables (un `new Set()`/`{}` por render fuerza el rebuild).
 - **Edge overlay sin culling**: si se dibujan 1000 paths SVG innecesarios, perf cae. Check: refs visibles (`visibleRefIds`) en statusbar con diagrama grande.
 - **Routing de aristas en el render path**: síntoma = FPS cae al panear con muchas relaciones. Check: `routeRefs` debe estar memoizado por geometría (`useMemo`), nunca llamado en el cuerpo del render; pan/zoom y hover/selección no deben invalidar el memo (ver spec 05 §8).
 - **Overlay de aristas con hit-DOM por segmento**: si cada arista visible monta `<line>` hit por segmento, el conteo de nodos explota. Check: sólo la arista **seleccionada** monta handles por-segmento; el resto, un único `path.ddd-edge-hit`.
