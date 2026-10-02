@@ -135,8 +135,19 @@ export function isEdgeSide(v: unknown): v is EdgeSide {
   return v === 'left' || v === 'right' || v === 'top' || v === 'bottom';
 }
 
-/** Whether `e.auto` should survive a write: only A*-shaped edges carry it (spec 03 `edges.*.auto`). */
-export function hasAutoShape(e: EdgeLayout): boolean {
+/** `Layout.edges` namespace of DBML `Dep` edges (spec 18). */
+export const DEP_EDGE_KEY_PREFIX = 'dep:';
+
+export function isDepEdgeKey(key: string): boolean {
+  return key.startsWith(DEP_EDGE_KEY_PREFIX);
+}
+
+/**
+ * Whether `e.auto` should survive a write: only A*-shaped edges carry it (spec 03 `edges.*.auto`).
+ * Deps never go through A* (spec 18), so a `dep:` key never keeps it.
+ */
+export function hasAutoShape(key: string, e: EdgeLayout): boolean {
+  if (isDepEdgeKey(key)) return false;
   return e.auto === true && ((e.waypoints?.length ?? 0) > 0 || e.sourceSide !== undefined || e.targetSide !== undefined);
 }
 

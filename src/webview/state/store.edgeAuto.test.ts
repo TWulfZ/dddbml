@@ -23,6 +23,14 @@ describe('auto marker (F20) — load', () => {
     store.getState().setLayout(layout);
     expect(store.getState().edgeLayouts.get(K)).toEqual(autoShape);
   });
+
+  it('setLayout drops the marker from a dep: key (spec 18)', () => {
+    const D = 'dep:public.a::|public.b::';
+    const layout: Layout = { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: { [D]: autoShape } };
+    store.getState().setLayout(layout);
+    expect(store.getState().edgeLayouts.get(D)?.auto).toBeUndefined();
+    expect(store.getState().edgeLayouts.get(D)?.waypoints).toEqual(autoShape.waypoints);
+  });
 });
 
 describe('auto marker (F20) — user edits clear it, color does not', () => {

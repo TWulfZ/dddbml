@@ -217,4 +217,12 @@ describe('layoutStore — A* auto marker (F20)', () => {
     const parsed = parseLayout(text.replace('"colored": { "color": "#abc" }', '"colored": { "auto": "yes", "sourceSide": "top" }'));
     expect(parsed.edges?.['colored']).toEqual({ sourceSide: 'top' });
   });
+
+  it('never keeps the marker on a dep: key, which A* does not route (spec 18)', () => {
+    const dep = 'dep:public.a::|public.b::';
+    const text = serializeLayout(baseLayout({ edges: { [dep]: { auto: true, waypoints: [{ x: 1, y: 2 }] } } }));
+    expect(text).not.toContain('"auto"');
+    const parsed = parseLayout(text.replace('"waypoints"', '"auto": true,\n      "waypoints"'));
+    expect(parsed.edges?.[dep]).toEqual({ waypoints: [{ x: 1, y: 2 }] });
+  });
 });

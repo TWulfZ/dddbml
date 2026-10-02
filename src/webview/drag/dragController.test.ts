@@ -5,9 +5,9 @@ vi.mock('../persistence', () => ({ schedulePersist: vi.fn() }));
 
 import { store } from '../state/store';
 import { zoomAt } from '../render/viewport';
-import { commitEdgeStyle, resetEdgeWaypoints, startDrag, startEndpointDrag } from './dragController';
+import { commitEdgeStyle, deleteDepWaypoint, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag } from './dragController';
 import type { EdgeLayout, Ref } from '../../shared/types';
-import { edgeKey } from '../render/edgeKey';
+import { depKey, edgeKey } from '../render/edgeKey';
 
 // Minimal DOM stand-ins: the controller only needs window listeners, a body classList and a node
 // that can capture the pointer and find its viewport.
@@ -272,5 +272,52 @@ describe('table drag over A* auto edges (F20)', () => {
     resetEdgeWaypoints(bc);
     expect(store.getState().edgeLayouts.has(bc)).toBe(false);
     expect(store.getState().past).toHaveLength(1);
+  });
+});
+
+describe('dep waypoint edits (spec 18)', () => {
+  const dk = depKey('a', [], 'b', []);
+  const shape: EdgeLayout = { waypoints: [{ x: 250, y: 100 }, { x: 300, y: 200 }], color: '#3b82f6' };
+
+  beforeEach(() => {
+    store.setState({
+      schema: { tables: [], refs: [], groups: [], deps: [{ name: null, edges: [{ id: 'd', upstream: { table: 'a', columns: [] }, downstream: { table: 'b', columns: [] } }] }] },
+      edgeLayouts: new Map([[dk, shape]]),
+    });
+  });
+
+  it('are ignored while the canvas is read-only', () => {
+    store.setState({ gitView: { kind: 'diff', baseLabel: 'HEAD', headLabel: 'Working tree' } });
+    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    expect(listeners.size).toBe(0);
+    startDepWaypointInsert(dk, 1, { x: 270, y: 150 }, ptr(320, 170), fakeNode());
+    expect(listeners.size).toBe(0);
+    deleteDepWaypoint(dk, 0);
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('never carry the A* marker, even over a sidecar that smuggled one in', () => {
+    // Bypasses writeLayout on purpose: a hand-edited sidecar is the only way a dep key could hold it.
+    store.setState({ edgeLayouts: new Map([[dk, { ...shape, auto: true }]]) });
+    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    move(300, 120);
+    up(300, 120);
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    move(340, 160);
+    up(340, 160);
+    expect(store.getState().edgeLayouts.get(dk)?.auto).toBeUndefined();
+    store.getState().undo();
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+  });
+
+  it('a table drag over both endpoints leaves the dep waypoints where they are', () => {
+    store.setState({ selection: new Set(['a', 'b']) });
+    startDrag(ptr(100, 100), 'a', fakeNode());
+    move(400, 300);
+    up(400, 300);
+    expect(store.getState().positions.get('b')).not.toEqual({ x: 500, y: 0 });
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
   });
 });

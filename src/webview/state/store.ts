@@ -327,7 +327,7 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       if (eo.color) e.color = eo.color;
       if (isEdgeSide(eo.sourceSide)) e.sourceSide = eo.sourceSide;
       if (isEdgeSide(eo.targetSide)) e.targetSide = eo.targetSide;
-      if (eo.auto === true && hasAutoShape({ ...e, auto: true })) e.auto = true;
+      if (eo.auto === true && hasAutoShape(id, { ...e, auto: true })) e.auto = true;
       if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
         edgeLayouts.set(id, e);
       }
@@ -798,7 +798,7 @@ function applyCommand(
 function writeLayout(map: Map<string, EdgeLayout>, refId: string, layout: EdgeLayout): void {
   const clean: EdgeLayout = { ...layout };
   if (clean.waypoints && clean.waypoints.length === 0) delete clean.waypoints;
-  if (clean.auto && !hasAutoShape(clean)) delete clean.auto;
+  if (clean.auto && !hasAutoShape(refId, clean)) delete clean.auto;
   const hasData =
     (clean.waypoints !== undefined) ||
     clean.color !== undefined ||

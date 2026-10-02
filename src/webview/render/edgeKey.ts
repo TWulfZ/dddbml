@@ -1,4 +1,4 @@
-import type { Dep, DepEndpoint, QualifiedName, Ref } from '../../shared/types';
+import { DEP_EDGE_KEY_PREFIX, type Dep, type DepEndpoint, type QualifiedName, type Ref } from '../../shared/types';
 
 /**
  * Key of an edge's persisted EdgeLayout (spec 03 `edges`). Built from the endpoints AFTER the
@@ -58,7 +58,7 @@ export interface KeyedDepEdge {
  * waypoints/colors, and are never deduped against each other.
  */
 export function depKey(up: QualifiedName, upCols: readonly string[], down: QualifiedName, downCols: readonly string[]): string {
-  return `dep:${edgeKey(up, upCols, down, downCols)}`;
+  return DEP_EDGE_KEY_PREFIX + edgeKey(up, upCols, down, downCols);
 }
 
 export function edgeKeyedDeps(

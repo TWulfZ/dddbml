@@ -31,7 +31,7 @@ export function schedulePersist(): void {
     if (v.color) e.color = v.color;
     if (v.sourceSide) e.sourceSide = v.sourceSide;
     if (v.targetSide) e.targetSide = v.targetSide;
-    if (v.auto && hasAutoShape({ ...e, auto: true })) e.auto = true;
+    if (v.auto && hasAutoShape(id, { ...e, auto: true })) e.auto = true;
     if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
       edges[id] = e;
     }
