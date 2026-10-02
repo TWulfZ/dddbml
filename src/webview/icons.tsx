@@ -44,7 +44,8 @@ export type IconName =
   | 'diff'
   | 'archive'
   | 'table'
-  | 'references';
+  | 'references'
+  | 'trash';
 
 interface IconProps {
   size?: number;
@@ -93,6 +94,7 @@ export const IconFilter = make('filter');
 export const IconUndo = make('redo', true);
 export const IconRedo = make('redo');
 export const IconReset = make('discard');
+export const IconTrash = make('trash');
 export const IconMagnet = make('magnet');
 export const IconAutoArrange = make('wand');
 export const IconInfo = make('info');

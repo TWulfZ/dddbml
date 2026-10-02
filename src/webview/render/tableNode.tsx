@@ -1,10 +1,11 @@
 import { useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
-import type { Column, ColumnDiffEntry, Table, TableDiffStatus } from '../../shared/types';
+import type { Column, ColumnDiffEntry, QualifiedName, Table, TableDiffStatus, WebviewToHost } from '../../shared/types';
 import { renderedRows, type DiffKind } from '../layout/tableRows';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag } from '../drag/dragController';
+import { startFkDrag } from '../drag/fkDrag';
 import { countResettableSelectionEdges, resetSelectedEdges, runEdgeOrdering, runSmartLayout } from '../layout/smartLayout';
 import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
@@ -42,7 +43,8 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
   useAppStore((s) => s.settings.ui.density);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
   const rowOpts = { showOnlyPkFk, fkColumns, diffStatus, diffBase, columnDiff };
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  /** `column` set = opened on a column row (spec 19: field actions first). */
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; column?: string } | null>(null);
 
   const onPointerDown = (e: PointerEvent) => {
     startDrag(e, table.name, e.currentTarget as HTMLElement);
@@ -55,6 +57,11 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
     e.preventDefault();
     e.stopPropagation();
     setCtxMenu(clampMenuAnchor(e.clientX, e.clientY, 200, 100));
+  };
+  const onColumnContextMenu = (column: string, e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ ...clampMenuAnchor(e.clientX, e.clientY, 200, 100), column });
   };
   // Hovering a table reveals its (otherwise faded) connected edges.
   const onTableEnter = () => store.getState().setHoveredTable(table.name);
@@ -73,11 +80,24 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
     if (store.getState().tooltip) store.getState().setTooltip(null);
   };
 
-  const ctxItems: ContextMenuItem[] = [
+  // Schema intents (spec 19); the host re-checks the read-only gate (spec 16, both layers).
+  const readOnly = ctxMenu ? isCanvasReadOnly(store.getState()) : false;
+  const post = (msg: WebviewToHost) => { if (!isCanvasReadOnly(store.getState())) postToHost(msg); };
+  const ctxItems: ContextMenuItem[] = [];
+  if (ctxMenu?.column !== undefined) {
+    const column = ctxMenu.column;
+    ctxItems.push(
+      { label: 'Delete field', danger: true, disabled: readOnly, onClick: () => post({ type: 'schema:delete', payload: { kind: 'field', table: table.name, column } }) },
+      { label: '', onClick: () => {}, separator: true },
+    );
+  }
+  ctxItems.push(
+    { label: 'Add field', disabled: readOnly, onClick: () => post({ type: 'schema:addField', payload: { table: table.name } }) },
+    { label: '', onClick: () => {}, separator: true },
     { label: 'Export…', onClick: () => store.getState().setExportPromptOpen(true) },
     { label: '', onClick: () => {}, separator: true },
     { label: 'Copy table name', onClick: () => { void navigator.clipboard.writeText(table.tableName); } },
-  ];
+  );
 
   // Selection actions, shown only when right-clicking a selected table. Read from the store at
   // menu-open time rather than subscribing: a `selection` subscription re-rendered EVERY mounted
@@ -100,6 +120,11 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
       onClick: () => resetSelectedEdges(),
     });
   }
+
+  ctxItems.push(
+    { label: '', onClick: () => {}, separator: true },
+    { label: 'Delete table', danger: true, disabled: readOnly, onClick: () => post({ type: 'schema:delete', payload: { kind: 'table', table: table.name } }) },
+  );
 
   const ctxMenuEl = ctxMenu ? (
     <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxItems} onClose={() => setCtxMenu(null)} />
@@ -159,7 +184,7 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
       >
         <TableHeader table={table} configurable headerStyle={headerStyle} recordCount={recordCount} />
         <ul class="ddd-table__cols">
-          {rows.map((r) => <ColumnRow key={r.key} col={r.col} isFk={r.isFk} diffKind={r.kind} />)}
+          {rows.map((r) => <ColumnRow key={r.key} table={table.name} col={r.col} isFk={r.isFk} diffKind={r.kind} onContextMenu={onColumnContextMenu} />)}
         </ul>
       </div>
       {ctxMenuEl}
@@ -250,9 +275,24 @@ function TableHeader({ table, configurable, headerStyle, recordCount }: { table:
   );
 }
 
-function ColumnRow({ col, isFk, diffKind }: { col: Column; isFk: boolean; diffKind?: DiffKind }) {
+interface ColumnRowProps {
+  table: QualifiedName;
+  col: Column;
+  isFk: boolean;
+  diffKind?: DiffKind;
+  onContextMenu: (column: string, e: MouseEvent) => void;
+}
+
+function ColumnRow({ table, col, isFk, diffKind, onContextMenu }: ColumnRowProps) {
   const isAdd = diffKind === 'added' || diffKind === 'changed-new';
   const isDel = diffKind === 'removed' || diffKind === 'changed-old';
+  // A diff's removed/old row is a base column the .dbml no longer has: it stays inert, so its
+  // gestures fall through to the table's.
+  const live = !isDel;
+  const onDblClick = (e: Event) => {
+    e.stopPropagation();
+    postToHost({ type: 'command:revealColumn', payload: { table, column: col.name } });
+  };
   const diffCls = isAdd ? ' is-diff-add' : isDel ? ' is-diff-del' : '';
   const sign = isAdd ? '+' : isDel ? '−' : '';
   const onEnter = (e: Event) => {
@@ -272,8 +312,11 @@ function ColumnRow({ col, isFk, diffKind }: { col: Column; isFk: boolean; diffKi
   return (
     <li
       class={`ddd-table__col${isFk ? ' is-fk' : ''}${diffCls}`}
+      data-col={live ? col.name : undefined}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
+      onDblClick={live ? onDblClick : undefined}
+      onContextMenu={live ? (e) => onContextMenu(col.name, e) : undefined}
     >
       {sign ? <span class="ddd-table__col-sign" aria-hidden="true">{sign}</span> : null}
       <span class="ddd-table__col-left">
@@ -286,6 +329,13 @@ function ColumnRow({ col, isFk, diffKind }: { col: Column; isFk: boolean; diffKi
         {col.notNull ? <span class="ddd-table__badge" title="not null">NN</span> : null}
         {col.unique ? <span class="ddd-table__badge" title="unique">U</span> : null}
       </span>
+      {live ? (
+        <span
+          class="ddd-table__col-port"
+          title="Drag to a column to add a reference"
+          onPointerDown={(e) => startFkDrag(e, { table, column: col.name }, e.currentTarget)}
+        />
+      ) : null}
     </li>
   );
 }

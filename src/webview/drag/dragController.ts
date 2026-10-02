@@ -6,6 +6,7 @@ import { screenToWorld, type Point } from '../render/viewport';
 import { gridSnapper } from '../layout/grid';
 import { computeAutoShapeDrops, hasShape, movedNames, rawLayoutRefs } from '../layout/smartLayout/edgeReset';
 import type { Waypoint } from '../../shared/types';
+import { isFkDragActive } from './fkDrag';
 
 /**
  * Pointer-driven drag for a table node.
@@ -31,7 +32,7 @@ const CLICK_THRESHOLD_PX = 4;
 
 /** True while a table or edge gesture owns the pointer; undo/redo must not run under it (spec 11). */
 export function isGestureActive(): boolean {
-  return active || edgeDragActive;
+  return active || edgeDragActive || isFkDragActive();
 }
 
 interface ClientOrigin { left: number; top: number }

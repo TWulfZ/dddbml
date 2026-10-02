@@ -181,10 +181,30 @@ Detalles fijados:
 
 ### Webview (implementación)
 
+- **Canvas vacío** (`app.tsx`, `render/canvasMenu.ts`): click derecho sobre el fondo (viewport,
+  `.ddd-world`, grilla) abre un `ContextMenu` con "New table here". Las coords world del click se
+  ajustan con `gridSnapper()`; el grupo es el contenedor expandido (`derived.containers`) que
+  contiene el punto, el más interno si se solapan (los contenedores no reciben eventos, así que se
+  resuelve por geometría). En solo lectura el ítem sale deshabilitado.
 - **`layout:place`** → `placeTable` en el store: fija la posición aunque la tabla no esté en el
   schema, quita un `hidden` huérfano con ese nombre (si no, la tabla recién creada sería invisible) y
   persiste. Se ignora en solo lectura. `setSchema` no poda `positions` y el auto-placement sólo
   coloca tablas sin posición, así que la tabla aparece donde se hizo click.
+- **Menú de tabla** (`tableNode.tsx`): "Add field", "Delete table" (al final, peligro). **Menú de
+  campo** (filas visibles en LOD `full`): "Delete field" arriba de los ítems de la tabla. Las filas
+  `removed`/`changed-old` del diff (columnas que el `.dbml` ya no tiene) son inertes y delegan en la
+  tabla. Doble click en un campo → `command:revealColumn`; en la tabla → `command:reveal`.
+- **Arrastre de FK** (`drag/fkDrag.ts`): cada fila viva tiene un puerto sobre el borde derecho de la
+  tabla (visible al hover). Es un gesto propio (no mueve tablas ni waypoints; cuenta en
+  `isGestureActive`, así Ctrl+Z no corre durante él). La línea borrador es un único
+  `<path class="ddd-fk-draft">` en el SVG overlay de aristas, escrito imperativamente por frame; el
+  campo bajo el puntero se resalta y se resuelve con `elementFromPoint` (`data-col` en la fila,
+  `data-id` en la tabla). Soltar sobre el mismo campo o fuera de un campo cancela; Escape cancela.
+  Al soltar se abre un `ContextMenu` con `Many-to-one (>)`, `One-to-many (<)`, `One-to-one (-)`,
+  `Many-to-many (<>)` → `schema:addRef`; Escape o click afuera lo cierran sin postear.
+- **Borrar FK**: botón "Delete relation" en la toolbar de la arista y menú contextual de la arista.
+  El edge se identifica por su clave remapeada; el `Ref.id` sale de `refKeyByStableId`. Si varias
+  refs comparten la clave (duplicadas) la acción queda deshabilitada: no se sabe cuál borrar.
 - **Undo** (spec 11): `SchemaEditCommand { id, label }`; ver allí el eco de `setSchema` que evita
   vaciar la pila cuando el cambio de tablas lo causó la propia edición.
 - **`diagram:focusTable`** (`render/focusTable.ts`): `fitToBbox` con zoom máximo 100 % (una tabla

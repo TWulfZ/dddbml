@@ -14,8 +14,13 @@ import { ActionsPanel } from './render/actionsPanel';
 import { AppMenu } from './render/appMenu';
 import { undoLatest, redoLatest } from './state/historyActions';
 import { isGestureActive } from './drag/dragController';
-import { panBy, zoomAt } from './render/viewport';
+import { panBy, screenToWorld, zoomAt } from './render/viewport';
+import { newTableRequest } from './render/canvasMenu';
+import { ContextMenu, clampMenuAnchor } from './render/contextMenu';
+import { FkPrompt } from './render/fkPrompt';
 import { Notice } from './render/notice';
+import { gridSnapper } from './layout/grid';
+import { postToHost } from './vscode';
 import { SceneCache, CONTAINER_PREFIX, containerNodeId as containerId, groupNodeId as groupId } from './render/sceneCache';
 import { lodForZoom } from './render/lod';
 import { useVisibleEdgeIds, useVisibleNames } from './render/useVisibleNames';
@@ -47,7 +52,7 @@ const applyCamera = (el: HTMLElement, vp: { x: number; y: number; zoom: number }
 };
 
 /** Open overlays that consume Escape themselves; dismissing one must not also clear the selection. */
-const ESCAPE_OWNING_OVERLAYS = 'dialog[open], .ddd-context-menu, .ddd-color-popup, .ddd-app-menu__popover';
+const ESCAPE_OWNING_OVERLAYS = 'dialog[open], .ddd-context-menu, .ddd-color-popup, .ddd-app-menu__popover, .ddd-is-fk-dragging';
 
 /** Fields that consume Space/typing themselves (zoom %, group search, color popup hex input). */
 const isTextField = (t: HTMLElement | null): boolean =>
@@ -191,6 +196,10 @@ export function App(_props: AppProps) {
   const spatialIndexRef = useRef(spatialIndex);
   spatialIndexRef.current = spatialIndex;
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const containersRef = useRef(derived.containers);
+  containersRef.current = derived.containers;
+  const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number; request: ReturnType<typeof newTableRequest> } | null>(null);
+  const closeCanvasMenu = useCallback(() => setCanvasMenu(null), []);
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -326,6 +335,17 @@ export function App(_props: AppProps) {
       }
     };
 
+    // Empty canvas only: tables, edges and chrome own their menus. Group boxes are pointer-transparent,
+    // so the group under the click comes from geometry, not from the event target.
+    const onContextMenu = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t !== el && !t.classList.contains('ddd-world') && !t.classList.contains('ddd-grid') && !t.classList.contains('ddd-empty')) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const world = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+      setCanvasMenu({ ...clampMenuAnchor(e.clientX, e.clientY, 200, 40), request: newTableRequest(world, containersRef.current, gridSnapper()) });
+    };
+
     // Capture phase on purpose: the overlays close on Escape from their own document/dialog
     // handlers, and Preact unmounts them in a microtask before a bubbling window listener would
     // run — by then the DOM no longer shows that this Escape belonged to a menu or modal.
@@ -390,6 +410,7 @@ export function App(_props: AppProps) {
     el.addEventListener('pointerup', onPointerUp);
     el.addEventListener('pointercancel', onPointerUp);
     el.addEventListener('pointerenter', onPointerEnter);
+    el.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('keydown', onEscapeCapture, true);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -402,6 +423,7 @@ export function App(_props: AppProps) {
       el.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('pointercancel', onPointerUp);
       el.removeEventListener('pointerenter', onPointerEnter);
+      el.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('keydown', onEscapeCapture, true);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
@@ -486,6 +508,7 @@ export function App(_props: AppProps) {
             })}
             <EdgeLayer
               refs={derived.effectiveRefs}
+              refKeyByStableId={derived.refKeyByStableId}
               visibleRefIds={visibleRefIds}
               lod={lod}
               positions={positions}
@@ -594,6 +617,19 @@ export function App(_props: AppProps) {
         <GitPanel />
         <EdgeOrderProgress />
         <Notice />
+        <FkPrompt />
+        {canvasMenu ? (
+          <ContextMenu
+            x={canvasMenu.x}
+            y={canvasMenu.y}
+            items={[{
+              label: 'New table here',
+              disabled: readOnly,
+              onClick: () => { if (!isCanvasReadOnly(store.getState())) postToHost(canvasMenu.request); },
+            }]}
+            onClose={closeCanvasMenu}
+          />
+        ) : null}
       </ErrorBoundary>
     </>
   );

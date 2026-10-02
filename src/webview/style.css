@@ -458,6 +458,8 @@
   }
 
   .ddd-table__col {
+    /* Anchors the FK port (spec 19). */
+    position: relative;
     display: flex;
     align-items: center;
     gap: var(--ddd-space-4);
@@ -2143,6 +2145,41 @@
     pointer-events: none;
     animation: ddd-fade-in var(--ddd-duration-fast) var(--ddd-ease-out);
   }
+
+  /* ----- FK drag (spec 19): column ports, drop target, draft line ----- */
+  .ddd-table__col-port {
+    position: absolute;
+    top: 50%;
+    /* Straddles the table's right border, where FK edges attach. */
+    right: calc(var(--ddd-space-2) * -1);
+    width: var(--ddd-space-4);
+    height: var(--ddd-space-4);
+    transform: translateY(-50%);
+    border: 1px solid var(--ddd-edge);
+    border-radius: var(--ddd-radius-full);
+    background: var(--ddd-surface-raised);
+    cursor: crosshair;
+    opacity: 0;
+    transition: opacity var(--ddd-duration-instant);
+  }
+  .ddd-table__col:hover .ddd-table__col-port,
+  .ddd-table__col-port:focus-visible { opacity: 1; }
+  .ddd-table__col.is-fk-target {
+    background: var(--ddd-surface-selected);
+    box-shadow: inset 0 0 0 1px var(--ddd-accent);
+  }
+  /* The draft line can leave the content bbox the overlay SVG is sized to. */
+  .ddd-edges-overlay { overflow: visible; }
+  .ddd-edges path.ddd-fk-draft {
+    fill: none;
+    stroke: var(--ddd-accent);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+    pointer-events: none;
+  }
+  /* While drawing a FK, edge handles must not hide the column under the pointer from the drop test. */
+  .ddd-is-fk-dragging .ddd-edges-overlay * { pointer-events: none; }
+  .ddd-is-fk-dragging { cursor: crosshair; }
 
   /* Step-view dot rail — clickable per-conflict jump + status mirror. The orb is the small visible
      circle; the <button> around it carries transparent hit padding and the rail gap is 0, so the
