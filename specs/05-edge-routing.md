@@ -138,7 +138,12 @@ segmentos completos.
   se persiste en el sidecar (aditivo, spec 03) en toda salida de A\* / auto-arrange; cualquier
   edición del usuario sobre esa arista (waypoints, flip de lado, reset, color no cuenta) lo borra.
   `hasManualShape` ignora las aristas `auto`, y mover cualquiera de sus extremos descarta su forma
-  `auto` (waypoints y lados) en vez de dejarla apuntando a la geometría vieja. **Implementado** —
+  `auto` (waypoints y lados) en vez de dejarla apuntando a la geometría vieja.
+  **Arrastre de tablas (decisión 2026-10-01):** en un arrastre todas las tablas arrastradas se
+  mueven el mismo delta, así que una arista (ref o Dep, manual o `auto`) con **ambos** extremos en
+  el conjunto arrastrado **traslada** sus waypoints ese delta (la forma se conserva, `auto` se
+  mantiene), en el mismo paso de undo que el movimiento. Solo el auto-arrange, que mueve cada
+  extremo distinto, descarta formas. **Implementado** —
   ver "Marcador `auto`" en §9.
 
 - **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
