@@ -196,7 +196,8 @@ Constantes afinables: `INTRA_NODESEP=32`, `INTRA_RANKSEP=64`, `INTER_NODESEP=96`
 ejecuta `smartLayout`; calcula el conjunto movido; resetea waypoints (+ `dx/dy`) de aristas con ambos
 extremos en el conjunto movido (conservando `color`/sides); aplica posiciones + reseteos; arma un
 `ArrangeCommand` compuesto y lo empuja al historial; agenda persistencia. `selection` con selección
-vacía cae a `all` por el atajo. `new` sin ninguna tabla que colocar es un **no-op** (sin comando y
+vacía es un **no-op con aviso** ("Select tables first"): no mueve tablas ni re-rutea aristas
+(decisión 2026-10-01, F89). `new` sin ninguna tabla que colocar es un **no-op** (sin comando y
 sin re-rutear aristas con A\*).
 
 **Colocación automática de tablas nuevas (`app.tsx`).** Tablas sin posición: si el canvas está

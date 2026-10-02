@@ -228,7 +228,9 @@ Matriz de casos:
 **`dddbml: Reset Layout` (decisión 2026-10-01, F24).** Recalcula todas las posiciones y limpia
 la forma de cada edge (`waypoints`, `sourceSide`/`targetSide`, `dx`/`dy`), porque los waypoints
 absolutos quedarían sueltos al mover las tablas. **Conserva** colores (de tablas, grupos y
-edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados).
+edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados). Es **deshacible** con
+un Ctrl+Z (un solo `ArrangeCommand` con posiciones y formas de aristas previas) y por eso no
+pide confirmación (decisión 2026-10-01).
 Corre en el webview (`layout/resetLayout.ts`): el host sólo valida el gate y postea
 `command:resetLayout`; el webview recalcula con el auto-layout de la primera apertura (dagre),
 limpia la forma de **todas** las aristas, vacía el historial (sin undo: memento futuro, spec 11)
