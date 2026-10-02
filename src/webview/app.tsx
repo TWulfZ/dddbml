@@ -35,6 +35,7 @@ import { GitPanel } from './render/gitPanel';
 import { EdgeOrderProgress } from './render/edgeOrderProgress';
 import { GitBanner, buildDiffTargets, countHiddenChanges } from './render/gitBanner';
 import { DiffGhosts } from './render/diffGhosts';
+import { groupDiffStatuses } from './render/groupDiffStatus';
 import { ErrorBoundary } from './ui/ErrorBoundary';
 import type { QualifiedName, RefDiffStatus, Table, WebviewToHost } from '../shared/types';
 
@@ -466,6 +467,11 @@ export function App(_props: AppProps) {
     () => (diffActive ? countHiddenChanges(diffByTable, derived) : 0),
     [diffActive, diffByTable, derived],
   );
+  // Deliberately not keyed on `derived`/positions: it only changes with the diff or the schema.
+  const groupDiff = useMemo(
+    () => (diffActive ? groupDiffStatuses(schema.groups, diffByTable, diffGhosts, individuallyHidden) : null),
+    [diffActive, schema, diffByTable, diffGhosts, individuallyHidden],
+  );
 
   const { hiddenTables, collapsedTables } = derived;
   const renderedTables = useMemo(
@@ -556,6 +562,7 @@ export function App(_props: AppProps) {
                   w={g.w}
                   h={g.h}
                   color={g.color}
+                  diffStatus={groupDiff?.get(g.name)}
                 />
               );
             })}

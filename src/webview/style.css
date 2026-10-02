@@ -1782,9 +1782,12 @@
     white-space: nowrap;
   }
   /* ----- Diff overlay (spec 16) — table markers, focus/blur, hover card, edges ----- */
-  .ddd-table.is-diff-added { outline: 2px solid var(--ddd-success); outline-offset: 1px; }
-  .ddd-table.is-diff-modified { outline: 2px solid var(--ddd-warning); outline-offset: 1px; }
-  .ddd-table.is-diff-removed { outline: 2px dashed var(--ddd-danger); outline-offset: 1px; }
+  .ddd-table.is-diff-added,
+  .ddd-group-node.is-diff-added { outline: 2px solid var(--ddd-success); outline-offset: 1px; }
+  .ddd-table.is-diff-modified,
+  .ddd-group-node.is-diff-modified { outline: 2px solid var(--ddd-warning); outline-offset: 1px; }
+  .ddd-table.is-diff-removed,
+  .ddd-group-node.is-diff-removed { outline: 2px dashed var(--ddd-danger); outline-offset: 1px; }
   /* Background (non-diff / non-conflict) tables: dimmed + blurred so the changes/conflicts stand out.
      Shared by the diff overlay and the merge resolver (spec 14/16). */
   .ddd-table.is-diff-dimmed {

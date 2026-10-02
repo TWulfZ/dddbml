@@ -140,6 +140,9 @@ mantiene en pantalla el schema de trabajo y **superpone** el diff sin re-render 
   apunta al nodo del grupo (un objetivo por grupo), nunca a su posición cruda.
   El nodo de un grupo colapsado con tablas cambiadas lleva el **mismo borde de diff** que una
   tabla (`added`/`modified`/`removed`; estados mixtos → `modified`) (decisión 2026-10-01).
+  `groupDiffStatuses` agrega los miembros vivos con cambio (sin los ocultos individualmente, como
+  la navegación) y las tablas eliminadas vía el grupo base de su ghost; App lo memoiza por diff y
+  schema (no por frame) y `CollapsedGroupNode` reutiliza las clases `is-diff-*`.
 - **Refs:** añadidas → tinte sobre el edge vivo (mapeo id-estable → key compuesta del edge
   layer); **cambiadas** (`'changed'`: mismo id pero otra cardinalidad, dirección o
   emparejamiento de columnas compuestas; se comparan en orientación canónica, así `a > b` y

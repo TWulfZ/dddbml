@@ -3,6 +3,7 @@ import { store } from '../state/store';
 import { memo } from 'preact/compat';
 import { schedulePersist } from '../persistence';
 import { lodForZoom } from './lod';
+import type { TableDiffStatus } from '../../shared/types';
 
 interface CollapsedGroupNodeProps {
   name: string;
@@ -12,6 +13,7 @@ interface CollapsedGroupNodeProps {
   w: number;
   h: number;
   color: string;
+  diffStatus?: TableDiffStatus;
 }
 
 /** Drop this group's hover label. Unmounting under the cursor (double-click toggle, culling,
@@ -20,7 +22,7 @@ export function clearGroupLabel(name: string): void {
   if (store.getState().tooltip?.title === name) store.getState().setTooltip(null);
 }
 
-function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color }: CollapsedGroupNodeProps) {
+function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color, diffStatus }: CollapsedGroupNodeProps) {
   useEffect(() => () => clearGroupLabel(name), [name]);
   const onDblClick = () => {
     store.getState().setGroup(name, { collapsed: false });
@@ -39,7 +41,7 @@ function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color }: Collaps
   };
   return (
     <div
-      class="ddd-group-node"
+      class={`ddd-group-node${diffStatus ? ` is-diff-${diffStatus}` : ''}`}
       data-group-id={name}
       onDblClick={onDblClick}
       onMouseEnter={onEnter}
