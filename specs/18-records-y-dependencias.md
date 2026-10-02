@@ -59,8 +59,9 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
 - [x] ¿Las `Dep` influyen en el auto-layout / A*? — **Decisión:** no. Sólo render + waypoints
   (2026-10-01).
 - [x] ¿Qué pasa con los waypoints de una dep cuando un arrange o drag mueve ambos extremos? —
-  **Decisión:** igual que las refs: se descartan (color conservado) en el mismo paso de undo
-  (acordado con el usuario, 2026-10-01). Ver §Dependencias — edición.
+  **Decisión:** auto-arrange los descarta (color conservado); un drag los traslada por el delta.
+  Ambos en el mismo paso de undo que el movimiento (acordado con el usuario, 2026-10-01). Ver
+  §Dependencias — edición.
 - [x] ¿`headercolor` del `.dbml`? — **Decisión:** precedencia `sidecar > headercolor > default`.
   `headercolor` se pinta **sin escribir el sidecar**. Si el usuario cambia el color desde la UI en
   una tabla con `headercolor`, se guarda en el sidecar y aparece un **warning** con "Learn more"
@@ -141,8 +142,11 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
   libres, no troncales ortogonales, así que cuando un movimiento desplaza **ambos** extremos quedan
   flotando. `computeDepStrandResets` (`smartLayout/edgeReset.ts`) los descarta conservando el
   color, dentro del **mismo** paso de undo que el movimiento (el `ArrangeCommand` de los resets de
-  refs). Aplica a auto-arrange y arrange de selección (`runner.ts`); el commit de drag de tablas lo
-  cablea `dragController` (spec 19). Si sólo se movió un extremo, los waypoints se conservan.
+  refs). Aplica sólo a auto-arrange y arrange de selección (`runner.ts`). Si sólo se movió un
+  extremo, los waypoints se conservan.
+- **Drag de tablas** (decidido con el usuario, 2026-10-01): el commit del drag **traslada** por el
+  delta del drag los waypoints de toda dep cuyos dos extremos están en el set arrastrado, en el
+  mismo paso de undo; no los descarta (spec 05).
 - "Reset relations" de una selección también endereza las deps que la tocan
   (`computeSelectionDepResets`), igual que el "Reset line" individual.
 - Solo lectura (merge, time travel, diff): insertar, mover y borrar waypoints de una dep son
