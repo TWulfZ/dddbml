@@ -19,8 +19,13 @@ const ROW = '.ddd-table__col[data-col]';
 const TARGET_CLASS = 'is-fk-target';
 const BODY_CLASS = 'ddd-is-fk-dragging';
 
+// Walks the whole hit stack: edge hit paths and handles in the overlay SVG sit above the rows.
 function rowAt(clientX: number, clientY: number): HTMLElement | null {
-  return document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(ROW) ?? null;
+  for (const el of document.elementsFromPoint(clientX, clientY)) {
+    const row = el.closest<HTMLElement>(ROW);
+    if (row) return row;
+  }
+  return null;
 }
 
 /** The live column row under a client point; diff-ghost rows carry no `data-col`. */

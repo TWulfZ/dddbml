@@ -8,7 +8,7 @@ import { commitRefDraft, isFkDragActive, startFkDrag } from './fkDrag';
 import { isGestureActive } from './dragController';
 
 // Node test env: just enough DOM for the gesture — window listeners, a body class list, a draft
-// path, and `elementFromPoint` resolving to a column row of a table node.
+// path, and `elementsFromPoint` returning an edge hit path above a column row of a table node.
 type Listener = (ev: Event) => void;
 const listeners = new Map<string, Listener>();
 vi.stubGlobal('window', {
@@ -20,12 +20,13 @@ let underPointer: { table: string; column: string } | null = null;
 vi.stubGlobal('document', {
   body: { classList: { add: () => undefined, remove: () => undefined } },
   querySelector: () => ({ setAttribute: (k: string, v: string) => draftAttrs.set(k, v) }),
-  elementFromPoint: () => {
-    if (!underPointer) return null;
+  elementsFromPoint: () => {
+    const edgeHit = { closest: () => null };
+    if (!underPointer) return [edgeHit];
     const { table, column } = underPointer;
     const tableEl = { dataset: { id: table } };
     const row = { dataset: { col: column }, classList: { add: () => undefined, remove: () => undefined }, closest: () => tableEl };
-    return { closest: () => row };
+    return [edgeHit, { closest: () => row }];
   },
 });
 vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { cb(0); return 1; });
