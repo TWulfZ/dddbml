@@ -172,7 +172,11 @@ Para cada ref, dado bbox source y target:
 source=left, target=right. **Excepción x-overlap** (decisión 2026-10-01, Limitaciones 5): si los
 extents-x de las dos tablas se solapan (`src.x < tgt.x + tgt.w && tgt.x < src.x + src.w`), la
 arista sale por `bottom` y entra por `top` (o `top`→`bottom` si el centro del target queda arriba),
-así el tramo medio V-H-V corre por el hueco vertical y nunca detrás de las tablas. (Override manual:
+así el tramo medio V-H-V corre por el hueco vertical y nunca detrás de las tablas. Si los bboxes
+además se intersecan (sin hueco limpio en ningún eje) gana el eje de menor penetración: con
+`gapX`/`gapY` = separación entre bordes (negativa si se solapan), vertical sólo si
+`gapX < 0 && gapY > gapX`; dos tablas lado a lado que se pisan unos px siguen en L/R (decisión
+2026-10-02: el V-H-V las cruzaba a ambas de punta a punta). (Override manual:
 ver §4 — un override L/R en **cualquiera** de los dos extremos devuelve el extremo automático a la
 regla horizontal, para no unir un lado L/R con uno vertical mediante un codo que cruce la tabla.)
 
@@ -640,8 +644,9 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
 - Override `sourceSide`/`targetSide` respetado sobre `chooseSides`.
 - **x-overlap (`edgeRouter.xOverlap.test.ts`):** tablas apiladas con extents-x solapados ⇒
   source `bottom` → target `top` (o al revés si el target está arriba), primer/último tramo
-  verticales, ningún segmento dentro del bbox de una tabla; sin solape ⇒ L/R; varias aristas al
-  mismo `top` se reparten por x del extremo lejano; override L/R en ambos extremos respetado; override
+  verticales, ningún segmento dentro del bbox de una tabla; sin solape ⇒ L/R; bboxes que se
+  intersecan ⇒ eje de menor penetración (lado a lado ⇒ L/R, apiladas ⇒ `bottom`/`top`); varias
+  aristas al mismo `top` se reparten por x del extremo lejano (aunque su orden en y sea el opuesto); override L/R en ambos extremos respetado; override
   L/R en un extremo ⇒ el otro queda horizontal sin cruzar tablas; `top`/`bottom` persistidos y
   self-loops sin cambio; `routeMoved` == rebuild completo en drags que cruzan el borde del solape
   (fuzz en una franja-x estrecha que exige > 20 cruces).

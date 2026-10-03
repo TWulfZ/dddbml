@@ -81,6 +81,22 @@ describe('routeRefs — x-overlapping tables use top/bottom ports (spec 05 Limit
     expect(l.target.x).toBeLessThan(r.target.x);
   });
 
+  it('keeps left/right for side-by-side tables whose boxes barely intersect', () => {
+    // 10 px of x-overlap against 50 px of y-overlap: the tables sit side by side, and a
+    // bottom → top route would cross both of them through the overlap.
+    const bboxOf = boxes({ a: { x: 0, y: 0 }, b: { x: W - 10, y: 50 } });
+    const r = routeRefs([ref('a-b', 'a', 'b')], bboxOf, rowY)[0]!;
+    expect(r.source.x).toBe(W);
+    expect(r.target.x).toBe(W - 10);
+  });
+
+  it('keeps bottom/top for stacked tables whose boxes barely intersect', () => {
+    const bboxOf = boxes({ a: { x: 0, y: 0 }, b: { x: 20, y: H - 10 } });
+    const r = routeRefs([ref('a-b', 'a', 'b')], bboxOf, rowY)[0]!;
+    expect(r.source.y).toBe(H);
+    expect(r.target.y).toBe(H - 10);
+  });
+
   it('respects a persisted left/right override on both ends', () => {
     const layout: EdgeLayout = { sourceSide: 'right', targetSide: 'left' };
     const r = routeRefs([ref('a-b', 'a', 'b')], boxes(stacked), rowY, () => layout)[0]!;

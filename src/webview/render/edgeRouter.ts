@@ -842,9 +842,13 @@ function orientationOfSide(side: Side): 'h' | 'v' {
  * Render-path side choice. Tables whose x-extents overlap are stacked: left/right ports would run the
  * trunk behind both tables, so the edge leaves through the vertical gap via bottom → top (or top →
  * bottom when the target sits above), the same top/bottom model A* persists (spec 05 Limitaciones 5).
+ * Boxes that intersect have no clean gap; the axis they penetrate least along is the one they are
+ * side by side on, so a slight overlap of side-by-side tables keeps left/right.
  */
 export function chooseSides(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {
-  if (src.x < tgt.x + tgt.w && tgt.x < src.x + src.w) {
+  const gapX = Math.max(tgt.x - (src.x + src.w), src.x - (tgt.x + tgt.w));
+  const gapY = Math.max(tgt.y - (src.y + src.h), src.y - (tgt.y + tgt.h));
+  if (gapX < 0 && gapY > gapX) {
     return centerOf(tgt).y >= centerOf(src).y
       ? { sourceSide: 'bottom', targetSide: 'top' }
       : { sourceSide: 'top', targetSide: 'bottom' };
