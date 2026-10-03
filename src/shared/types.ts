@@ -164,8 +164,8 @@ export interface EdgeLayout {
   /**
    * Manual override of the auto-chosen source port side. Absent = `chooseSides`.
    * `left`/`right` anchor the port to a column row (`columnYResolver`); `top`/`bottom` use an
-   * x-ratio with no column-row anchor. The always-on render path (`chooseSides`) only ever picks
-   * `left`/`right`; `top`/`bottom` are written by the on-demand A* edge-ordering pass (spec 05 §9).
+   * x-ratio with no column-row anchor. The always-on render path (`chooseSides`) picks `top`/`bottom`
+   * only when the tables' x-extents overlap; the on-demand A* pass (spec 05 §9) persists them otherwise.
    */
   sourceSide?: EdgeSide;
   /** Manual override of the auto-chosen target port side. Absent = `chooseSides`. See `sourceSide`. */
