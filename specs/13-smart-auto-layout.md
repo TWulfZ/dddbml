@@ -203,7 +203,9 @@ vacía es un **no-op con aviso** ("Select tables first"): no mueve tablas ni re-
 `new` no le llega (F19b).
 
 **Colocación automática de tablas nuevas (`app.tsx`).** Tablas sin posición: si el canvas está
-vacío se usa el `autoLayout` plano; si ya hay tablas colocadas, las faltantes se colocan con
+vacío se usa `smartLayout({ mode: 'all' })` (decisión 2026-10-01: el `autoLayout` plano dejaba
+`huge.dbml` en una franja horizontal que ni "Fit" podía encuadrar; ~3.4 s para 5000 tablas, solo en
+la primera apertura sin sidecar); si ya hay tablas colocadas, las faltantes se colocan con
 `smartLayout({ mode: 'new', existing })` (junto a su grupo / vecinos FK, sin solapar), en vez de
 dagre plano que las apilaba en su margen `(32,32)` encima de las existentes. (auditoría F19)
 

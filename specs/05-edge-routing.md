@@ -606,7 +606,11 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
 - **Culling/export.** Caja = tabla ∪ alcance del lado (spec 04); el export rutea con `routeRefs` y
   sus bounds incluyen las esquinas del lazo.
 4. **Sin curvatura** en codos (90° rígidos). v1.1 opcional.
-5. **Retroceso en x-overlap** (target con borde izq dentro del extent-x del source ⇒
+5. ~~**Retroceso en x-overlap**~~ **Decisión 2026-10-01:** en el render path, cuando los extents-x de
+   las dos tablas se solapan, `chooseSides` usa puertos `top`/`bottom` (el mismo modelo híbrido que
+   A\*, §9) en vez de L/R, así la arista va por el hueco vertical entre tablas y no pasa por detrás de
+   ellas ni tapa sus filas. Un override manual L/R del usuario se respeta. Texto original:
+   **Retroceso en x-overlap** (target con borde izq dentro del extent-x del source ⇒
    `chooseSides` invierte el span y la ruta se devuelve, incluso a cero-waypoints):
    régimen degenerado contra-natura (v2). Las geometrías bien separadas (caso normal)
    quedan limpias; el `clamp(newX)` evita que el slide lo agrave.
