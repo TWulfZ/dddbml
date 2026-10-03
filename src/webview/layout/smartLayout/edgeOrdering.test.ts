@@ -262,6 +262,69 @@ describe('computeEdgeOrdering → routeRefs (rendered A* routes)', () => {
   });
 });
 
+describe('computeEdgeOrdering → routeRefs — stacked column with a table in between', () => {
+  const ID = 'public.a(c0)->public.b(c0)';
+  const strictlyInside = (p: { x: number; y: number }, b: Bbox): boolean =>
+    p.x > b.x && p.x < b.x + b.w && p.y > b.y && p.y < b.y + b.h;
+  const crossesInterior = (s: EdgeRoute['segments'][number], b: Bbox): boolean =>
+    s.axis === 'h'
+      ? s.y1 > b.y && s.y1 < b.y + b.h && Math.max(s.x1, s.x2) > b.x && Math.min(s.x1, s.x2) < b.x + b.w
+      : s.x1 > b.x && s.x1 < b.x + b.w && Math.max(s.y1, s.y2) > b.y && Math.min(s.y1, s.y2) < b.y + b.h;
+  /** Two consecutive collinear segments pointing opposite ways (the final-leg spike). */
+  const backtracks = (r: EdgeRoute): boolean =>
+    r.segments.some((s, i) => {
+      const prev = r.segments[i - 1];
+      if (!prev || prev.axis !== s.axis) return false;
+      return s.axis === 'h'
+        ? Math.sign(s.x2 - s.x1) * Math.sign(prev.x2 - prev.x1) < 0
+        : Math.sign(s.y2 - s.y1) * Math.sign(prev.y2 - prev.y1) < 0;
+    });
+
+  // The selfloop.dbml first-open column: a (5 cols) / m / b stacked `gap` apart (16 = smart layout's
+  // gap, narrower than a stub), plus m→a sharing a's bottom port group so the a↔b port sits off-centre.
+  const cols: Record<string, number> = { 'public.a': 5, 'public.m': 3, 'public.b': 3 };
+  const sizeOf = (n: string) => estimateSize(cols[n]!);
+  const column = (gap: number): Map<string, { x: number; y: number }> => {
+    const mY = sizeOf('public.a').height + gap;
+    return new Map([
+      ['public.a', { x: 0, y: 0 }],
+      ['public.m', { x: 0, y: mY }],
+      ['public.b', { x: 0, y: mY + sizeOf('public.m').height + gap }],
+    ]);
+  };
+
+  for (const gap of [16, 80]) {
+    for (const [label, src, tgt] of [['upward', 'public.b', 'public.a'], ['downward', 'public.a', 'public.b']] as const) {
+      it(`${label}, gap ${gap}: no waypoint inside an endpoint, no spike, nothing through the middle table`, async () => {
+        const schema: Schema = {
+          tables: Object.entries(cols).map(([n, c]) => mkTable(n, c)),
+          refs: [mkRef(ID, src, tgt), mkRef('public.m(c0)->public.a(c0)', 'public.m', 'public.a')],
+          groups: [],
+        };
+        const posMap = column(gap);
+        const { resets } = await computeEdgeOrdering({ schema, positions: posMap, existingLayouts: new Map(), preserveManual: false });
+        const layouts = new Map(resets);
+        const bboxOf = (n: string): Bbox | undefined => {
+          const p = posMap.get(n);
+          return p ? { x: p.x, y: p.y, w: sizeOf(n).width, h: sizeOf(n).height } : undefined;
+        };
+        const colY = (_t: string, col: string): number | undefined => columnCenterY(Number(col.slice(1)));
+        const route = routeRefs(schema.refs, bboxOf, colY, (id) => layouts.get(id)).find((r) => r.id === ID)!;
+        const layout = layouts.get(ID)!;
+
+        for (const w of layout.waypoints ?? []) {
+          expect(strictlyInside(w, bboxOf(src)!)).toBe(false);
+          expect(strictlyInside(w, bboxOf(tgt)!)).toBe(false);
+        }
+        expect(backtracks(route)).toBe(false);
+        for (const name of Object.keys(cols)) {
+          expect(route.segments.some((s) => crossesInterior(s, bboxOf(name)!))).toBe(false);
+        }
+      });
+    }
+  }
+});
+
 describe('computeEdgeOrdering — self-loops (spec 05 §Self-loops)', () => {
   it('leaves loops out of A*: no waypoints, sides or auto marker for them', async () => {
     const { schema, positions } = obstacleSchema();

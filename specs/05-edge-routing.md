@@ -437,6 +437,15 @@ top/bottom). Resolución acordada:
   L/R de A\* sobre tablas x-solapadas sí se escribe), y un fallback (`ok:false`) no escribe lados
   provisionales. Los lados persistidos van marcados `auto` (abajo), así que no cuentan como forma
   manual.
+- **Stub vertical sin lugar (decisión 2026-10-02).** El adaptador descarta el par `top`/`bottom`
+  de `chooseSides4` cuando la franja de un stub vertical (todo el lado × `ASTAR_CELL + CLEARANCE`
+  hacia afuera) toca una **tercera** tabla: en una columna apilada por el smart layout (hueco
+  `BASE_MIN_GAP` = 16 < stub) el extremo del stub cae dentro de la tabla vecina y A\* no tiene ruta
+  limpia. En su lugar prueba, en orden, el par L/R enfrentado (sólo si los extents-x no se solapan),
+  una C por la **izquierda** (`left`/`left`; los self-loops van a la derecha por defecto) y una C por
+  la derecha; la primera con ambas franjas libres gana, si ninguna lo está se queda el par vertical.
+  El par elegido difiere de `chooseSides` ⇒ se persiste con `auto`. `provisionalSides` en
+  `smartLayout/edgeOrdering.ts`.
 - **`columnY` ancla sólo en `left`/`right`**; un puerto `top`/`bottom` usa un x-ratio sin ancla de
   fila. Ambas reglas ya estaban gateadas a L/R en `routeRefs` (líneas ~153-162).
 - Sin contradicción: A* **rutea entre los stubs** (decisión 7 se mantiene) — pero el **adaptador**
@@ -458,7 +467,11 @@ top/bottom). Resolución acordada:
    sobre una grilla propia (cell = `ASTAR_CELL = 24` = `MIN_STUB`). Las celdas-obstáculo de las tablas
    se reúnen reusando la **clase** `SpatialIndex` — un índice **desechable** que el adaptador
    reconstruye desde las posiciones **finales** (la instancia de `app.tsx` no es alcanzable desde
-   `runner.ts` y además tendría posiciones viejas durante un arrange). Rutea entre `sourceStub` y
+   `runner.ts` y además tendría posiciones viejas durante un arrange). Las dos tablas **extremo** de
+   la arista también son obstáculo (decisión 2026-10-02; antes se excluían y A\* podía cruzar su
+   propia tabla y llegar al extremo del stub desde el lado-tabla, lo que el render dibujaba como un
+   espolón de vuelta sobre el stub); `carveEndpoint` sigue abriendo la celda del extremo del stub y la
+   siguiente hacia afuera. Rutea entre `sourceStub` y
    `targetStub` de cada arista, penalizando cruces con aristas ya ruteadas (crossing-min incremental
    vía una `WorldUsage` con clave en coords-mundo, independiente de la ventana). Produce bend-points
    → `EdgeLayout.waypoints` (esquinas literales, §3), que el ruteo base ya envuelve con stubs +
@@ -700,9 +713,10 @@ delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`mov
   rutea rodeándola (**ningún segmento intersecta el bbox-obstáculo**); ruta ortogonal con ejes
   **alternados**; bends enteros; **entre `sourceStub`/`targetStub`** (los puertos no son waypoints; los
   stubs conectan con los waypoints por tramos ortogonales ⇒ ancla columnY intacta; `anchorEndpoint`
-  nunca deja el extremo del lado-tabla del stub — lo lleva al extremo del stub junto con su vecino,
-  así no hay espolón de retroceso sobre el stub; e2e `computeEdgeOrdering → routeRefs` sin
-  retrocesos en `smartLayout/edgeOrdering.test.ts`); corredor limpio ⇒ `[]`
+  lleva el extremo al eje del stub, y como las tablas extremo son obstáculo el camino nunca llega al
+  stub desde el lado-tabla — `orderEdges` no cruza su propia tabla en una columna apilada con una
+  tabla en medio, en ambos sentidos; e2e `computeEdgeOrdering → routeRefs` sin retrocesos en
+  `smartLayout/edgeOrdering.test.ts`); corredor limpio ⇒ `[]`
   waypoints; `chooseSides4` elige top/bottom apilado vertical, L/R lado-a-lado, y rutea un edge
   top/bottom rodeando un obstáculo lateral; **fallback** a `[]` (sin throw) al exceder `MAX_EXPLORED`;
   batch **determinista** (dos corridas byte-iguales; independiente del orden del array de entrada para
@@ -711,12 +725,16 @@ delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`mov
   termina.
 - **Perf (`edgeOrder/astar.perf.test.ts`):** grilla densa ~5000 tablas/~1000 refs **< 3000ms** con
   yield + cap; cap bajo ⇒ algunos fallbacks `[]` (degradación) y sigue < 3s; **ningún segmento de una
-  arista ruteada intersecta un obstáculo, a escala** (muestreo); determinista a escala.
+  arista ruteada intersecta un obstáculo ni sus tablas extremo, a escala** (muestreo); determinista a
+  escala. Hueco de la grilla = 64: un corredor necesita `2 × CLEARANCE` más un centro de celda; con
+  48 no quedaba ninguno y los únicos "desvíos" cruzaban su propia tabla.
 - **Runner / undo (`smartLayout/edgeOrdering.test.ts`):** `runEdgeOrdering` empuja **exactamente un**
   `ArrangeCommand` (posiciones vacías, `edgesTo` con waypoints SET); un Ctrl+Z restaura los
   `EdgeLayout` previos (color preservado), redo re-aplica; `preserveManual:true` deja la arista manual
   idéntica (la auto se re-rutea), `false` la re-rutea; no-op sin aristas; `computeEdgeOrdering`
-  determinista.
+  determinista. **Columna apilada con una tabla en medio** (geometría de `selfloop.dbml` al abrir,
+  huecos 16 y 80, ambos sentidos): ningún waypoint dentro de una tabla extremo, sin espolón de
+  retroceso y ningún tramo cruza el interior de ninguna de las tres tablas.
 - **Tipos/store (`store.edgeSide.test.ts`):** `setEdgeSide` acepta `top`/`bottom` y `null`;
   `EdgeStyleCommand` con `top` round-trip por undo/redo.
 - **Serializador (`layoutStore.waypoints.test.ts`):** `sourceSide`/`targetSide` `top`/`bottom`

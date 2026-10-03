@@ -169,6 +169,45 @@ describe('routeOneEdge — fallback', () => {
   });
 });
 
+describe('orderEdges — endpoint tables are obstacles', () => {
+  // Stacked a / m / b, 16 apart: a's bottom stub end lies inside m, so the only cells that reach it
+  // run through a itself — which used to end in a spur back over the stub.
+  const a = bbox(0, 0, 240, 140);
+  const m = bbox(0, 156, 240, 100);
+  const b = bbox(0, 272, 240, 100);
+  const up = mkEdge({
+    sourceStub: { x: 120, y: 248 },
+    targetStub: { x: 80, y: 164 },
+    sourceTable: b,
+    targetTable: a,
+    sourceTableName: 'public.b',
+    targetTableName: 'public.a',
+    sourceSide: 'top',
+    targetSide: 'bottom',
+  });
+  const down = mkEdge({
+    sourceStub: up.targetStub,
+    targetStub: up.sourceStub,
+    sourceTable: a,
+    targetTable: b,
+    sourceTableName: 'public.a',
+    targetTableName: 'public.b',
+    sourceSide: 'bottom',
+    targetSide: 'top',
+  });
+
+  for (const ep of [up, down]) {
+    it(`never cuts through its own table (${ep.sourceSide} → ${ep.targetSide})`, async () => {
+      const [r] = await orderEdges([ep], { obstaclesFor: () => [m] });
+      const cs = corners(r!, ep);
+      for (let i = 1; i < cs.length; i++) {
+        expect(segIntersects(cs[i - 1]!, cs[i]!, a)).toBe(false);
+        expect(segIntersects(cs[i - 1]!, cs[i]!, b)).toBe(false);
+      }
+    });
+  }
+});
+
 describe('orderEdges — batch determinism, crossing, progress, abort', () => {
   const noObstacles = () => [];
 

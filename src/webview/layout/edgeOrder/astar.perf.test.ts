@@ -38,7 +38,9 @@ function buildInputs(schema: Schema): {
   const colCount = new Map<QualifiedName, number>();
   for (const t of schema.tables) colCount.set(t.name, t.columns.length);
 
-  const GAP = 48; // tight: leaves a routable corridor but forces detours around neighbours
+  // Tight but routable: a corridor needs 2×CLEARANCE plus one ASTAR_CELL centre, so 48 left none and
+  // its only "detours" cut through their own endpoint tables.
+  const GAP = 64;
   const cols = Math.ceil(Math.sqrt(schema.tables.length));
   const rowH = hOf(8) + GAP; // uniform row pitch (deterministic)
   const positions = new Map<QualifiedName, { x: number; y: number }>();
@@ -131,7 +133,7 @@ describe('A* edge router — perf budget (huge.dbml)', () => {
     expect(dt).toBeLessThan(3000);
   });
 
-  it('no routed (non-fallback) segment intersects an obstacle bbox — at scale', async () => {
+  it('no routed (non-fallback) segment intersects an obstacle or endpoint bbox — at scale', async () => {
     const routed = await orderEdges(edges, { obstaclesFor: obstaclesFor(index) });
     const byId = new Map(edges.map((e) => [e.refId, e]));
     let checked = 0;
@@ -143,7 +145,7 @@ describe('A* edge router — perf budget (huge.dbml)', () => {
         { x: Math.min(ep.sourceTable.x, ep.targetTable.x) - GRID_MARGIN, y: Math.min(ep.sourceTable.y, ep.targetTable.y) - GRID_MARGIN, w: 4000, h: 4000 },
         ep.sourceTableName,
         ep.targetTableName,
-      );
+      ).concat(ep.sourceTable, ep.targetTable);
       for (let i = 1; i < corners.length; i++) {
         for (const o of obstacles) {
           if (segIntersects(corners[i - 1]!, corners[i]!, o)) {

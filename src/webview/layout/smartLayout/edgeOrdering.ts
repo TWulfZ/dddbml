@@ -3,7 +3,7 @@ import type { Bbox } from '../../render/spatialIndex';
 import { SpatialIndex } from '../../render/spatialIndex';
 import { chooseSides, routeRefs, type ColumnYResolver } from '../../render/edgeRouter';
 import { columnCenterY, estimateSize } from '../autoLayout';
-import { chooseSides4, orderEdges, type OrderEdgeInput, type RoutedEdge } from '../edgeOrder';
+import { ASTAR_CELL, CLEARANCE, chooseSides4, orderEdges, type OrderEdgeInput, type RoutedEdge } from '../edgeOrder';
 import { isSelfRef } from '../../render/edgeKey';
 import { hasManualShape } from './edgeReset';
 
@@ -51,6 +51,43 @@ function columnYResolverFor(schema: Schema): ColumnYResolver {
   };
 }
 
+type SidePair = { sourceSide: EdgeSide; targetSide: EdgeSide };
+
+/** Rigid stub (MIN_STUB = ASTAR_CELL) plus the clearance A* needs to turn off the stub end. */
+const STUB_REACH = ASTAR_CELL + CLEARANCE;
+
+/** The strip a stub on `side` and A*'s first turn off its end occupy, over the whole side. */
+function stubBand(b: Bbox, side: EdgeSide): Bbox {
+  switch (side) {
+    case 'left': return { x: b.x - STUB_REACH, y: b.y, w: STUB_REACH, h: b.h };
+    case 'right': return { x: b.x + b.w, y: b.y, w: STUB_REACH, h: b.h };
+    case 'top': return { x: b.x, y: b.y - STUB_REACH, w: b.w, h: STUB_REACH };
+    case 'bottom': return { x: b.x, y: b.y + b.h, w: b.w, h: STUB_REACH };
+  }
+}
+
+const isVertical = (side: EdgeSide): boolean => side === 'top' || side === 'bottom';
+
+/**
+ * `chooseSides4`, unless a vertical stub would land in a third table: a stacked column sits
+ * BASE_MIN_GAP (16) apart, less than one stub, so an edge skipping over a middle table has no clean
+ * top/bottom route and A* could only reach that stub end through a table. It then goes round the
+ * column from a horizontal side pair: the facing pair when the tables do not x-overlap, else a C on
+ * the left first, because self-loops default to the right side (spec 05 §Self-loops).
+ */
+function provisionalSides(sb: Bbox, tb: Bbox, bandBlocked: (band: Bbox) => boolean): SidePair {
+  const four = chooseSides4(sb, tb);
+  const clear = (p: SidePair): boolean => !bandBlocked(stubBand(sb, p.sourceSide)) && !bandBlocked(stubBand(tb, p.targetSide));
+  if (!isVertical(four.sourceSide) || clear(four)) return four;
+  const facing = chooseSides(sb, tb);
+  const candidates: SidePair[] = [
+    ...(isVertical(facing.sourceSide) ? [] : [facing]),
+    { sourceSide: 'left', targetSide: 'left' },
+    { sourceSide: 'right', targetSide: 'right' },
+  ];
+  return candidates.find(clear) ?? four;
+}
+
 /**
  * Compute the A* edge-ordering result for a fixed set of table positions. The engine routes between
  * the stubs of a `routeRefs` pass; per the resolved hybrid side model the adapter pre-assigns
@@ -83,11 +120,17 @@ export async function computeEdgeOrdering(input: EdgeOrderingInput): Promise<Edg
 
   // Provisional 4-side assignment feeds a routeRefs pass so the stubs A* routes between are the
   // spread ports that will persist. Layout resolver returns the provisional side for these refs.
-  const provisionalSide = new Map<string, { sourceSide: EdgeSide; targetSide: EdgeSide }>();
+  const provisionalSide = new Map<string, SidePair>();
   for (const r of refs) {
     const sb = bboxes.get(r.source.table)!;
     const tb = bboxes.get(r.target.table)!;
-    provisionalSide.set(r.id, chooseSides4(sb, tb));
+    const bandBlocked = (band: Bbox): boolean =>
+      [...index.query(band)].some((name) => {
+        if (name === r.source.table || name === r.target.table) return false;
+        const o = index.getBbox(name);
+        return !!o && o.x < band.x + band.w && o.x + o.w > band.x && o.y < band.y + band.h && o.y + o.h > band.y;
+      });
+    provisionalSide.set(r.id, provisionalSides(sb, tb, bandBlocked));
   }
   const layoutResolver = (id: string): EdgeLayout | undefined => {
     const prov = provisionalSide.get(id);

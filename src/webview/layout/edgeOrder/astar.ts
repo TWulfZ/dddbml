@@ -375,7 +375,10 @@ export async function orderEdges(
     if (opts.signal?.aborted) throw new DOMException('Edge ordering aborted', 'AbortError');
     const ep = edges[i]!;
     const win = inflate(union(ep.sourceTable, ep.targetTable), GRID_MARGIN);
-    const obstacles = opts.obstaclesFor(win, ep.sourceTableName, ep.targetTableName);
+    // The endpoint tables block too: left walkable, the search could cut through its own table and
+    // reach a stub end from the table side, which renders as a spur doubling back over the stub.
+    // `carveEndpoint` still opens each stub end and the cell beyond it.
+    const obstacles = [...opts.obstaclesFor(win, ep.sourceTableName, ep.targetTableName), ep.sourceTable, ep.targetTable];
     const grid = buildRouteGrid(win, obstacles, maxGridCells);
 
     let routed: RoutedEdge;
