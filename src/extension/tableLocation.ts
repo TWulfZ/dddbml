@@ -1,6 +1,6 @@
 import type { QualifiedName } from '../shared/types';
 import { findField, findTable, parseModel, tableName } from './dbmlModel';
-import { isName, isPunct, lex, nameOf } from './dbmlScan';
+import { isName, isPunct, lex, nameOf, type LexToken } from './dbmlScan';
 
 /**
  * 0-based line of the `Table` declaration for a qualified name ("schema.table"), or null.
@@ -24,21 +24,21 @@ export function findColumnLocation(source: string, table: QualifiedName, column:
   return field ? { line: field.token.start.line - 1, character: field.token.start.column - 1 } : null;
 }
 
-export interface TableNameRange {
+export interface TableDeclarationRange {
   table: QualifiedName;
-  /** Offsets of the declared name (`schema.table` included), for a document link. */
+  /** Offsets from the `Table` keyword through the body's closing `}` — the whole block is the Ctrl+click target. */
   start: number;
   end: number;
 }
 
 /**
- * Every top-level `Table` declaration's name. A lexer scan rather than a parse: links are asked for
+ * Every top-level `Table` declaration. A lexer scan rather than a parse: links are asked for
  * on each edit pause, must work while the buffer is broken, and a full parse of a 5000-table file
  * would hold the shared worker queue for ~2 s.
  */
-export function findTableNameRanges(source: string): TableNameRange[] {
+export function findTableDeclarationRanges(source: string): TableDeclarationRange[] {
   const tokens = lex(source).filter((t) => t.kind !== 'comment');
-  const out: TableNameRange[] = [];
+  const out: TableDeclarationRange[] = [];
   let depth = 0;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i]!;
@@ -49,19 +49,47 @@ export function findTableNameRanges(source: string): TableNameRange[] {
     if (!isName(first)) continue;
     const dot = tokens[i + 2];
     const second = tokens[i + 3];
-    if (isPunct(source, dot, '.') && isName(second)) {
-      out.push({ table: qualify(nameOf(source, first), nameOf(source, second)), start: first.start, end: second.end });
-      i += 3;
+    const qualified = isPunct(source, dot, '.') && isName(second);
+    const nameEnd = qualified ? i + 3 : i + 1;
+    const table = qualified ? qualify(nameOf(source, first), nameOf(source, second)) : qualify(null, nameOf(source, first));
+    const close = bodyClose(source, tokens, bodyOpen(source, tokens, nameEnd + 1));
+    if (close >= 0) {
+      out.push({ table, start: t.start, end: tokens[close]!.end });
+      i = close;
     } else {
-      out.push({ table: qualify(null, nameOf(source, first)), start: first.start, end: first.end });
-      i += 1;
+      // Unterminated body: link the header only and let the depth count swallow what follows, so a
+      // broken table never claims the declarations written after it.
+      out.push({ table, start: t.start, end: tokens[nameEnd]!.end });
+      i = nameEnd;
     }
   }
   return out;
 }
 
+/** Index of the `{` opening a body at token `j`, past an optional `as alias` and `[settings]`; -1 if the header has none. */
+function bodyOpen(source: string, tokens: LexToken[], j: number): number {
+  const alias = tokens[j];
+  if (alias?.kind === 'ident' && source.slice(alias.start, alias.end).toLowerCase() === 'as' && isName(tokens[j + 1])) j += 2;
+  if (isPunct(source, tokens[j], '[')) {
+    while (j < tokens.length && !isPunct(source, tokens[j], ']')) j++;
+    j++;
+  }
+  return isPunct(source, tokens[j], '{') ? j : -1;
+}
+
+/** Index of the `}` matching the `{` at `open`; -1 when `open` is -1 or the body never closes. */
+function bodyClose(source: string, tokens: LexToken[], open: number): number {
+  if (open < 0) return -1;
+  let depth = 0;
+  for (let k = open; k < tokens.length; k++) {
+    if (isPunct(source, tokens[k], '{')) depth++;
+    else if (isPunct(source, tokens[k], '}') && --depth === 0) return k;
+  }
+  return -1;
+}
+
 function scanForTable(source: string, qualifiedName: string): number | null {
-  const hit = findTableNameRanges(source).find((r) => r.table === qualifiedName);
+  const hit = findTableDeclarationRanges(source).find((r) => r.table === qualifiedName);
   return hit ? source.slice(0, hit.start).split('\n').length - 1 : null;
 }
 

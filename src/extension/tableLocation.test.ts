@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findColumnLocation, findTableLine, findTableNameRanges } from './tableLocation';
+import { findColumnLocation, findTableLine, findTableDeclarationRanges } from './tableLocation';
 
 describe('findTableLine — unparseable buffer fallback', () => {
   const broken = `Table "auth"."users" {\n  id int\n}\n\nTable usuários [headercolor: #fff] {\n  id int\n\nTable orphan {\n`;
@@ -22,13 +22,26 @@ describe('findColumnLocation', () => {
   });
 });
 
-describe('findTableNameRanges', () => {
+describe('findTableDeclarationRanges', () => {
   it('finds top-level declarations only, skipping comments, strings and a column named "table"', () => {
     const src = `// Table ghost {\nTable "auth"."users" as U {\n  table varchar [note: 'Table fake {']\n}\n/* Table hidden { */\ntable orgs {\n  id int\n}\n`;
-    const ranges = findTableNameRanges(src);
+    const ranges = findTableDeclarationRanges(src);
     expect(ranges.map((r) => [r.table, src.slice(r.start, r.end)])).toEqual([
-      ['auth.users', '"auth"."users"'],
-      ['public.orgs', 'orgs'],
+      ['auth.users', `Table "auth"."users" as U {\n  table varchar [note: 'Table fake {']\n}`],
+      ['public.orgs', 'table orgs {\n  id int\n}'],
     ]);
+  });
+
+  it('spans the whole block through settings, nested blocks and braces inside strings', () => {
+    const src = `Table a [headercolor: #fff, note: '}'] {\n  id int\n  indexes {\n    id [pk]\n  }\n  Note: '{'\n}\nRef: a.id > a.id\n`;
+    const [range] = findTableDeclarationRanges(src);
+    expect(src.slice(range!.start, range!.end)).toBe(src.slice(0, src.indexOf('\nRef')));
+  });
+
+  it('falls back to the header when the body never closes, without claiming later tables', () => {
+    const src = `Table a {\n  id int\n\nTable b {\n  id int\n}\nTable c\nEnum e {\n  x\n}\n`;
+    expect(findTableDeclarationRanges(src).map((r) => [r.table, src.slice(r.start, r.end)])).toEqual([['public.a', 'Table a']]);
+    const headerOnly = `Table c\nEnum e {\n  x\n}\n`;
+    expect(findTableDeclarationRanges(headerOnly).map((r) => headerOnly.slice(r.start, r.end))).toEqual(['Table c']);
   });
 });

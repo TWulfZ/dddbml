@@ -105,7 +105,7 @@ export function deactivate(): Promise<void> {
 
 const REVEAL_IN_DIAGRAM = 'dddbml.revealInDiagram';
 
-/** Code → diagram (spec 19): Ctrl+click on a `Table` declaration's name focuses it in the diagram. */
+/** Code → diagram (spec 19): Ctrl+click anywhere in a `Table` block focuses it in the diagram. */
 async function tableLinks(doc: vscode.TextDocument): Promise<vscode.DocumentLink[]> {
   if (!isWorkingDbml(doc.uri)) return [];
   // Positions come from the worker: the host never parses DBML (spec 18).

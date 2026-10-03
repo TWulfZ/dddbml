@@ -24,7 +24,11 @@ tiene que ser explícita.
   + guardar; nunca regenerar el archivo. (2026-10-01.)
 - [x] **Navegación código → diagrama.** — **Decisión:** Ctrl+click sobre el nombre en la
   declaración `Table` enfoca la tabla en el diagrama, como dbdiagram.io. Sin seguimiento del
-  cursor (más estado y más frágil). (2026-10-01.)
+  cursor (más estado y más frágil). (2026-10-01.) **Enmienda 2026-10-03:** el blanco es todo el
+  bloque `Table … { … }`, no solo el nombre. Coste aceptado por el owner: el tooltip del link
+  aparece al pasar el mouse sobre cualquier línea de la tabla. Pedido descartado por imposible:
+  resaltar el fondo del bloque con Ctrl en vez de subrayar — VS Code pinta el estado activo de un
+  link (subrayado + `editorLink.activeForeground`) y la API no expone ni la tecla Ctrl ni el mouse.
 - [x] **Creación de FK.** — **Decisión:** arrastrar desde el puerto de un campo hasta un campo de
   otra tabla; al soltar se elige la cardinalidad; se escribe inline `[ref: > tabla.campo]`. (2026-10-01.)
 - [x] **Alcance v1.** — **Decisión:** navegación código↔diagrama (incluye doble click en campo →
@@ -83,8 +87,9 @@ con el motivo, nunca se aplica.
 
 ### Navegación
 
-- **Código → diagrama:** `DocumentLinkProvider` para `.dbml` que marca el nombre de cada
-  declaración `Table` con un link `command:dddbml.revealInDiagram?<qualifiedName>` (tooltip
+- **Código → diagrama:** `DocumentLinkProvider` para `.dbml` que marca **el bloque completo** de
+  cada declaración `Table` (de la palabra `Table` a su `}` de cierre, para que el blanco de
+  Ctrl+click sea toda la tabla y no solo el nombre) con un link `command:dddbml.revealInDiagram?<qualifiedName>` (tooltip
   "Show in diagram"). Ctrl+click abre el panel si no está abierto, centra la cámara en la tabla
   (`fitToBbox`) y la selecciona. Una tabla oculta o dentro de un grupo colapsado enfoca su grupo.
 - **Diagrama → código:** doble click en una tabla abre su línea (ya existe); doble click en un
@@ -93,7 +98,8 @@ con el motivo, nunca se aplica.
 - Detalle del link: los argumentos del comando son `[uri del documento, nombre calificado]`
   (JSON en la query del `command:` URI), así el comando abre el panel de **ese** archivo. Los
   rangos salen del worker (op `tableLinks`) con un **escaneo léxico** (comentarios y strings
-  excluidos, solo declaraciones de nivel superior) en vez de un parse: VS Code pide links en cada
+  excluidos, solo declaraciones de nivel superior; un cuerpo sin cerrar degrada el link a la
+  cabecera para no reclamar las declaraciones siguientes) en vez de un parse: VS Code pide links en cada
   pausa de tipeo, deben funcionar con el buffer roto, y un parse de 5000 tablas ocuparía la cola
   del worker ~2 s. El foco espera a que el webview esté hidratado (`whenHydrated`).
 

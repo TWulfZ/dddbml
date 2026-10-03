@@ -59,15 +59,15 @@ describe('dddbml.autoArrange', () => {
 });
 
 describe('code → diagram links (spec 19)', () => {
-  it('links each Table declaration name to dddbml.revealInDiagram', async () => {
+  it('links each whole Table declaration to dddbml.revealInDiagram', async () => {
     writeFileSync(join(dir, 'c.dbml'), '// Table ghost\nTable "auth"."users" {\n  id int\n}\n');
     const doc = await fake.document(Uri.file(join(dir, 'c.dbml')));
     expect(fake.linkProviders).toHaveLength(1);
     const links = await fake.linkProviders[0]!.provider.provideDocumentLinks(doc);
     expect(links).toHaveLength(1);
     const link = links[0]!;
-    expect(link.range.start).toMatchObject({ line: 1, character: 6 });
-    expect(link.range.end).toMatchObject({ line: 1, character: 20 });
+    expect(link.range.start).toMatchObject({ line: 1, character: 0 });
+    expect(link.range.end).toMatchObject({ line: 3, character: 1 });
     expect(link.tooltip).toBe('Show in diagram');
     expect(link.target?.scheme).toBe('command');
     expect(link.target?.path).toBe('dddbml.revealInDiagram');

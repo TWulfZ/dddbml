@@ -1,7 +1,7 @@
 import type { QualifiedName } from '../shared/types';
 import type { parseDbml } from './parser';
 import type { SchemaEditIntent, SchemaEditResult } from './schemaEdits';
-import type { TableNameRange } from './tableLocation';
+import type { TableDeclarationRange } from './tableLocation';
 
 export type ParseResult = ReturnType<typeof parseDbml>;
 
@@ -15,7 +15,7 @@ export interface ParseOps {
   locate: { request: { source: string; table: QualifiedName }; result: number | null };
   /** 0-based position of a column's name. */
   locateColumn: { request: { source: string; table: QualifiedName; column: string }; result: { line: number; character: number } | null };
-  tableLinks: { request: { source: string }; result: TableNameRange[] };
+  tableLinks: { request: { source: string }; result: TableDeclarationRange[] };
   schemaEdit: { request: { source: string; intent: SchemaEditIntent }; result: SchemaEditResult };
 }
 export type ParseOp = keyof ParseOps;
