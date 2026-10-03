@@ -144,6 +144,15 @@ describe('computeEdgeOrdering — sides persist only when they carry information
     expect(second.resets.some(([id]) => id === ID)).toBe(true);
   });
 
+  it('left/right on x-overlapping tables differs from the render default, so it persists', async () => {
+    const diagonal: Array<[string, { x: number; y: number }]> = [['public.a', { x: 0, y: 0 }], ['public.b', { x: 200, y: 150 }]];
+    const { resets } = await order(diagonal);
+    const layout = resets.find(([id]) => id === ID)![1];
+    expect(layout.sourceSide).toBe('right');
+    expect(layout.targetSide).toBe('left');
+    expect(layout.auto).toBe(true);
+  });
+
   it('a fallback (no route found) persists no provisional sides', async () => {
     // Stacked so far apart that the routing window exceeds MAX_GRID_CELLS ⇒ ok:false.
     const far: Array<[string, { x: number; y: number }]> = [['public.a', { x: 0, y: 0 }], ['public.b', { x: 9000, y: 30000 }]];
@@ -168,7 +177,9 @@ describe('computeEdgeOrdering — A* output is marked auto (F20)', () => {
     ]);
     const first = await computeEdgeOrdering({ schema, positions, existingLayouts: new Map(), preserveManual: true });
     const layout = first.resets.find(([id]) => id === ID)![1];
-    expect(layout.sourceSide).toBe('bottom');
+    // Stacked tables: bottom/top is already the render default, so only the detour persists.
+    expect(layout.waypoints?.length).toBeGreaterThan(0);
+    expect(layout.sourceSide).toBeUndefined();
     expect(layout.auto).toBe(true);
 
     const second = await computeEdgeOrdering({ schema, positions, existingLayouts: new Map(first.resets), preserveManual: true });

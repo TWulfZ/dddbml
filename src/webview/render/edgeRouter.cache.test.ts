@@ -57,9 +57,9 @@ describe('EdgeRouteCache — incremental drag re-route', () => {
   it('re-spreads a sibling stub when the dragged far end reorders a shared port side', () => {
     const cache = new EdgeRouteCache();
     const before = cache.routeAll(refs, boxes(start));
-    // `a` slides past `b` along x: the (u, left) group re-sorts and `b-u` swaps its port slot
+    // `a` slides below `b`: the (u, left) group re-sorts by y and `b-u` swaps its port slot
     // although neither `b` nor `u` moved.
-    const pos = { ...start, a: { x: 400, y: 0 } };
+    const pos = { ...start, a: { x: 0, y: 400 } };
     const after = cache.routeMoved(['a'], boxes(pos));
     expect(after).toEqual(routeRefs(refs, boxes(pos)));
     expect(byId(after, 'b-u').target).not.toEqual(byId(before, 'b-u').target);

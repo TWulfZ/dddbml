@@ -94,7 +94,7 @@ interface SideDecision {
 interface PortEntry {
   edgeIdx: number;
   role: 'source' | 'target';
-  /** Coordinate of the far end's centre the group is sorted by. */
+  /** Far end's centre along the side's run (x on top/bottom, y on left/right): the group's sort key. */
   otherCenter: number;
   refId: string;
 }
@@ -110,7 +110,10 @@ function decideSides(r: Ref, bboxOf: (name: QualifiedName) => Bbox | undefined, 
     const side = loopSide(layout);
     return { ref: r, srcBbox, tgtBbox, sourceSide: side, targetSide: side };
   }
-  const auto = chooseSides(srcBbox, tgtBbox);
+  // A user-pinned left/right end keeps the other end horizontal too: a vertical auto end would
+  // join it with an L elbow running back across the overlapping table.
+  const pinnedHorizontal = isHorizontalSide(layout?.sourceSide) || isHorizontalSide(layout?.targetSide);
+  const auto = pinnedHorizontal ? chooseHorizontalSides(srcBbox, tgtBbox) : chooseSides(srcBbox, tgtBbox);
   return {
     ref: r,
     srcBbox,
@@ -368,13 +371,13 @@ export class EdgeRouteCache {
     this.pushPort(srcKey, {
       edgeIdx,
       role: 'source',
-      otherCenter: orientationOfSide(d.sourceSide) === 'v' ? tgtCenter.y : tgtCenter.x,
+      otherCenter: orientationOfSide(d.sourceSide) === 'v' ? tgtCenter.x : tgtCenter.y,
       refId: d.ref.id,
     });
     this.pushPort(tgtKey, {
       edgeIdx,
       role: 'target',
-      otherCenter: orientationOfSide(d.targetSide) === 'v' ? srcCenter.y : srcCenter.x,
+      otherCenter: orientationOfSide(d.targetSide) === 'v' ? srcCenter.x : srcCenter.y,
       refId: d.ref.id,
     });
     touched?.add(srcKey);
@@ -835,16 +838,33 @@ function orientationOfSide(side: Side): 'h' | 'v' {
   return side === 'left' || side === 'right' ? 'h' : 'v';
 }
 
+/**
+ * Render-path side choice. Tables whose x-extents overlap are stacked: left/right ports would run the
+ * trunk behind both tables, so the edge leaves through the vertical gap via bottom → top (or top →
+ * bottom when the target sits above), the same top/bottom model A* persists (spec 05 Limitaciones 5).
+ * Boxes that intersect have no clean gap; the axis they penetrate least along is the one they are
+ * side by side on, so a slight overlap of side-by-side tables keeps left/right.
+ */
 export function chooseSides(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {
-  // Always exit/enter horizontally. Column-aligned ports only make sense horizontally,
-  // so forcing left/right for every edge keeps routing predictable and aligned with column rows.
-  const srcC = centerOf(src);
-  const tgtC = centerOf(tgt);
-  const dx = tgtC.x - srcC.x;
+  const gapX = Math.max(tgt.x - (src.x + src.w), src.x - (tgt.x + tgt.w));
+  const gapY = Math.max(tgt.y - (src.y + src.h), src.y - (tgt.y + tgt.h));
+  if (gapX < 0 && gapY > gapX) {
+    return centerOf(tgt).y >= centerOf(src).y
+      ? { sourceSide: 'bottom', targetSide: 'top' }
+      : { sourceSide: 'top', targetSide: 'bottom' };
+  }
+  return chooseHorizontalSides(src, tgt);
+}
+
+/** Left/right by centre order: the only sides that anchor a port to its column row. */
+function chooseHorizontalSides(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {
+  const dx = centerOf(tgt).x - centerOf(src).x;
   return dx >= 0
     ? { sourceSide: 'right', targetSide: 'left' }
     : { sourceSide: 'left', targetSide: 'right' };
 }
+
+const isHorizontalSide = (side: Side | undefined): boolean => side === 'left' || side === 'right';
 
 function centerOf(b: Bbox): { x: number; y: number } {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 };

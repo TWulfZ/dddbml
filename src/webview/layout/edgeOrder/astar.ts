@@ -68,8 +68,8 @@ export interface OrderEdgesOptions {
 /**
  * 4-side port selection for the on-demand pass (resolved decision 1). When the tables are stacked
  * more vertically than horizontally (`|dy| > |dx|`) the edge exits top/bottom; otherwise left/right
- * (matching the render path's L/R `chooseSides`). The adapter assigns these provisional sides to ALL
- * edges BEFORE its routeRefs pass, so the resulting spread stubs are the ones A* routes between and
+ * (the render path's `chooseSides` goes top/bottom only on x-overlap). The adapter assigns these
+ * provisional sides to ALL edges BEFORE its routeRefs pass, so the resulting spread stubs are the ones A* routes between and
  * the ones that persist — no first-render kink (critic G5). Pure + deterministic (centre geometry).
  */
 export function chooseSides4(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {

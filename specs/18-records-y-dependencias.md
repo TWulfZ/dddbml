@@ -107,7 +107,8 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
   `Layout.edges` con las refs sin colisionar y pasa `isEdgeKey` porque contiene `::`.
 - Endpoints ocultos o colapsados se remapean con el mismo `mapEndpoint` que las refs.
 - Geometría (`render/depRouter.ts`, puro):
-  - Lados izquierda/derecha según los centros (misma regla que `chooseSides`).
+  - Lados izquierda/derecha según los centros (la regla horizontal de `chooseSides`, sin su
+    excepción x-overlap de spec 05).
   - Puerto Y: centro de la primera columna si la dep es a nivel columna; centro del header si es
     a nivel tabla.
   - Stubs horizontales rígidos de 24 px (= `MIN_STUB` de las refs), recortados a la mitad del gap

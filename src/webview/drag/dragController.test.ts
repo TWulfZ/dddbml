@@ -415,3 +415,23 @@ describe('self-loop side flip (spec 05 §Self-loops)', () => {
     expect(store.getState().edgeLayouts.has(loop)).toBe(false);
   });
 });
+
+describe('endpoint port flip', () => {
+  const k = edgeKey('a', ['id'], 'b', ['id']);
+
+  it('a click that jitters a pixel on an auto bottom port pins no side', () => {
+    // An x-overlap bottom port sits near the table's centre x, so any 1 px jitter lands on one half.
+    startEndpointDrag(k, 'source', 100, ptr(100, 0), fakeNode(), (x) => x);
+    move(101, 1);
+    up(101, 1);
+    expect(store.getState().edgeLayouts.has(k)).toBe(false);
+    expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('a real drag still pins the side under the pointer', () => {
+    startEndpointDrag(k, 'source', 100, ptr(100, 0), fakeNode(), (x) => x);
+    move(60, 0);
+    up(60, 0);
+    expect(store.getState().edgeLayouts.get(k)).toEqual({ sourceSide: 'left' });
+  });
+});

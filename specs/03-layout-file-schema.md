@@ -234,12 +234,19 @@ edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados). Es 
 un Ctrl+Z (un solo `ArrangeCommand` con posiciones y formas de aristas previas) y por eso no
 pide confirmación (decisión 2026-10-01).
 Corre en el webview (`layout/resetLayout.ts`): el host sólo valida el gate y postea
-`command:resetLayout`; el webview recalcula con el auto-layout de la primera apertura (dagre),
+`command:resetLayout`; el webview recalcula con `autoLayout` (dagre plano — el que usaba la primera
+apertura hasta la decisión 2026-10-01 de spec 13; ver pregunta abierta abajo),
 limpia la forma de **todas** las aristas, empuja un `ArrangeCommand` (label `Reset layout`, con las
 posiciones y los `EdgeLayout` previos; el historial anterior se conserva debajo) y persiste por el
 `layout:persist` normal. Las entradas huérfanas (tabla fuera del schema)
 conservan posición y color: limpiarlas es trabajo de `Prune orphans`. Antes el host escribía
 `tables: {}`, que borraba colores y flags ocultos y dejaba los waypoints absolutos colgando.
+
+- [ ] **Pregunta abierta (2026-10-02): ¿Reset Layout debe seguir a la primera apertura?** La primera
+  apertura sin sidecar pasó a `smartLayout({ mode: 'all' })` (spec 13); Reset sigue con dagre plano,
+  que en `huge.dbml` recrea la franja horizontal que motivó ese cambio. Opciones: (a) reusar
+  `placeMissingTables` con `positions` vacías (misma colocación que la primera apertura; respeta
+  `layoutSpacing`); (b) mantener dagre plano. No se cambió sin decisión del usuario.
 
 `Prune orphans` se **niega** (aviso) mientras el `.dbml` no parsea en su última lectura o el
 layout aún no se cargó: contra un schema vacío o viejo toda entrada parece huérfana y se

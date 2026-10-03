@@ -167,13 +167,24 @@ segmentos completos.
 
 Para cada ref, dado bbox source y target:
 
-**Elegir lados** (`chooseSides`): siempre horizontal —
+**Elegir lados** (`chooseSides`): horizontal por defecto —
 `dx = tgtCenter.x - srcCenter.x`; `dx >= 0` ⇒ source=right, target=left; si no,
-source=left, target=right. (Override manual: ver §4.)
+source=left, target=right. **Excepción x-overlap** (decisión 2026-10-01, Limitaciones 5): si los
+extents-x de las dos tablas se solapan (`src.x < tgt.x + tgt.w && tgt.x < src.x + src.w`), la
+arista sale por `bottom` y entra por `top` (o `top`→`bottom` si el centro del target queda arriba),
+así el tramo medio V-H-V corre por el hueco vertical y nunca detrás de las tablas. Si los bboxes
+además se intersecan (sin hueco limpio en ningún eje) gana el eje de menor penetración: con
+`gapX`/`gapY` = separación entre bordes (negativa si se solapan), vertical sólo si
+`gapX < 0 && gapY > gapX`; dos tablas lado a lado que se pisan unos px siguen en L/R (decisión
+2026-10-02: el V-H-V las cruzaba a ambas de punta a punta). (Override manual:
+ver §4 — un override L/R en **cualquiera** de los dos extremos devuelve el extremo automático a la
+regla horizontal, para no unir un lado L/R con uno vertical mediante un codo que cruce la tabla.)
 
 **Distribuir ports** en cada lado: agrupar por `(table, side)`, sortar por el
-otro extremo (reducción baricéntrica de cruces: la arista cuyo extremo lejano está
-más arriba/izquierda recibe el puerto más arriba/izquierda), **desempate por `ref.id`**
+otro extremo a lo largo del lado (reducción baricéntrica de cruces: en `left`/`right` por la `y`
+del centro lejano — más arriba ⇒ puerto más arriba —; en `top`/`bottom` por su `x` — más a la
+izquierda ⇒ puerto más a la izquierda. Hasta 2026-10-02 el eje estaba invertido y el orden salía
+casi siempre del desempate), **desempate por `ref.id`**
 para que la asignación dependa sólo de geometría + ids estables, nunca del orden del
 array `refs[]` (que `@dbml/core` puede reordenar al re-parsear — invariante git-friendly:
 mismo schema ⇒ mismos puertos). Asignar `ratio = (i+1)/(n+1)` (equidistante, sin tocar
@@ -276,7 +287,10 @@ interface EdgeLayout {
 ```
 
 `routeRefs` usa el override si existe; si no, `chooseSides`. Drag del endpoint
-más allá del centro del campo conmuta el lado y persiste.
+más allá del centro del campo conmuta el lado y persiste. El gesto arranca tras
+`CLICK_THRESHOLD_PX` (4 px de pantalla), como el drag de tabla: un puerto `top`/`bottom`
+automático (x-overlap) cae cerca del centro-x de la tabla, y sin umbral el temblor de un click
+fijaba `left`/`right` y reemplazaba la ruta automática (2026-10-02).
 
 ### 5. Toolbar de arista seleccionada (color + reset) — reemplaza click derecho
 
@@ -411,16 +425,18 @@ El spec tenía una tensión aparente: la decisión 7 dice "el router A* rutea **
 elegidos**", mientras la meta-3 + "ampliar `chooseSides`" implican que A* **elige** el lado (incl.
 top/bottom). Resolución acordada:
 
-- **Camino de render siempre-activo (`chooseSides`, §1): se queda en `left`/`right`.** No cambia —
-  preserva el anclaje a fila de columna y mantiene el ruteo barato/predecible.
+- **Camino de render siempre-activo (`chooseSides`, §1): `left`/`right`, salvo x-overlap.**
+  Preserva el anclaje a fila de columna y mantiene el ruteo barato/predecible. *(Decisión
+  2026-10-01: con los extents-x solapados elige `top`/`bottom` — Limitaciones 5.)*
 - **El pase A* on-demand SÍ puede reasignar un extremo a `top`/`bottom`** (selección de 4 lados,
   `chooseSides4` en `astar.ts`) cuando reduce cruces/obstáculos, y persiste
   `sourceSide`/`targetSide ∈ 'left'|'right'|'top'|'bottom'` (E3 **se usa de verdad**). El render path
   luego dibuja fielmente ese lado persistido vía `portPoint` (que ya soporta los 4 lados).
   **Sólo se persisten lados que aportan información** (auditoría F20): si el par coincide con lo que
-  `chooseSides` del render elegiría (todo L/R) no se escribe, y un fallback (`ok:false`) no escribe
-  lados provisionales. Los lados `top`/`bottom` sí se persisten, marcados `auto` (abajo), así que
-  no cuentan como forma manual.
+  `chooseSides` del render elegiría no se escribe (con x-overlap eso incluye `bottom`/`top`; un
+  L/R de A\* sobre tablas x-solapadas sí se escribe), y un fallback (`ok:false`) no escribe lados
+  provisionales. Los lados persistidos van marcados `auto` (abajo), así que no cuentan como forma
+  manual.
 - **`columnY` ancla sólo en `left`/`right`**; un puerto `top`/`bottom` usa un x-ratio sin ancla de
   fila. Ambas reglas ya estaban gateadas a L/R en `routeRefs` (líneas ~153-162).
 - Sin contradicción: A* **rutea entre los stubs** (decisión 7 se mantiene) — pero el **adaptador**
@@ -435,9 +451,9 @@ top/bottom). Resolución acordada:
    existente de `routeRefs` (§1 "Distribuir ports"), sin comando: sort baricéntrico con **desempate
    estable** determinista (menos cruces de aristas paralelas en un lado) + **espaciado uniforme**.
    Sigue O(aristas), memoizada, corre en cada cambio de geometría como hoy. El tramo medio queda en
-   el H-V-H por defecto (sin A* en el camino caliente). **Nota:** el camino caliente **no** elige
-   top/bottom — `chooseSides` permanece L/R (modelo híbrido arriba); los lados de 4 vías sólo los
-   produce el pase A* on-demand y se persisten en `EdgeLayout`.
+   el H-V-H por defecto (sin A* en el camino caliente). **Nota:** el camino caliente sólo elige
+   top/bottom con x-overlap (V-H-V por el hueco vertical, Limitaciones 5); la selección de 4 vías por
+   coste la produce el pase A* on-demand y se persiste en `EdgeLayout`.
 2. **Ruteo A* obstacle-avoiding — ON-DEMAND, costoso (E1).** El comando "ordenar aristas" corre A*
    sobre una grilla propia (cell = `ASTAR_CELL = 24` = `MIN_STUB`). Las celdas-obstáculo de las tablas
    se reúnen reusando la **clase** `SpatialIndex` — un índice **desechable** que el adaptador
@@ -460,7 +476,7 @@ top/bottom). Resolución acordada:
   antes hardcodeado a `left`/`right`) se amplió al whitelist de 4 lados — sin esto un `top`/`bottom`
   persistido se descartaba en cada reapertura. El **serializador no cambió** (ya hace
   `JSON.stringify` del valor; defaults omitidos sólo por ausencia, no por valor). `chooseSides`
-  **NO** se amplió (queda L/R por diseño, modelo híbrido).
+  sólo se amplió para el caso x-overlap (decisión 2026-10-01, Limitaciones 5).
 
 **Integración con el runner (`runner.ts`, spec 13):** hoy el arrange **limpia** los waypoints de
 aristas cuyos dos extremos se movieron (para que `columnYResolver` re-rutee limpio). Con edge-ordering
@@ -538,7 +554,8 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
   espaciado uniforme ya están en el `routeRefs` base (fase 1, commit `00551f2`; gratis para todo
   diagrama). La selección de lado de 4 vías y el A* son la parte on-demand.
 - **E3 · Lados top/bottom.** → **Sí — `sourceSide`/`targetSide` ampliados a `'left'|'right'|'top'|'bottom'`** (`EdgeSide`).
-  Sólo los produce el pase A* on-demand; `chooseSides` (render) queda L/R.
+  Sólo los produce el pase A* on-demand; `chooseSides` (render) queda L/R *(salvo x-overlap,
+  decisión 2026-10-01, Limitaciones 5)*.
 - **E4 · Progreso.** → **Porcentaje real** (loop A* propio, cede + emite progreso, cancelable).
 - **E5 · `preserveManualEdges`.** → **El usuario elige por corrida; default ON** (preservar).
 
@@ -556,7 +573,7 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
 
 ### 10. Aristas `Dep` (spec 18)
 
-Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traza una **curva** entre dos stubs horizontales rígidos de 24 px (mismo `MIN_STUB`, mismo recorte a la mitad del gap). Sin waypoints es una Bézier con handles horizontales; con waypoints, Catmull-Rom → Béziers que pasan por cada punto, tangente a los stubs en los extremos. Lados izquierda/derecha por centros (misma regla que `chooseSides`); puerto Y = centro de la primera columna (`rows.indexOf`) o `headerCenterY()` para deps a nivel tabla. Edición: sólo la dep seleccionada muestra handles de inserción (t=0.5 de cada tramo) y de waypoint (mover / doble clic = borrar); reutiliza `runEdgeDrag` + `WaypointCommand`. Se pintan en el **mismo SVG** (`DepPaths` en la capa base, `DepOverlay` en la de overlay) y se cullean con el mismo `visibleRefIds`. No participan en auto-layout, A* ni puertos compartidos con refs, nunca llevan `auto` (§9) y los resets de forma por movimiento de tablas no las tocan. Durante un drag se re-rutean sólo las deps de las tablas movidas (`DepRouteCache`, spec 04 "Drag incremental").
+Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traza una **curva** entre dos stubs horizontales rígidos de 24 px (mismo `MIN_STUB`, mismo recorte a la mitad del gap). Sin waypoints es una Bézier con handles horizontales; con waypoints, Catmull-Rom → Béziers que pasan por cada punto, tangente a los stubs en los extremos. Lados izquierda/derecha por centros (la regla horizontal de `chooseSides`, sin la excepción x-overlap); puerto Y = centro de la primera columna (`rows.indexOf`) o `headerCenterY()` para deps a nivel tabla. Edición: sólo la dep seleccionada muestra handles de inserción (t=0.5 de cada tramo) y de waypoint (mover / doble clic = borrar); reutiliza `runEdgeDrag` + `WaypointCommand`. Se pintan en el **mismo SVG** (`DepPaths` en la capa base, `DepOverlay` en la de overlay) y se cullean con el mismo `visibleRefIds`. No participan en auto-layout, A* ni puertos compartidos con refs, nunca llevan `auto` (§9) y los resets de forma por movimiento de tablas no las tocan. Durante un drag se re-rutean sólo las deps de las tablas movidas (`DepRouteCache`, spec 04 "Drag incremental").
 
 ## Limitaciones conocidas
 
@@ -609,7 +626,13 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
 5. ~~**Retroceso en x-overlap**~~ **Decisión 2026-10-01:** en el render path, cuando los extents-x de
    las dos tablas se solapan, `chooseSides` usa puertos `top`/`bottom` (el mismo modelo híbrido que
    A\*, §9) en vez de L/R, así la arista va por el hueco vertical entre tablas y no pasa por detrás de
-   ellas ni tapa sus filas. Un override manual L/R del usuario se respeta. Texto original:
+   ellas ni tapa sus filas. Un override manual L/R del usuario se respeta (y devuelve el otro
+   extremo, si es automático, a la regla horizontal); los `top`/`bottom` persistidos por A\* se
+   dibujan igual; los self-loops no cambian. Los puertos `top`/`bottom` reusan el grupo de puertos
+   `(tabla, lado)` y su reparto por x del extremo lejano (§1). `routeMoved` re-decide los lados de
+   las refs afectadas, así un drag que entra o sale del x-overlap coincide con un rebuild completo;
+   el export de imagen usa el mismo `routeRefs`. Implementación: `chooseSides` +
+   `chooseHorizontalSides` en `edgeRouter.ts`; tests en `edgeRouter.xOverlap.test.ts`. Texto original:
    **Retroceso en x-overlap** (target con borde izq dentro del extent-x del source ⇒
    `chooseSides` invierte el span y la ruta se devuelve, incluso a cero-waypoints):
    régimen degenerado contra-natura (v2). Las geometrías bien separadas (caso normal)
@@ -622,6 +645,14 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
 - Misma fila, target a la derecha ⇒ source=right, target=left; recta enmarcada
   por dos stubs rígidos (`M…aStub…bStub…b`), una sección editable en medio.
 - Override `sourceSide`/`targetSide` respetado sobre `chooseSides`.
+- **x-overlap (`edgeRouter.xOverlap.test.ts`):** tablas apiladas con extents-x solapados ⇒
+  source `bottom` → target `top` (o al revés si el target está arriba), primer/último tramo
+  verticales, ningún segmento dentro del bbox de una tabla; sin solape ⇒ L/R; bboxes que se
+  intersecan ⇒ eje de menor penetración (lado a lado ⇒ L/R, apiladas ⇒ `bottom`/`top`); varias
+  aristas al mismo `top` se reparten por x del extremo lejano (aunque su orden en y sea el opuesto); override L/R en ambos extremos respetado; override
+  L/R en un extremo ⇒ el otro queda horizontal sin cruzar tablas; `top`/`bottom` persistidos y
+  self-loops sin cambio; `routeMoved` == rebuild completo en drags que cruzan el borde del solape
+  (fuzz en una franja-x estrecha que exige > 20 cruces).
 - **Deslizar (`edgeRouter.segmentDrag.test.ts`):** `slideSegment` sobre el trunk vertical ⇒ mueve
   sus 2 esquinas (sin agregar puntos); sobre un brazo (colineal con su stub) ⇒ inserta un codo (el
   ancla del puerto no se mueve). 1-DOF (v ignora `dy`, h ignora `dx`); `rigid` ⇒ no-op; idempotente.
