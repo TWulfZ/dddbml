@@ -1,6 +1,6 @@
 # dddbml — DBML diagrams for VS Code, Git-friendly, DDD-aware
 
-Interactive diagram for `.dbml` files, rendered beside the editor. The **source of truth stays in your `.dbml`**: the extension only reads it. Table positions, group colors and edge shapes live in a sibling JSON file with deterministic formatting, so your team reviews the diagram in the same PR as the schema.
+Interactive diagram for `.dbml` files, rendered beside the editor. The **source of truth stays in your `.dbml`**: you write it in the editor, and the diagram only applies small, minimal text edits when you ask for them (new table, new FK, delete). Table positions, group colors and edge shapes live in a sibling JSON file with deterministic formatting, so your team reviews the diagram in the same PR as the schema.
 
 <img width="1917" height="1001" alt="dddbml overview" src="https://github.com/user-attachments/assets/021105af-da16-4f30-8e5b-313f72ac43a6" />
 
@@ -21,16 +21,23 @@ Open a `.dbml` file and run **`dddbml: Open Diagram`** (command palette or the e
 ## Features
 
 **Canvas**
-- Tables, refs and groups parsed with the official `@dbml/core`; auto-layout for tables that have no saved position.
+- Tables, refs and groups parsed with the official `@dbml/core` in a background worker; tables with no saved position are arranged by bounded context.
 - Pan with middle-click, `Space` + drag, or the hand tool. Zoom with the wheel, `Ctrl+=` / `Ctrl+-`, fit with `Ctrl+1`, reset with `Ctrl+0`.
 - Drag tables, marquee-select on empty space, `Shift` to add to the selection, `Esc` to clear. Undo/redo with `Ctrl+Z` / `Ctrl+Shift+Z`.
 - Two detail levels by zoom: full tables, or colored rectangles for a bird's-eye view (threshold configurable).
-- Double-click a table header to jump to its declaration in the `.dbml`.
+- Double-click a table header (or a column) to jump to its declaration in the `.dbml`; `Ctrl`+click a `Table` name in the editor to focus it in the diagram.
 
 **Relationships**
-- Orthogonal edges that leave and enter at the FK/PK column rows, with crow's-foot / bar cardinality markers.
+- Orthogonal edges that leave and enter at the FK/PK column rows, with crow's-foot / bar cardinality markers. Stacked tables connect through the gap between them; self-references draw as loops.
 - Edit an edge by sliding a segment or dragging a ghost handle to add a notch; flip the port side by dragging an endpoint; recolor; "Reset line" to tidy.
 - **Auto-arrange** (whole diagram or the selection) with an obstacle-avoiding edge router, cancelable with real progress.
+
+**Assisted editing** (writes your `.dbml` with minimal edits; `Ctrl+Z` in the diagram undoes them)
+- Right-click empty canvas → **New table here**: name it and it appears where you clicked (inside a group box it joins that `TableGroup`).
+- Right-click a table → **Add field** opens the editor on a new line in that table.
+- Drag the dot on a column's right edge onto another column to create a reference, then pick the cardinality.
+- Delete a table, a field or a relation from its context menu, with a confirmation listing what else goes with it.
+- Tip: enable VS Code **Auto Save** so the diagram and the file stay in sync.
 
 **DBML `records` and `Dep`**
 - Tables with sample `records` show a row-count badge; click it for a read-only grid of the values.
@@ -66,7 +73,7 @@ For `schema.dbml` the extension writes `schema.dbml.layout.json` next to it:
     "billing": { "color": "#D0E8FF" }
   },
   "edges": {
-    "public.orders(user_id)->public.users(id)": {
+    "public.orders::user_id|public.users::id": {
       "waypoints": [{ "x": 360, "y": 120 }]
     }
   }

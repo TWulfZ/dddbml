@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-10-02
+
+Bug audit (99 findings, 88 fixed in the first pass) plus assisted editing, DBML `records`/`Dep` support and a faster, safer canvas.
+
+### Added
+- **Assisted editing** (`specs/19`): right-click → *New table here*, *Add field* (opens the editor), drag a column port onto another column to create a ref, delete table/field/relation with a confirmation. Edits are minimal text changes to the `.dbml`, validated by a re-parse, undoable from the diagram (`Ctrl+Z`). One-time hint to enable Auto Save.
+- **Code ↔ diagram navigation**: `Ctrl`+click a `Table` name in the editor focuses it in the diagram; double-click a column jumps to its line.
+- **Self-reference loops** for FKs from a table to itself (selectable, recolor, flip side, delete).
+- **DBML `records`** (row-count badge + read-only grid) and **`Dep`** arrows with editable bend points (`specs/18`).
+- **Diff view**: collapsed groups with changes get a diff border; hidden changed tables are counted (`+k hidden`).
+
+### Changed
+- First open (and *Reset Layout*) arranges tables by bounded context instead of one long dagre strip; *Reset Layout* keeps colors and hidden flags and is undoable.
+- Tables stacked on top of each other connect through top/bottom ports instead of routing behind them; A* *Order edges* never cuts through its own tables.
+- Multi-table drags carry the hand-drawn bends of edges between the dragged tables; auto-arranged edge shapes are marked `auto` in the layout file and re-routed when their tables move.
+- Table drags re-route only the affected edges (~0.6 ms per frame on 5000 tables, was ~10 ms).
+- The `.dbml` is parsed in a worker thread; the extension host bundle no longer ships `@dbml/core` (74 KB).
+- Camera is saved per user in VS Code storage; undo history survives looking at past revisions.
+
+### Fixed
+- Read-only gate is enforced by the host too: no layout writes during a merge, diff or time travel (incl. after a webview reload, an aborted merge or a failed detection).
+- TypeORM export: typed defaults, composite PKs, 1:1 join side, `referencedColumnName`, referential actions, auto-increment widths, nullable columns, singularization, identifier/keyword safety, class-name collisions.
+- Parser: TableGroups in multi-schema diagrams, refs through table aliases, index-level PKs.
+- Layout file: entries written under the wrong key by earlier edge ordering are dropped; edge keys sorted locale-independently.
+- Git: paths with spaces/non-ASCII, symlinked workspaces, staged-new revert, stash conflicts reported correctly.
+- Many canvas fixes: wheel scrolling in panels, Space-key handling, fit ignoring hidden tables, PK/FK-only view geometry, context-menu clipping, emoji in image export, settings validation, and more (see `docs/audits/2026-09-22-bug-audit.md`).
+
 ## [0.2.6] — 2026-05-30
 
 Conflict-resolver panel UX overhaul (`specs/14`, `specs/12`). Pure-webview — no host/protocol changes.

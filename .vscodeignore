@@ -17,3 +17,8 @@ pnpm-lock.yaml
 **/*.map
 **/*.ts
 !dist/**/*.js
+docs/audits/**
+vite.config.mts
+pnpm-workspace.yaml
+*.vsix
+docs/audit-*.md
