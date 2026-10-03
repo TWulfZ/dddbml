@@ -220,7 +220,7 @@ Matriz de casos:
 | Estado DBML | Estado Layout | Acción |
 |---|---|---|
 | Tabla existe | Entrada existe | Usar posición del layout. |
-| Tabla existe | Sin entrada | Auto-layout dagre. Persistir sólo al primer drag manual. |
+| Tabla existe | Sin entrada | Colocación automática (spec 13: `smartLayout` 'all' con el canvas vacío, 'new' si ya hay tablas). Persistir sólo al primer drag manual. |
 | Tabla no existe | Entrada existe (huérfana) | Mantener entrada en archivo. Comando `dddbml: Prune orphans` las limpia explícitamente. Razón: si el usuario renombra tabla y luego hace undo, no perdemos la posición. |
 | Tabla renombrada | Entrada con nombre viejo | Tratada como "huérfana + nueva". El usuario decide: drag manual crea entrada nueva; o `dddbml: Rename layout entry` (comando utility v1.1). |
 | Group existe en DBML | Entrada existe | Usar config del layout. |
@@ -234,19 +234,18 @@ edges) y el view-state personal (tablas ocultas, grupos ocultos/colapsados). Es 
 un Ctrl+Z (un solo `ArrangeCommand` con posiciones y formas de aristas previas) y por eso no
 pide confirmación (decisión 2026-10-01).
 Corre en el webview (`layout/resetLayout.ts`): el host sólo valida el gate y postea
-`command:resetLayout`; el webview recalcula con `autoLayout` (dagre plano — el que usaba la primera
-apertura hasta la decisión 2026-10-01 de spec 13; ver pregunta abierta abajo),
+`command:resetLayout`; el webview recalcula con `placeMissingTables` sobre `positions` vacías — la misma colocación
+que la primera apertura (`smartLayout` 'all', spec 13) —,
 limpia la forma de **todas** las aristas, empuja un `ArrangeCommand` (label `Reset layout`, con las
 posiciones y los `EdgeLayout` previos; el historial anterior se conserva debajo) y persiste por el
 `layout:persist` normal. Las entradas huérfanas (tabla fuera del schema)
 conservan posición y color: limpiarlas es trabajo de `Prune orphans`. Antes el host escribía
 `tables: {}`, que borraba colores y flags ocultos y dejaba los waypoints absolutos colgando.
 
-- [ ] **Pregunta abierta (2026-10-02): ¿Reset Layout debe seguir a la primera apertura?** La primera
-  apertura sin sidecar pasó a `smartLayout({ mode: 'all' })` (spec 13); Reset sigue con dagre plano,
-  que en `huge.dbml` recrea la franja horizontal que motivó ese cambio. Opciones: (a) reusar
-  `placeMissingTables` con `positions` vacías (misma colocación que la primera apertura; respeta
-  `layoutSpacing`); (b) mantener dagre plano. No se cambió sin decisión del usuario.
+- [x] **¿Reset Layout debe seguir a la primera apertura?** — **Decisión (2026-10-02):** sí, (a):
+  reusa `placeMissingTables` con `positions` vacías (respeta `layoutSpacing`). Además, los sidecars
+  con waypoints guardados entre tablas que ahora se solapan en x **no se migran**: los puertos flotan
+  (pasan a arriba/abajo) y los waypoints quedan fijos; "Order edges" o "Reset line" lo arreglan.
 
 `Prune orphans` se **niega** (aviso) mientras el `.dbml` no parsea en su última lectura o el
 layout aún no se cargó: contra un schema vacío o viejo toda entrada parece huérfana y se

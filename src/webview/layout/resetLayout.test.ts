@@ -6,6 +6,8 @@ import { postToHost } from '../vscode';
 import { store } from '../state/store';
 import { parseDbml } from '../../extension/parser';
 import { resetLayout } from './resetLayout';
+import { placeMissingTables } from './placeMissing';
+import { estimateSize } from './autoLayout';
 import type { Layout } from '../../shared/types';
 
 const DBML = `
@@ -45,6 +47,17 @@ const lastPersist = (): Layout => {
 
 describe('Reset Layout (spec 03, F24)', () => {
   beforeEach(load);
+
+  it('places tables exactly like a first open (smart layout, decision 2026-10-02)', () => {
+    const s0 = store.getState();
+    const cols = new Map(s0.schema.tables.map((t) => [t.name, t.columns.length]));
+    const firstOpen = placeMissingTables({
+      tables: s0.schema.tables, refs: s0.schema.refs, groups: s0.schema.groups, positions: new Map(),
+      sizeOf: (n) => estimateSize(cols.get(n) ?? 0), spacing: s0.settings.ui.layoutSpacing,
+    });
+    resetLayout();
+    for (const [name, pos] of firstOpen) expect(store.getState().positions.get(name)).toEqual(pos);
+  });
 
   it('re-places every table and clears edge shapes, keeping colors and personal hidden flags', () => {
     resetLayout();
