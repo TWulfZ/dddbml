@@ -287,7 +287,10 @@ interface EdgeLayout {
 ```
 
 `routeRefs` usa el override si existe; si no, `chooseSides`. Drag del endpoint
-más allá del centro del campo conmuta el lado y persiste.
+más allá del centro del campo conmuta el lado y persiste. El gesto arranca tras
+`CLICK_THRESHOLD_PX` (4 px de pantalla), como el drag de tabla: un puerto `top`/`bottom`
+automático (x-overlap) cae cerca del centro-x de la tabla, y sin umbral el temblor de un click
+fijaba `left`/`right` y reemplazaba la ruta automática (2026-10-02).
 
 ### 5. Toolbar de arista seleccionada (color + reset) — reemplaza click derecho
 

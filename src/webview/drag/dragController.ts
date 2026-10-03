@@ -401,7 +401,12 @@ export function startEndpointDrag(
   try { target.setPointerCapture(e.pointerId); } catch { /* noop */ }
   document.body.classList.add('ddd-is-edge-dragging');
 
+  // A top/bottom port sits near the table's centre x, so without a threshold a click's jitter
+  // would pin left/right and silently replace the automatic route.
+  let dragging = false;
   const onMove = (ev: PointerEvent) => {
+    if (!dragging && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < CLICK_THRESHOLD_PX) return;
+    dragging = true;
     const wx = toWorldX(ev.clientX);
     if (wx === null) return;
     const side = wx >= tableCenterX ? 'right' : 'left';
