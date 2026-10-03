@@ -7,8 +7,9 @@ import { buildArrangeCommand } from '../state/history';
 /**
  * `dddbml: Reset Layout` (spec 03, F24). Runs here, not on the host: only the webview can lay
  * tables out, and a host-side `tables: {}` also dropped colors and personal hidden flags. Positions
- * are recomputed as on a first open; every edge loses its shape (absolute waypoints would dangle
- * once the tables move) but keeps its color. Orphan entries are left for Prune Orphans.
+ * are recomputed with flat dagre (first open moved to smartLayout; open question in spec 03); every
+ * edge loses its shape (absolute waypoints would dangle once the tables move) but keeps its color.
+ * Orphan entries are left for Prune Orphans.
  */
 export function resetLayout(): void {
   const s = store.getState();

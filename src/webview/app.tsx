@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { store, useAppStore, isCanvasReadOnly } from './state/store';
-import { autoLayout, estimateSize } from './layout/autoLayout';
-import { smartLayout } from './layout/smartLayout/layout';
+import { estimateSize } from './layout/autoLayout';
+import { placeMissingTables } from './layout/placeMissing';
 import { buildRowGeometry, fkColumnsByTable as fkColumnsOf } from './layout/tableRows';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
@@ -114,31 +114,18 @@ export function App(_props: AppProps) {
   // that lands between render and flush (time-travel exit, reload) must not be overwritten by
   // positions laid out from the stale closure.
   useEffect(() => {
-    const { ready: isReady, schema: liveSchema, positions: livePositions } = store.getState();
+    const { ready: isReady, schema: liveSchema, positions: livePositions, settings } = store.getState();
     if (!isReady) return;
-    const missing = liveSchema.tables.filter((t) => !livePositions.has(t.name));
-    if (missing.length === 0) return;
+    if (liveSchema.tables.every((t) => livePositions.has(t.name))) return;
     const columnCount = new Map(liveSchema.tables.map((t) => [t.name, t.columns.length]));
-    const sizeOf = (name: QualifiedName) => estimateSize(columnCount.get(name) ?? 0);
-    // With tables already on the canvas, flat dagre would stack the new ones at its margin on top
-    // of them (audit F19); smart 'new' mode places them by their group/FK neighbours, clear of others.
-    const laidOut =
-      livePositions.size === 0
-        ? autoLayout(liveSchema.tables, liveSchema.refs, sizeOf)
-        : smartLayout({
-            tables: liveSchema.tables,
-            refs: liveSchema.refs,
-            groups: liveSchema.groups,
-            sizeOf,
-            mode: 'new',
-            existing: livePositions,
-            spacing: store.getState().settings.ui.layoutSpacing,
-          });
-    const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
-    for (const t of missing) {
-      const pos = laidOut.get(t.name);
-      if (pos) entries.push([t.name, pos]);
-    }
+    const entries = placeMissingTables({
+      tables: liveSchema.tables,
+      refs: liveSchema.refs,
+      groups: liveSchema.groups,
+      positions: livePositions,
+      sizeOf: (name: QualifiedName) => estimateSize(columnCount.get(name) ?? 0),
+      spacing: settings.ui.layoutSpacing,
+    });
     if (entries.length > 0) store.getState().setPositionsBatch(entries);
   }, [schema, positions, ready]);
 

@@ -209,6 +209,20 @@ la primera apertura sin sidecar); si ya hay tablas colocadas, las faltantes se c
 `smartLayout({ mode: 'new', existing })` (junto a su grupo / vecinos FK, sin solapar), en vez de
 dagre plano que las apilaba en su margen `(32,32)` encima de las existentes. (auditoría F19)
 
+Implementación: `placeMissingTables` (`layout/placeMissing.ts`, puro) elige el modo por
+`positions.size === 0`; el efecto de `app.tsx` lee el estado vivo, sale antes de construir nada si
+toda tabla tiene posición y aplica el resultado con un `setPositionsBatch`. Ese batch vuelve a
+disparar el efecto (depende de `positions`), que ya no encuentra faltantes: la colocación corre una
+sola vez. Una entrada huérfana del sidecar (tabla fuera del schema) hace `positions.size > 0`, pero
+con todas las tablas vivas sin posición `smartLayout` toma igual el camino `all` (atajo
+`movable.size === tables.length`). Medido en vitest/Node: `smartLayout` `all` sobre `huge.dbml`
+~0.4-0.5 s (ver Performance budget; los ~3.4 s anteriores no se reprodujeron fuera del webview).
+**Cámara:** sin cambio — la colocación nunca encuadró (ni con `autoLayout`); la vista queda en el
+`viewport` cargado (identidad en la primera apertura), que ahora muestra la esquina superior
+izquierda de un bloque compacto en vez del inicio de la franja. El bloque arranca en `(0,0)`
+(cajas de grupo incluidas) en vez del margen `(32,32)` de dagre. `Reset Layout` sigue con dagre
+plano: ver pregunta abierta en spec 03.
+
 **Concurrencia del `await` (A\*).** Si tras el `await` cambió `positions`, `edgeLayouts` o `schema`
 (referencia distinta: edición del usuario, undo, push del host) o el canvas pasó a solo-lectura
 (merge / time-travel), el resultado se **descarta** sin aplicar ni empujar comando — aplicarlo
@@ -324,6 +338,11 @@ Vitest, `*.test.ts` colocados en `smartLayout/`. Fixtures parseados con el `pars
 - **Suite B — `smartLayout`** (async): `all` → cubre todas, **cero solape AABB** (aserción
   portante); `new` → posiciones sembradas byte-exactas, solo coloca faltantes; `selection` → no
   seleccionadas byte-exactas; **determinismo** → dos corridas idénticas.
+- **Suite B' — colocación de la primera apertura (`layout/placeMissing.test.ts`)**: canvas vacío
+  sobre `huge.dbml` ⇒ todas colocadas en un bloque con relación de aspecto dentro de `[1/4, 4]`;
+  ninguna tabla ajena dentro de la caja de un TableGroup (`isga.generated.dbml`); segunda llamada con
+  el resultado ⇒ `[]` (no corre dos veces); con tablas ya colocadas sólo devuelve las faltantes, sin
+  solapar las existentes.
 - **Suite C — runner/undo**: arrange empuja un `ArrangeCommand`; undo restaura posiciones +
   waypoints; aristas con ambos extremos movidos limpian `waypoints` y conservan `color`/sides; FK
   auto-referente no rompe.
