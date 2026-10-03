@@ -52,4 +52,15 @@ describe('edgeRouter — port assignment determinism', () => {
     // Smaller y = higher on screen. Edge to the higher target (b) should exit higher.
     expect(sourcePortY(routes, 'to-b')).toBeLessThan(sourcePortY(routes, 'to-c'));
   });
+
+  it('orders a shared right side by the far ends\' y even when their x order disagrees', () => {
+    // Unresolved column rows (e.g. a collapsed group endpoint) leave the port Y to the spread.
+    const boxes: Record<string, Bbox> = {
+      a: { x: 0, y: 100, w: 200, h: 100 },
+      b: { x: 900, y: 0, w: 200, h: 100 }, // above, farther right
+      c: { x: 400, y: 300, w: 200, h: 100 }, // below, nearer
+    };
+    const routes = routeRefs([makeRef('x-b', 'a', 'b'), makeRef('y-c', 'a', 'c')], (n) => boxes[n]);
+    expect(sourcePortY(routes, 'x-b')).toBeLessThan(sourcePortY(routes, 'y-c'));
+  });
 });

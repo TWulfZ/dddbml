@@ -70,6 +70,17 @@ describe('routeRefs — x-overlapping tables use top/bottom ports (spec 05 Limit
     expect(q.target.x).toBeCloseTo((2 * W) / 3);
   });
 
+  it('orders a shared top side by the far ends\' x, not their y (no crossing trunks)', () => {
+    // `left` sits left of `right` but lower: sorting by y would hand it the right-hand port.
+    const pos = { u: { x: 0, y: 600 }, left: { x: -120, y: 200 }, right: { x: 120, y: 0 } };
+    const routes = routeRefs([ref('a', 'left', 'u'), ref('b', 'right', 'u')], boxes(pos), rowY);
+    const l = routes.find((r) => r.id === 'a')!;
+    const r = routes.find((x) => x.id === 'b')!;
+    expect(l.target.y).toBe(600);
+    expect(r.target.y).toBe(600);
+    expect(l.target.x).toBeLessThan(r.target.x);
+  });
+
   it('respects a persisted left/right override on both ends', () => {
     const layout: EdgeLayout = { sourceSide: 'right', targetSide: 'left' };
     const r = routeRefs([ref('a-b', 'a', 'b')], boxes(stacked), rowY, () => layout)[0]!;

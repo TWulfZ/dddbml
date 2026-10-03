@@ -94,7 +94,7 @@ interface SideDecision {
 interface PortEntry {
   edgeIdx: number;
   role: 'source' | 'target';
-  /** Coordinate of the far end's centre the group is sorted by. */
+  /** Far end's centre along the side's run (x on top/bottom, y on left/right): the group's sort key. */
   otherCenter: number;
   refId: string;
 }
@@ -371,13 +371,13 @@ export class EdgeRouteCache {
     this.pushPort(srcKey, {
       edgeIdx,
       role: 'source',
-      otherCenter: orientationOfSide(d.sourceSide) === 'v' ? tgtCenter.y : tgtCenter.x,
+      otherCenter: orientationOfSide(d.sourceSide) === 'v' ? tgtCenter.x : tgtCenter.y,
       refId: d.ref.id,
     });
     this.pushPort(tgtKey, {
       edgeIdx,
       role: 'target',
-      otherCenter: orientationOfSide(d.targetSide) === 'v' ? srcCenter.y : srcCenter.x,
+      otherCenter: orientationOfSide(d.targetSide) === 'v' ? srcCenter.x : srcCenter.y,
       refId: d.ref.id,
     });
     touched?.add(srcKey);

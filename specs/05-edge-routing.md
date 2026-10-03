@@ -177,8 +177,10 @@ ver §4 — un override L/R en **cualquiera** de los dos extremos devuelve el ex
 regla horizontal, para no unir un lado L/R con uno vertical mediante un codo que cruce la tabla.)
 
 **Distribuir ports** en cada lado: agrupar por `(table, side)`, sortar por el
-otro extremo (reducción baricéntrica de cruces: la arista cuyo extremo lejano está
-más arriba/izquierda recibe el puerto más arriba/izquierda), **desempate por `ref.id`**
+otro extremo a lo largo del lado (reducción baricéntrica de cruces: en `left`/`right` por la `y`
+del centro lejano — más arriba ⇒ puerto más arriba —; en `top`/`bottom` por su `x` — más a la
+izquierda ⇒ puerto más a la izquierda. Hasta 2026-10-02 el eje estaba invertido y el orden salía
+casi siempre del desempate), **desempate por `ref.id`**
 para que la asignación dependa sólo de geometría + ids estables, nunca del orden del
 array `refs[]` (que `@dbml/core` puede reordenar al re-parsear — invariante git-friendly:
 mismo schema ⇒ mismos puertos). Asignar `ratio = (i+1)/(n+1)` (equidistante, sin tocar
