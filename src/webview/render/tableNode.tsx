@@ -5,7 +5,7 @@ import { renderedRows, type DiffKind } from '../layout/tableRows';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag } from '../drag/dragController';
-import { startFkDrag } from '../drag/fkDrag';
+import { columnAt, startFkDrag } from '../drag/fkDrag';
 import { countResettableSelectionEdges, resetSelectedEdges, runEdgeOrdering, runSmartLayout } from '../layout/smartLayout';
 import { schedulePersist } from '../persistence';
 import { postToHost } from '../vscode';
@@ -49,8 +49,15 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
   const onPointerDown = (e: PointerEvent) => {
     startDrag(e, table.name, e.currentTarget as HTMLElement);
   };
-  const onDblClick = (e: Event) => {
+  const onDblClick = (e: MouseEvent) => {
     e.stopPropagation();
+    // The press starts a table drag that captures the pointer on this node, so a double-click on a
+    // column row is retargeted here: resolve the row under the pointer instead of trusting e.target.
+    const col = columnAt(e.clientX, e.clientY);
+    if (col && col.table === table.name) {
+      postToHost({ type: 'command:revealColumn', payload: { table: col.table, column: col.column } });
+      return;
+    }
     postToHost({ type: 'command:reveal', payload: { tableName: table.name } });
   };
   const onContextMenu = (e: MouseEvent) => {
