@@ -1,0 +1,10 @@
+{
+  "name": "dddbml-run-harness",
+  "private": true,
+  "type": "module",
+  "description": "Out-of-tree tooling for the run-dddbml skill; never bundled into the extension.",
+  "dependencies": {
+    "@vscode/test-electron": "^2.5.2",
+    "playwright-core": "^1.56.0"
+  }
+}

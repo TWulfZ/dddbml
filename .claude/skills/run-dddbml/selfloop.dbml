@@ -1,0 +1,17 @@
+Table employees {
+  id int [pk]
+  manager_id int [ref: > employees.id]
+  mentor_id int [ref: > employees.id]
+  dept_id int [ref: > departments.id]
+  name varchar
+}
+Table departments {
+  id int [pk]
+  parent_id int [ref: > departments.id]
+  name varchar
+}
+Table projects {
+  id int [pk]
+  owner_id int [ref: > employees.id]
+  title varchar
+}
