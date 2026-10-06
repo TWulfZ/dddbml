@@ -7,12 +7,13 @@ import type { KeyedDepEdge } from './edgeKey';
 import { DepMarkerDef, DepOverlay, DepPaths } from './depEdges';
 import { DepRouteCache, depColor } from './depRouter';
 import type { RowGeometry } from '../layout/tableRows';
-import { EdgeRouteCache, isDipRun, type EdgeRoute } from './edgeRouter';
+import { EdgeRouteCache, isDipRun, type EdgeRoute, type ObstacleQuery } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
 import type { LodLevel } from './lod';
+import { routeReachBoxes, useVisibleEdgeIds, type ViewportRect } from './useVisibleNames';
 import { store, useAppStore, isCanvasReadOnly } from '../state/store';
 import { smallPositionsDelta } from '../state/positionsDelta';
-import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch, flipLoopSide } from '../drag/dragController';
+import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch, flipLoopSide, forgetIgnoredShape } from '../drag/dragController';
 import type { EdgeStyle } from '../state/history';
 import { ColorPopup, popupAnchorFor } from './colorPopup';
 import { Button } from '../ui/Button';
@@ -36,6 +37,9 @@ interface EdgeLayerProps {
   refKeyByStableId: ReadonlyMap<string, string>;
   /** Ids of refs with ≥ 1 visible endpoint; `null` = render every route (e.g. before first cull). */
   visibleRefIds: Set<string> | null;
+  /** The culling inputs: routes drawn outside their tables (C trunks, loops) are also culled on their own extent. */
+  viewportRect: ViewportRect;
+  ready: boolean;
   /** Current zoom LOD. `'rect'` (low zoom) → straight lines, no markers/dots/overlay. */
   lod: LodLevel;
   /** The store's table positions; collapsed group nodes are resolved from `groupSizes`. */
@@ -48,11 +52,13 @@ interface EdgeLayerProps {
   refDiff?: Map<string, RefDiffStatus> | null;
   /** DBML `Dep` edges (spec 18), already remapped/keyed; culled by the same `visibleRefIds`. */
   deps: KeyedDepEdge[];
+  /** The scene's rendered nodes, so an automatic C can leave a side a neighbour blocks (spec 05 §1). */
+  obstacles?: ObstacleQuery;
 }
 
 const GROUP_PREFIX = '__group__:';
 const SEGMENT_HOVER_THICKNESS = 14;
-/** Runs shorter than this (world units) get no centre (slide) handle — avoids handles on tiny legs. */
+/** Runs shorter than this (world units) show no centre knob (still slidable by their hit line). */
 const MIN_HANDLE_LEN = 16;
 /** Runs shorter than this get no ¼/¾ ghost handles — too short to fit 3 knobs without overlap. */
 const MIN_GHOST_LEN = 40;
@@ -171,10 +177,13 @@ export function SelectedEdgeRuns({ route: r, hover, onRunHover, onRunUnhover, on
         // plus two GHOST grey knobs at ¼ / ¾ that appear on hover; dragging a ghost carves a
         // local symmetric notch (a NEW vertex) and the rest of the run stays flat. Drag is
         // 1-DOF perpendicular with an axis-aware resize cursor. Double-click a notch's
-        // dip-run → delete it. Rigid stubs / tiny legs get nothing; corners stay rounded.
+        // dip-run → delete it. Rigid stubs get nothing; corners stay rounded.
         // A loop's runs only keep it selectable: its sole edit is the side flip (spec 05 §Self-loops).
-        const editable = !r.loop && !s.rigid && len >= MIN_HANDLE_LEN;
-        const showGhost = editable && len >= MIN_GHOST_LEN && hot;
+        // A run too short for a knob is still grabbed by its hit line: the halves of a close aligned
+        // pair's midpoint division can be 10 px and must stay slidable (spec 05 §2).
+        const editable = !r.loop && !s.rigid && len > 0;
+        const showHandle = editable && len >= MIN_HANDLE_LEN;
+        const showGhost = showHandle && len >= MIN_GHOST_LEN && hot;
         const axisClass = s.axis === 'h' ? 'is-h' : 'is-v';
         const at = (f: number) => ({ x: s.x1 + (s.x2 - s.x1) * f, y: s.y1 + (s.y2 - s.y1) * f });
         const mid = at(0.5);
@@ -208,7 +217,7 @@ export function SelectedEdgeRuns({ route: r, hover, onRunHover, onRunUnhover, on
               }}
               onDblClick={(e) => onRunDblClick(r, i, e as unknown as PointerEvent)}
             />
-            {editable ? (
+            {showHandle ? (
               <circle
                 class={`ddd-edge-handle ${axisClass}${hot ? ' is-hot' : ''}`}
                 cx={mid.x}
@@ -234,7 +243,7 @@ export function SelectedEdgeRuns({ route: r, hover, onRunHover, onRunUnhover, on
   );
 }
 
-function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, rows, groupSizes, worldBbox, refDiff, deps }: EdgeLayerProps) {
+function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, ready, lod, positions, rows, groupSizes, worldBbox, refDiff, deps, obstacles }: EdgeLayerProps) {
   const density = useAppStore((s) => s.settings.ui.density);
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
@@ -286,17 +295,17 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, 
   // A positions-only delta recorded by the store (a drag frame) re-routes just the refs it can
   // change and keeps every other route object, so the memoized strokes below skip their diff.
   const [routeCache] = useState(() => new EdgeRouteCache());
-  const routedRef = useRef<{ refs: Ref[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density } | null>(null);
+  const routedRef = useRef<{ refs: Ref[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density; obstacles?: ObstacleQuery } | null>(null);
   const routes = useMemo(() => {
     const prev = routedRef.current;
-    routedRef.current = { refs, positions, rows, groupSizes, edgeLayouts, density };
+    routedRef.current = { refs, positions, rows, groupSizes, edgeLayouts, density, obstacles };
     const layoutOf = (id: string) => edgeLayouts.get(id);
-    if (prev && prev.refs === refs && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts && prev.density === density) {
+    if (prev && prev.refs === refs && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts && prev.density === density && prev.obstacles === obstacles) {
       const moved = smallPositionsDelta(prev.positions, positions);
       if (moved) return routeCache.routeMoved(moved, bboxOf, columnY, layoutOf);
     }
-    return routeCache.routeAll(refs, bboxOf, columnY, layoutOf, densityMetrics(density).rowHeight);
-  }, [refs, positions, rows, groupSizes, edgeLayouts, density]);
+    return routeCache.routeAll(refs, bboxOf, columnY, layoutOf, densityMetrics(density).rowHeight, obstacles);
+  }, [refs, positions, rows, groupSizes, edgeLayouts, density, obstacles]);
 
   const [depRouteCache] = useState(() => new DepRouteCache());
   const depRoutedRef = useRef<{ deps: KeyedDepEdge[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density } | null>(null);
@@ -325,10 +334,13 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, 
     return m;
   }, [deps]);
 
-  // route-all-then-cull: render only the routes whose ref has a visible endpoint. `null` ⇒ all.
+  // route-all-then-cull: render only the routes whose ref has a visible endpoint, or whose trunk is
+  // on screen though both tables are not (the scene's edge boxes cannot see a nested trunk). `null` ⇒ all.
+  const reachBoxes = useMemo(() => routeReachBoxes(routes), [routes]);
+  const reachVisible = useVisibleEdgeIds(reachBoxes, viewportRect, ready);
   const visibleRoutes = useMemo(
-    () => (visibleRefIds ? routes.filter((r) => visibleRefIds.has(r.id)) : routes),
-    [routes, visibleRefIds],
+    () => (visibleRefIds ? routes.filter((r) => visibleRefIds.has(r.id) || reachVisible?.has(r.id) === true) : routes),
+    [routes, visibleRefIds, reachVisible],
   );
 
   // Low zoom (text illegible): draw each edge as a straight port-to-port line, no markers/dots,
@@ -400,6 +412,7 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, lod, positions, 
     const cx = tableCenterX(end === 'source' ? ref?.source.table : ref?.target.table);
     if (cx === null) return;
     store.getState().setSelectedEdge(r.id);
+    forgetIgnoredShape(r);
     startEndpointDrag(r.id, end, cx, e, e.currentTarget as SVGElement, clientToWorldX, r.loop === true);
   };
 

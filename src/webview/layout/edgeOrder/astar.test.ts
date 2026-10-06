@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Bbox } from '../../render/spatialIndex';
 import { buildRouteGrid, type Side } from './grid';
+import { LOOP_STEP } from '../../render/edgeRouter';
 import {
   chooseSides4,
   orderEdges,
@@ -124,22 +125,46 @@ describe('routeOneEdge — between stubs / columnY anchoring', () => {
   });
 });
 
-describe('chooseSides4 — picks top/bottom only when stacked vertically', () => {
-  it('side-by-side tables ⇒ left/right', () => {
+describe('chooseSides4 — the render zone rule, left/right only', () => {
+  it('target right of the source ⇒ right/left', () => {
     expect(chooseSides4(bbox(0, 0, 200, 100), bbox(600, 0, 200, 100))).toEqual({
       sourceSide: 'right',
       targetSide: 'left',
     });
   });
 
-  it('vertically stacked tables ⇒ bottom/top', () => {
-    expect(chooseSides4(bbox(0, 0, 200, 100), bbox(40, 400, 200, 100))).toEqual({
-      sourceSide: 'bottom',
-      targetSide: 'top',
+  it('target left of the source ⇒ left/right', () => {
+    expect(chooseSides4(bbox(600, 0, 200, 100), bbox(0, 300, 200, 100))).toEqual({
+      sourceSide: 'left',
+      targetSide: 'right',
     });
   });
 
-  it('routes a top/bottom edge around a side obstacle when sides are chosen that way', () => {
+  it('x-overlapping (stacked) tables ⇒ a C on the right, never bottom/top', () => {
+    for (const tgt of [bbox(40, 400, 200, 100), bbox(-40, -400, 200, 100), bbox(200, 400, 200, 100)]) {
+      expect(chooseSides4(bbox(0, 0, 200, 100), tgt)).toEqual({ sourceSide: 'right', targetSide: 'right' });
+    }
+  });
+
+  it('intersecting tables where both Cs cross a table (centre rows) ⇒ the facing connector by centre order', () => {
+    const src = bbox(0, 0, 200, 100);
+    for (const [tgt, sourceSide] of [
+      [bbox(60, 40, 200, 100), 'right'],
+      [bbox(200, 40, 200, 100), 'right'],
+      [bbox(-60, 40, 200, 100), 'left'],
+      [bbox(-200, -40, 200, 100), 'left'],
+    ] as const) {
+      expect(chooseSides4(src, tgt)).toEqual({ sourceSide, targetSide: sourceSide === 'right' ? 'left' : 'right' });
+    }
+  });
+
+  it('intersecting tables a C clears ⇒ that C, the right one first', () => {
+    expect(chooseSides4(bbox(0, 0, 200, 100), bbox(0, 100, 200, 100))).toEqual({ sourceSide: 'right', targetSide: 'right' });
+    // Centre rows 50 / 140: the right arm at y=50 runs through the target, the left C clears both.
+    expect(chooseSides4(bbox(0, 0, 200, 100), bbox(60, 40, 200, 200))).toEqual({ sourceSide: 'left', targetSide: 'left' });
+  });
+
+  it('the engine still routes caller-given top/bottom sides around a side obstacle', () => {
     // Stacked, with the bottom→top route needing to dodge an obstacle between them.
     const ep = mkEdge({
       sourceStub: { x: 100, y: 124 },
@@ -257,6 +282,45 @@ describe('orderEdges — batch determinism, crossing, progress, abort', () => {
       expect(bAlone.waypoints).toEqual([]); // unobstructed: straight
       expect(bAfterA.waypoints.length).toBeGreaterThan(0); // shared-corridor usage forced a detour
     })();
+  });
+
+  it('never runs along a lane (a loop or C trunk), but may cross it', async () => {
+    // A Z whose free route has one vertical run; a lane laid on exactly that run must move it.
+    const ep = mkEdge({ targetStub: { x: 576, y: 450 }, targetTable: bbox(600, 400, 200, 100) });
+    const [free] = await orderEdges([ep], { obstaclesFor: () => [] });
+    const runs = (r: RoutedEdge) => {
+      const cs = corners(r, ep);
+      return cs.slice(1).flatMap((q, i) => (cs[i]!.x === q.x && cs[i]!.y !== q.y ? [q.x] : []));
+    };
+    const laneX = runs(free!)[0]!;
+    expect(laneX).toBeDefined();
+    const [laned] = await orderEdges([ep], { obstaclesFor: () => [], lanes: [bbox(laneX, 0, 0, 500)] });
+    expect(laned!.ok).toBe(true);
+    for (const x of runs(laned!)) expect(Math.abs(x - laneX)).toBeGreaterThanOrEqual(LOOP_STEP);
+
+    // A lane across the straight corridor is crossed, not detoured round.
+    const [crossed] = await orderEdges([mkEdge()], { obstaclesFor: () => [], lanes: [bbox(400, 0, 0, 100)] });
+    expect(crossed!.ok).toBe(true);
+    expect(crossed!.waypoints).toEqual([]);
+  });
+
+  it('a routed C lays a lane for the edges after it', async () => {
+    // Two Cs round a wide middle table, walled in so ONE column (x=300) is the only way past it:
+    // crossing usage alone would let the second C share it; the lane makes it fall back instead.
+    const c = (refId: string, y0: number, y1: number): OrderEdgeInput =>
+      mkEdge({
+        refId,
+        sourceStub: { x: 224, y: y0 },
+        targetStub: { x: 224, y: y1 },
+        sourceTable: bbox(0, 0, 200, 100),
+        targetTable: bbox(0, 300, 200, 100),
+        sourceSide: 'right',
+        targetSide: 'right',
+      });
+    const walls = [bbox(0, 140, 260, 120), bbox(330, -400, 40, 1200), bbox(-80, -400, 40, 1200)];
+    const [first, second] = await orderEdges([c('a', 40, 340), c('b', 60, 360)], { obstaclesFor: () => walls });
+    expect(first!.waypoints.map((w) => w.x)).toContain(300);
+    expect(second!.ok).toBe(false);
   });
 
   it('reports monotonic progress ending at 100', async () => {

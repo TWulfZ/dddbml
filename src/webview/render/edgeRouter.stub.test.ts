@@ -61,7 +61,7 @@ describe('routeRefs — minimum end stub (MIN_STUB = 24)', () => {
   });
 
   it('never backtracks (no spike) when tables are closer than 2*MIN_STUB', () => {
-    // Stub length is clamped to half the port distance so the two stubs meet instead of crossing.
+    // Opposed stubs take at most a quarter of the port distance each, so they never cross.
     const hasBacktrack = (r: EdgeRoute): boolean =>
       r.segments.some((s, i) => {
         const prev = r.segments[i - 1];
@@ -77,6 +77,19 @@ describe('routeRefs — minimum end stub (MIN_STUB = 24)', () => {
       expect(hasBacktrack(r)).toBe(false);
       expect(firstSeg(r).axis).toBe('h');
       expect(lastSeg(r).axis).toBe('h');
+    }
+  });
+
+  it('clamps opposed stubs to a quarter of the gap, except the full-stub S of a gap under 48', () => {
+    const at = (bx: number) => (n: string): Bbox | undefined =>
+      n === 'public.a' ? bbox(0, 0) : n === 'public.b' ? bbox(bx, 200) : undefined;
+    // Rows 200 apart: under 48 the full stubs cross (the S); from 48 the quarter clamp rules.
+    for (const [gap, stub] of [[10, 24], [32, 24], [33, 24], [47, 24], [48, 12], [95, 23], [96, 24], [300, 24]] as Array<[number, number]>) {
+      const r = routeRefs([mkRef()], at(200 + gap), undefined, undefined)[0]!;
+      expect(len(firstSeg(r))).toBe(stub);
+      expect(len(lastSeg(r))).toBe(stub);
+      expect(firstSeg(r).rigid && lastSeg(r).rigid).toBe(true);
+      expect(r.targetStub.x - r.sourceStub.x).toBe(gap - 2 * stub);
     }
   });
 

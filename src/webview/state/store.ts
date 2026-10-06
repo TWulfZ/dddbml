@@ -6,6 +6,7 @@ import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, SchemaEditCommand, WaypointCommand } from './history';
 import { isEdgeKey } from '../render/edgeKey';
 import { densityMetrics, type DensityMetrics } from '../layout/density';
+import { effectiveEdgeLayout } from '../layout/edgeSides';
 import { recordPositionsDelta } from './positionsDelta';
 
 export interface TooltipState {
@@ -440,9 +441,11 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
     set((s) => {
       const wps = waypoints.map((w) => ({ x: Math.round(w.x), y: Math.round(w.y) }));
       // Per-pointermove caller: an unchanged list must not mint a new Map (that re-routes every ref).
-      if (sameWaypoints(s.edgeLayouts.get(refId)?.waypoints, wps)) return s;
+      // Edits start from what is drawn: a legacy vertical A* shape is not, so it is replaced whole.
+      const current = effectiveEdgeLayout(s.edgeLayouts.get(refId));
+      if (sameWaypoints(current?.waypoints, wps)) return s;
       const next = new Map(s.edgeLayouts);
-      const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
+      const merged: EdgeLayout = { ...(current ?? {}) };
       if (wps.length > 0) merged.waypoints = wps; else delete merged.waypoints;
       delete merged.auto;
       writeLayout(next, refId, merged);
@@ -471,11 +474,11 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   setEdgeSide(refId, end, side) {
     set((s) => {
-      const current = s.edgeLayouts.get(refId);
+      const current = effectiveEdgeLayout(s.edgeLayouts.get(refId));
       const currentSide = end === 'source' ? current?.sourceSide : current?.targetSide;
       if ((currentSide ?? null) === side) return s;
       const next = new Map(s.edgeLayouts);
-      const merged: EdgeLayout = { ...(next.get(refId) ?? {}) };
+      const merged: EdgeLayout = { ...(current ?? {}) };
       if (end === 'source') {
         if (side) merged.sourceSide = side; else delete merged.sourceSide;
       } else {

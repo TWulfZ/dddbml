@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { routeRefs, slideSegment, notchAtQuarter, isDipRun, deleteNotch, type EdgeRoute } from './edgeRouter';
-import type { EdgeLayout, Ref } from '../../shared/types';
+import type { EdgeLayout, Ref, Waypoint } from '../../shared/types';
 import type { Bbox } from './spatialIndex';
 
 const mkRef = (overrides?: Partial<Ref>): Ref => ({
@@ -174,5 +174,104 @@ describe('notch deepen / delete', () => {
     expect(w.filter((p) => p.y === 62)).toHaveLength(2); // dip moved to y=62
     expect(w.some((p) => p.y === 50)).toBe(true); // pins still there → notch intact
     expect(w.length).toBeGreaterThan(2);
+  });
+});
+
+describe('editing the aligned-row and narrow-gap shapes (spec 05 §2)', () => {
+  const pair = (bx: number, by: number) => (n: string): Bbox | undefined =>
+    n === 'public.a' ? bbox(0, 0) : n === 'public.b' ? bbox(bx, by) : undefined;
+  const routeAt = (bx: number, by: number, layout?: EdgeLayout): EdgeRoute =>
+    routeRefs([mkRef()], pair(bx, by), undefined, layout ? () => layout : undefined)[0]!;
+  const editableRuns = (r: EdgeRoute) => r.segments.flatMap((s, i) => (s.rigid ? [] : [i]));
+
+  // Same row, gap 100: ports (200,50)/(300,50), stubs end at 224/276, division at x=250.
+  it('aligned row: sliding either half of the divided middle bends the line, ports and stubs stay', () => {
+    const r = routeAt(300, 0);
+    const [first, second] = editableRuns(r);
+    expect(slideSegment(r, first!, 0, -30)).toEqual([{ x: 224, y: 20 }, { x: 250, y: 20 }, { x: 250, y: 50 }]);
+    expect(slideSegment(r, second!, 0, 30)).toEqual([{ x: 250, y: 50 }, { x: 250, y: 80 }, { x: 276, y: 80 }]);
+    for (const idx of [first!, second!]) {
+      const edited = routeAt(300, 0, { waypoints: slideSegment(r, idx, 0, -30) });
+      expect(edited.source).toEqual(r.source);
+      expect(edited.target).toEqual(r.target);
+      expect(edited.sourceStub).toEqual(r.sourceStub);
+      expect(edited.targetStub).toEqual(r.targetStub);
+      expect(allOrthogonal(edited)).toBe(true);
+    }
+  });
+
+  it('aligned row: a ghost notch on a half stays local to that half', () => {
+    const r = routeAt(300, 0);
+    const [first] = editableRuns(r);
+    const w = notchAtQuarter(r, first!, 0.5, 0, 20);
+    expect(w.filter((p) => p.y === 70)).toHaveLength(2);
+    expect(w.every((p) => p.x >= 224 && p.x <= 250)).toBe(true);
+    expect(allOrthogonal(routeAt(300, 0, { waypoints: w }))).toBe(true);
+  });
+
+  it('aligned row, tight gap: the halves are still separate runs that slide', () => {
+    const r = routeAt(240, 0); // gap 40 → stubs 10, division at x=220
+    const runs = editableRuns(r);
+    expect(runs).toHaveLength(2);
+    expect(slideSegment(r, runs[0]!, 0, 20)).toEqual([{ x: 210, y: 70 }, { x: 220, y: 70 }, { x: 220, y: 50 }]);
+  });
+
+  it('narrow-gap Z with nearly aligned rows: the midpoint trunk slides sideways, stubs never move', () => {
+    const r = routeAt(210, 10); // gap 10, rows 50/60 → stubs 2, trunk x=205
+    const trunk = firstEditable(r, 'v');
+    expect(r.segments[trunk]!.x1).toBe(205);
+    const w = slideSegment(r, trunk, 2, 0);
+    expect(w).toEqual([{ x: 207, y: 50 }, { x: 207, y: 60 }]);
+    const edited = routeAt(210, 10, { waypoints: w });
+    expect(edited.sourceStub).toEqual(r.sourceStub);
+    expect(edited.targetStub).toEqual(r.targetStub);
+    expect(allOrthogonal(edited)).toBe(true);
+  });
+
+  // Gap 10, rows 50/250: full stubs end at (224,50)/(186,250), the jog runs at y=150.
+  describe('narrow-gap S: each of its three middle runs is editable', () => {
+    const S = () => routeAt(210, 200);
+    const keepsEnds = (w: Waypoint[]) => {
+      const edited = routeAt(210, 200, { waypoints: w });
+      const r = S();
+      expect(edited.source).toEqual(r.source);
+      expect(edited.target).toEqual(r.target);
+      expect(edited.sourceStub).toEqual(r.sourceStub);
+      expect(edited.targetStub).toEqual(r.targetStub);
+      expect(allOrthogonal(edited)).toBe(true);
+      expect(edited.waypoints).toEqual(w);
+      return edited;
+    };
+
+    it('has the three runs between the full stubs', () => {
+      expect(editableRuns(S())).toEqual([1, 2, 3]);
+    });
+
+    it('sliding the first vertical run moves it sideways with a jog off the source stub', () => {
+      const w = slideSegment(S(), 1, 20, 0);
+      expect(w).toEqual([{ x: 244, y: 50 }, { x: 244, y: 150 }, { x: 186, y: 150 }]);
+      keepsEnds(w);
+    });
+
+    it('sliding the jog moves it up or down, both its corners follow', () => {
+      const w = slideSegment(S(), 2, 0, -40);
+      expect(w).toEqual([{ x: 224, y: 110 }, { x: 186, y: 110 }]);
+      keepsEnds(w);
+    });
+
+    it('sliding the last vertical run moves it sideways with a jog into the target stub', () => {
+      const w = slideSegment(S(), 3, -30, 0);
+      expect(w).toEqual([{ x: 224, y: 150 }, { x: 156, y: 150 }, { x: 156, y: 250 }]);
+      keepsEnds(w);
+    });
+
+    it('a ghost notch on each run stays local and keeps the literal corners', () => {
+      for (const idx of [1, 2, 3]) {
+        const vertical = S().segments[idx]!.axis === 'v';
+        const w = notchAtQuarter(S(), idx, 0.25, vertical ? 15 : 0, vertical ? 0 : 15);
+        expect(w).toHaveLength(6);
+        keepsEnds(w);
+      }
+    });
   });
 });

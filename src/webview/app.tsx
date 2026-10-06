@@ -21,6 +21,7 @@ import { FkPrompt } from './render/fkPrompt';
 import { Notice } from './render/notice';
 import { gridSnapper } from './layout/grid';
 import { postToHost } from './vscode';
+import type { Bbox } from './render/spatialIndex';
 import { SceneCache, CONTAINER_PREFIX, containerNodeId as containerId, groupNodeId as groupId } from './render/sceneCache';
 import { lodForZoom } from './render/lod';
 import { useVisibleEdgeIds, useVisibleNames } from './render/useVisibleNames';
@@ -152,6 +153,8 @@ export function App(_props: AppProps) {
     [sceneCache, schema, positions, groupState, individuallyHidden, tablesByName, rowGeometry, edgeLayouts, density, showDeps],
   );
   const { derived, spatialIndex, edgeBoxes, worldBbox } = scene;
+  // Read live: drag frames move nodes inside this same index, and the edge layer re-nests on each.
+  const edgeObstacles = useMemo(() => (box: Bbox) => spatialIndex.query(box), [spatialIndex]);
 
   const exportDerived = useMemo(
     () => ({ ...derived, containers: derived.exportContainers, effectiveDeps: showDeps ? derived.effectiveDeps : [] }),
@@ -503,6 +506,8 @@ export function App(_props: AppProps) {
               refs={derived.effectiveRefs}
               refKeyByStableId={derived.refKeyByStableId}
               visibleRefIds={visibleRefIds}
+              viewportRect={viewportRect}
+              ready={ready}
               lod={lod}
               positions={positions}
               rows={rowGeometry}
@@ -510,6 +515,7 @@ export function App(_props: AppProps) {
               worldBbox={worldBbox}
               refDiff={edgeRefDiff}
               deps={shownDeps}
+              obstacles={edgeObstacles}
             />
             {renderedTables.map((t) => {
               if (visibleNames && !visibleNames.has(t.name)) return null;

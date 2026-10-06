@@ -17,7 +17,7 @@ import { columnCenterY, estimateSize, headerCenterY } from '../layout/autoLayout
 import { routeRefs } from '../render/edgeRouter';
 import { depColor, routeDeps } from '../render/depRouter';
 import type { KeyedDepEdge } from '../render/edgeKey';
-import type { Bbox } from '../render/spatialIndex';
+import { SpatialIndex, type Bbox } from '../render/spatialIndex';
 
 const GROUP_PREFIX = '__group__:';
 
@@ -212,7 +212,14 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
   // are part of the included set. `view` keeps any edge touching the region (clipped by the viewBox).
   const refById = new Map<string, Ref>();
   for (const r of derived.effectiveRefs) refById.set(r.id, r);
-  const routes = routeRefs(derived.effectiveRefs, bboxOf, columnY, (id) => edgeLayouts.get(id), densityMetrics(density).rowHeight);
+  // The live layer's obstacles (rendered tables + collapsed groups), so an exported C picks the same side.
+  const obstacleIndex = new SpatialIndex();
+  for (const t of rendered) {
+    const b = bboxOf(t.name);
+    if (b) obstacleIndex.insert(t.name, b);
+  }
+  for (const g of derived.collapsedNodes) obstacleIndex.insert(GROUP_PREFIX + g.name, { x: g.x, y: g.y, w: g.w, h: g.h });
+  const routes = routeRefs(derived.effectiveRefs, bboxOf, columnY, (id) => edgeLayouts.get(id), densityMetrics(density).rowHeight, (box) => obstacleIndex.query(box));
   const present = (endpoint: QualifiedName): boolean =>
     endpoint.startsWith(GROUP_PREFIX) ? includedGroups.has(endpoint.slice(GROUP_PREFIX.length)) : includedTables.has(endpoint);
 

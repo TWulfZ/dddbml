@@ -69,14 +69,8 @@ function buildInputs(schema: Schema): {
     const tb = bboxes.get(r.target.table);
     if (!sb || !tb) continue;
     const { sourceSide, targetSide } = chooseSides4(sb, tb);
-    const stubOf = (b: Bbox, side: ReturnType<typeof chooseSides4>['sourceSide']) => {
-      switch (side) {
-        case 'left': return { x: b.x - 24, y: b.y + b.h / 2 };
-        case 'right': return { x: b.x + b.w + 24, y: b.y + b.h / 2 };
-        case 'top': return { x: b.x + b.w / 2, y: b.y - 24 };
-        case 'bottom': return { x: b.x + b.w / 2, y: b.y + b.h + 24 };
-      }
-    };
+    const stubOf = (b: Bbox, side: ReturnType<typeof chooseSides4>['sourceSide']) =>
+      side === 'left' ? { x: b.x - 24, y: b.y + b.h / 2 } : { x: b.x + b.w + 24, y: b.y + b.h / 2 };
     edges.push({
       refId: r.id,
       sourceStub: stubOf(sb, sourceSide),

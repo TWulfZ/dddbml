@@ -3,6 +3,7 @@ import { store } from '../state/store';
 import type { Bbox, SpatialIndex } from './spatialIndex';
 import type { QualifiedName } from '../../shared/types';
 import type { ViewportLayout } from '../../shared/types';
+import type { EdgeRoute } from './edgeRouter';
 
 /** Extra world-space margin around the viewport so nodes entering the screen are already mounted. */
 export const VISIBILITY_MARGIN = 256;
@@ -16,6 +17,30 @@ export interface ViewportRect {
 export interface EdgeBox {
   id: string;
   bbox: Bbox;
+}
+
+/**
+ * Drawn extent of every route that can leave its tables' union, which is all an `EdgeBox` from the
+ * scene knows: a C's trunk (nested outside loops and other Cs, spec 05 §1) and a self-loop's.
+ */
+export function routeReachBoxes(routes: readonly EdgeRoute[]): EdgeBox[] {
+  const out: EdgeBox[] = [];
+  for (const r of routes) {
+    const out1 = Math.sign(r.sourceStub.x - r.source.x);
+    if (!r.loop && (out1 === 0 || out1 !== Math.sign(r.targetStub.x - r.target.x))) continue;
+    let minX = Math.min(r.source.x, r.target.x);
+    let maxX = Math.max(r.source.x, r.target.x);
+    let minY = Math.min(r.source.y, r.target.y);
+    let maxY = Math.max(r.source.y, r.target.y);
+    for (const s of r.segments) {
+      minX = Math.min(minX, s.x1, s.x2);
+      maxX = Math.max(maxX, s.x1, s.x2);
+      minY = Math.min(minY, s.y1, s.y2);
+      maxY = Math.max(maxY, s.y1, s.y2);
+    }
+    out.push({ id: r.id, bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY } });
+  }
+  return out;
 }
 
 /** True when both sets hold exactly the same names (order-insensitive). */

@@ -5,7 +5,8 @@ vi.mock('../persistence', () => ({ schedulePersist: vi.fn() }));
 
 import { store } from '../state/store';
 import { zoomAt } from '../render/viewport';
-import { commitEdgeStyle, deleteDepWaypoint, flipLoopSide, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag } from './dragController';
+import { commitEdgeStyle, deleteDepWaypoint, flipLoopSide, forgetIgnoredShape, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag } from './dragController';
+import type { EdgeRoute } from '../render/edgeRouter';
 import type { EdgeLayout, Ref } from '../../shared/types';
 import { depKey, edgeKey } from '../render/edgeKey';
 
@@ -226,7 +227,7 @@ describe('table drag over A* auto edges (F20)', () => {
   const ab = edgeKey('a', ['id'], 'b', ['id']);
   const ac = edgeKey('a', ['id'], 'c', ['id']);
   const bc = edgeKey('b', ['id'], 'c', ['id']);
-  const autoShape: EdgeLayout = { waypoints: [{ x: 250, y: 40 }], sourceSide: 'bottom', targetSide: 'top', auto: true };
+  const autoShape: EdgeLayout = { waypoints: [{ x: 250, y: 40 }], sourceSide: 'left', targetSide: 'left', auto: true };
   const manual: EdgeLayout = { waypoints: [{ x: 250, y: 300 }] };
 
   beforeEach(() => {
@@ -433,5 +434,22 @@ describe('endpoint port flip', () => {
     move(60, 0);
     up(60, 0);
     expect(store.getState().edgeLayouts.get(k)).toEqual({ sourceSide: 'left' });
+  });
+
+  it('a flip on a route whose legacy auto shape the router ignored does not revive its waypoints', () => {
+    const legacy: EdgeLayout = { auto: true, color: '#f00', waypoints: [{ x: 120, y: 132 }, { x: 276, y: 132 }] };
+    store.getState().applyEdgeLayouts([[k, legacy]]);
+    forgetIgnoredShape({ id: k, shapeIgnored: true } as EdgeRoute);
+    startEndpointDrag(k, 'source', 100, ptr(100, 0), fakeNode(), (x) => x);
+    move(60, 0);
+    up(60, 0);
+    expect(store.getState().edgeLayouts.get(k)).toEqual({ color: '#f00', sourceSide: 'left' });
+  });
+
+  it('leaves a drawn shape alone', () => {
+    const shape: EdgeLayout = { auto: true, sourceSide: 'right', targetSide: 'right', waypoints: [{ x: 300, y: 40 }, { x: 300, y: 340 }] };
+    store.getState().applyEdgeLayouts([[k, shape]]);
+    forgetIgnoredShape({ id: k } as EdgeRoute);
+    expect(store.getState().edgeLayouts.get(k)).toEqual(shape);
   });
 });

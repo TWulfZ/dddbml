@@ -1,5 +1,6 @@
 import type { QualifiedName, Waypoint } from '../../../shared/types';
 import type { Bbox } from '../../render/spatialIndex';
+import { chooseHorizontalSides, type HorizontalSidePair } from '../edgeSides';
 import { buildRouteGrid, RouteGrid, WorldUsage, type Cell, type Side } from './grid';
 import {
   CROSS_COST,
@@ -55,6 +56,11 @@ export interface RoutedEdge {
 export interface OrderEdgesOptions {
   /** Obstacle bboxes overlapping `window`, excluding the edge's own two endpoint tables. */
   obstaclesFor: (window: Bbox, excludeA: QualifiedName, excludeB: QualifiedName) => Bbox[];
+  /**
+   * Vertical trunks no route may run along (crossing is fine): self-loops and the C routes the render
+   * path nests itself. Each C routed by this batch adds its own vertical runs for the edges after it.
+   */
+  lanes?: ReadonlyArray<Bbox>;
   signal?: AbortSignal;
   onProgress?: (pct: number) => void;
   /** Edges between cooperative yields. Overridable for tests; defaults to `YIELD_EVERY`. */
@@ -66,23 +72,12 @@ export interface OrderEdgesOptions {
 }
 
 /**
- * 4-side port selection for the on-demand pass (resolved decision 1). When the tables are stacked
- * more vertically than horizontally (`|dy| > |dx|`) the edge exits top/bottom; otherwise left/right
- * (the render path's `chooseSides` goes top/bottom only on x-overlap). The adapter assigns these
- * provisional sides to ALL edges BEFORE its routeRefs pass, so the resulting spread stubs are the ones A* routes between and
- * the ones that persist — no first-render kink (critic G5). Pure + deterministic (centre geometry).
+ * Port selection for the on-demand pass: the render path's left/right zone rule (spec 05 §9), so A*
+ * routes between exactly the stubs the renderer draws and never persists a top/bottom port. The
+ * adapter may still swap in a C on either side when a stub band is blocked (`provisionalSides`).
  */
-export function chooseSides4(src: Bbox, tgt: Bbox): { sourceSide: Side; targetSide: Side } {
-  const sx = src.x + src.w / 2;
-  const sy = src.y + src.h / 2;
-  const tx = tgt.x + tgt.w / 2;
-  const ty = tgt.y + tgt.h / 2;
-  const dx = tx - sx;
-  const dy = ty - sy;
-  if (Math.abs(dy) > Math.abs(dx)) {
-    return dy >= 0 ? { sourceSide: 'bottom', targetSide: 'top' } : { sourceSide: 'top', targetSide: 'bottom' };
-  }
-  return dx >= 0 ? { sourceSide: 'right', targetSide: 'left' } : { sourceSide: 'left', targetSide: 'right' };
+export function chooseSides4(src: Bbox, tgt: Bbox): HorizontalSidePair {
+  return chooseHorizontalSides(src, tgt);
 }
 
 const DIRS = [
@@ -105,6 +100,23 @@ function union(a: Bbox, b: Bbox): Bbox {
   const x1 = Math.max(a.x + a.w, b.x + b.w);
   const y1 = Math.max(a.y + a.h, b.y + b.h);
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** Closed-interval overlap (a zero-width lane on a window border still counts). */
+function intersects(a: Bbox, b: Bbox): boolean {
+  return a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
+}
+
+/** The vertical runs of a routed edge's drawn polyline (stub ends + its literal corners), as lanes. */
+function verticalRuns(ep: OrderEdgeInput, waypoints: ReadonlyArray<Waypoint>): Bbox[] {
+  const pts = [ep.sourceStub, ...waypoints, ep.targetStub];
+  const out: Bbox[] = [];
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1]!;
+    const q = pts[i]!;
+    if (p.x === q.x && p.y !== q.y) out.push({ x: p.x, y: Math.min(p.y, q.y), w: 0, h: Math.abs(q.y - p.y) });
+  }
+  return out;
 }
 
 /** Drop corners colinear with both neighbours (exact integer equality). Endpoints preserved. */
@@ -245,6 +257,7 @@ function searchGrid(
       const nx = cx + d.dx;
       const ny = cy + d.dy;
       if (grid.isBlocked(nx, ny)) continue;
+      if (d.dy !== 0 && (grid.isVerticalBlocked(cx, cy) || grid.isVerticalBlocked(nx, ny))) continue;
       const turned = dir !== NONE && dir !== d.code;
       const step = STEP_COST + (turned ? TURN_COST : 0) + CROSS_COST * grid.usageAt(nx, ny);
       const nid = grid.ordinal(nx, ny) * 5 + d.code;
@@ -368,6 +381,7 @@ export async function orderEdges(
   const maxExplored = opts.maxExplored ?? MAX_EXPLORED;
   const maxGridCells = opts.maxGridCells ?? MAX_GRID_CELLS;
   const usage = new WorldUsage();
+  const lanes: Bbox[] = [...(opts.lanes ?? [])];
   const out: RoutedEdge[] = [];
   const total = edges.length;
 
@@ -379,7 +393,7 @@ export async function orderEdges(
     // reach a stub end from the table side, which renders as a spur doubling back over the stub.
     // `carveEndpoint` still opens each stub end and the cell beyond it.
     const obstacles = [...opts.obstaclesFor(win, ep.sourceTableName, ep.targetTableName), ep.sourceTable, ep.targetTable];
-    const grid = buildRouteGrid(win, obstacles, maxGridCells);
+    const grid = buildRouteGrid(win, obstacles, maxGridCells, undefined, lanes.filter((l) => intersects(l, win)));
 
     let routed: RoutedEdge;
     if (!grid) {
@@ -390,6 +404,7 @@ export async function orderEdges(
     }
     out.push(routed);
     if (routed.ok && routed.pathWorld.length > 0) usage.add(routed.pathWorld);
+    if (routed.ok && routed.waypoints.length > 0 && ep.sourceSide === ep.targetSide) lanes.push(...verticalRuns(ep, routed.waypoints));
 
     if ((i + 1) % yieldEvery === 0) {
       opts.onProgress?.(Math.floor(((i + 1) / total) * 100));

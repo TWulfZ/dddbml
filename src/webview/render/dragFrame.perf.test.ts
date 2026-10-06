@@ -73,7 +73,9 @@ describe('drag frame — per-frame JS budget (huge.dbml)', () => {
     const router = new EdgeRouteCache();
     const depRouter = new DepRouteCache();
     let scene = scenes.update(inputsFor(store.getState().positions, s));
-    router.routeAll(scene.derived.effectiveRefs, bboxOf, columnY, layoutOf);
+    // As app.tsx wires it: every drag frame re-checks the automatic Cs against their neighbours.
+    const obstacles = (box: Bbox) => scene.spatialIndex.query(box);
+    router.routeAll(scene.derived.effectiveRefs, bboxOf, columnY, layoutOf, undefined, obstacles);
     depRouter.routeAll(scene.derived.effectiveDeps, bboxOf, portY, layoutOf);
     let rendered = store.getState().positions;
     const camera = { x: 0, y: 0, w: 1920, h: 1080 };
@@ -90,7 +92,7 @@ describe('drag frame — per-frame JS budget (huge.dbml)', () => {
       const moved = incremental ? smallPositionsDelta(rendered, positions) : null;
       const routes = moved
         ? router.routeMoved(moved, bboxOf, columnY, layoutOf)
-        : router.routeAll(scene.derived.effectiveRefs, bboxOf, columnY, layoutOf);
+        : router.routeAll(scene.derived.effectiveRefs, bboxOf, columnY, layoutOf, undefined, obstacles);
       const depRoutes = moved
         ? depRouter.routeMoved(moved, bboxOf, portY, layoutOf)
         : depRouter.routeAll(scene.derived.effectiveDeps, bboxOf, portY, layoutOf);

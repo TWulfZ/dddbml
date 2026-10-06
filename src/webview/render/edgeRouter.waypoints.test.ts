@@ -23,16 +23,14 @@ describe('routeRefs — waypoint routing', () => {
     expect(routes).toHaveLength(1);
     const r = routes[0]!;
     expect(r.waypoints).toEqual([]);
-    // Source port (200,50), target port (400,50). Rigid stubs are kept as distinct corners:
-    // a(200,50) → aStub(224,50) → bStub(376,50) → b(400,50). Visually a straight line.
-    expect(r.d).toBe('M200,50 L224,50 L376,50 L400,50');
+    // Source port (200,50), target port (400,50). Rigid stubs are kept as distinct corners and the
+    // aligned middle is divided at its midpoint: a → aStub(224) → (300) → bStub(376) → b. Visually straight.
+    expect(r.d).toBe('M200,50 L224,50 L300,50 L376,50 L400,50');
     expect(r.sourceStub).toEqual({ x: 224, y: 50 });
     expect(r.targetStub).toEqual({ x: 376, y: 50 });
-    // 3 segments: rigid stub, editable middle, rigid stub.
-    expect(r.segments).toHaveLength(3);
-    expect(r.segments[0]!.rigid).toBe(true);
-    expect(r.segments[1]!.rigid).toBe(false); // editable middle (the only subdividable section)
-    expect(r.segments[2]!.rigid).toBe(true);
+    // 4 segments: rigid stub, two editable halves of the middle, rigid stub.
+    expect(r.segments).toHaveLength(4);
+    expect(r.segments.map((s) => s.rigid)).toEqual([true, false, false, true]);
   });
 
   it('routes through a single waypoint with alternating axes', () => {

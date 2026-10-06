@@ -55,6 +55,8 @@ export class RouteGrid {
   readonly cols: number;
   readonly rows: number;
   private readonly blocked: Uint8Array;
+  /** Cells a route may cross horizontally but never run through vertically (`rasterizeLane`). */
+  private readonly vBlocked: Uint8Array;
   private usage: WorldUsage | null = null;
   /** Local usage fallback for single-edge unit tests (no bound WorldUsage). */
   private readonly localUsage = new Map<number, number>();
@@ -69,6 +71,7 @@ export class RouteGrid {
     this.cols = cols;
     this.rows = rows;
     this.blocked = new Uint8Array(cols * rows);
+    this.vBlocked = new Uint8Array(cols * rows);
   }
 
   /** Floor a world coord to a cell, clamped into the grid. */
@@ -96,6 +99,32 @@ export class RouteGrid {
   isBlocked(cx: number, cy: number): boolean {
     if (cx < 0 || cy < 0 || cx >= this.cols || cy >= this.rows) return true;
     return this.blocked[cy * this.cols + cx] === 1;
+  }
+
+  /** Out-of-bounds reads as free: `isBlocked` already keeps the search inside the window. */
+  isVerticalBlocked(cx: number, cy: number): boolean {
+    if (cx < 0 || cy < 0 || cx >= this.cols || cy >= this.rows) return false;
+    return this.vBlocked[cy * this.cols + cx] === 1;
+  }
+
+  /**
+   * Forbid vertical travel through every cell whose centre lies within `CLEARANCE` of a vertical
+   * `lane` (a loop or C trunk, `w` usually 0). Crossing it horizontally stays allowed, so a port inside
+   * a loop's span can still leave; only running alongside the trunk is ruled out. Commutative.
+   */
+  rasterizeLane(lane: Bbox): void {
+    const x0 = lane.x - CLEARANCE;
+    const y0 = lane.y - CLEARANCE;
+    const x1 = lane.x + lane.w + CLEARANCE;
+    const y1 = lane.y + lane.h + CLEARANCE;
+    const cMin = this.toCell(x0, y0);
+    const cMax = this.toCell(x1, y1);
+    for (let cy = cMin.cy; cy <= cMax.cy; cy++) {
+      for (let cx = cMin.cx; cx <= cMax.cx; cx++) {
+        const c = this.toWorld(cx, cy);
+        if (c.x >= x0 && c.x <= x1 && c.y >= y0 && c.y <= y1) this.vBlocked[cy * this.cols + cx] = 1;
+      }
+    }
   }
 
   private setBlocked(cx: number, cy: number, v: boolean): void {
@@ -177,6 +206,7 @@ export function buildRouteGrid(
   obstacles: ReadonlyArray<Bbox>,
   maxCells: number,
   cell: number = ASTAR_CELL,
+  lanes: ReadonlyArray<Bbox> = [],
 ): RouteGrid | null {
   const originX = Math.floor(window.x / cell) * cell;
   const originY = Math.floor(window.y / cell) * cell;
@@ -188,5 +218,6 @@ export function buildRouteGrid(
   for (const o of obstacles) {
     grid.rasterize({ x: o.x - CLEARANCE, y: o.y - CLEARANCE, w: o.w + 2 * CLEARANCE, h: o.h + 2 * CLEARANCE });
   }
+  for (const l of lanes) grid.rasterizeLane(l);
   return grid;
 }

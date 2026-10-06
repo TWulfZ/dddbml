@@ -162,13 +162,16 @@ export interface EdgeLayout {
   /** Per-edge stroke color (BC palette value or custom hex). Absent = theme default. */
   color?: string;
   /**
-   * Manual override of the auto-chosen source port side. Absent = `chooseSides`.
+   * Override of the zone-rule source port side (`chooseSides`, spec 05 §1). Absent = `chooseSides`.
+   * Written by a user flip, or by the A* pass (marked `auto`): always alongside its waypoints, and
+   * without waypoints only when it differs from `chooseSides`.
    * `left`/`right` anchor the port to a column row (`columnYResolver`); `top`/`bottom` use an
-   * x-ratio with no column-row anchor. The always-on render path (`chooseSides`) picks `top`/`bottom`
-   * only when the tables' x-extents overlap; the on-demand A* pass (spec 05 §9) persists them otherwise.
+   * x-ratio with no column-row anchor and are kept only for manual overrides: neither `chooseSides`
+   * nor A* (spec 05 §9) picks them, and a legacy `auto` shape carrying them is ignored whole
+   * (`isLegacyAutoShape`).
    */
   sourceSide?: EdgeSide;
-  /** Manual override of the auto-chosen target port side. Absent = `chooseSides`. See `sourceSide`. */
+  /** Override of the zone-rule target port side. Absent = `chooseSides`. See `sourceSide`. */
   targetSide?: EdgeSide;
   /**
    * The shape (waypoints + sides) came from the A* pass, not the user (spec 05, F20): it does not

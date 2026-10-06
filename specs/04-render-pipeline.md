@@ -113,7 +113,10 @@ suelto por edge fuera de esta capa). Edge culling:
   (`useVisibleEdgeIds`): una arista es visible si su **caja** (rects de sus dos nodos
   extremo ∪ waypoints ∪ alcance de un self-loop, `edgeBoxes` en `app.tsx`) cruza el viewport +
   margen 256px. Un lazo extiende la caja de su tabla por `loopReach(lazos de la tabla)` del lado en
-  que se dibuja (superset: cuenta los lazos de ambos lados; spec 05 §Self-loops).
+  que se dibuja (superset: cuenta los lazos de ambos lados; spec 05 §Self-loops). Además
+  `EdgeLayer` cullea por su extensión dibujada las rutas que pueden salir de esa caja (C con trunk
+  anidado y lazos, `routeReachBoxes`): una arista se dibuja si cualquiera de las dos cajas cruza el
+  viewport + margen (spec 05 §8).
   Probar sólo los extremos no basta: una arista entre dos tablas fuera de pantalla
   que cruza el viewport desaparecía y parpadeaba al panear. La caja es un superset
   (una diagonal en `rect` puede no tocar el viewport aunque su caja sí) — renderizar

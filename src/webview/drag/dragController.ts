@@ -4,8 +4,9 @@ import { schedulePersist } from '../persistence';
 import { slideSegment, notchAtQuarter, deleteNotch, loopSide, type EdgeRoute } from '../render/edgeRouter';
 import { screenToWorld, type Point } from '../render/viewport';
 import { gridSnapper } from '../layout/grid';
+import { effectiveEdgeLayout } from '../layout/edgeSides';
 import { computeDragEdgeChanges, hasShape, rawLayoutDeps, rawLayoutRefs } from '../layout/smartLayout/edgeReset';
-import type { Waypoint } from '../../shared/types';
+import type { EdgeLayout, Waypoint } from '../../shared/types';
 import { isFkDragActive } from './fkDrag';
 
 /**
@@ -212,8 +213,24 @@ function commitMove(cmd: MoveCommand): void {
   if (arrange) s.pushArrangeCommand(arrange);
 }
 
+/** The layout an edit starts from: the drawn one, so an ignored legacy vertical A* shape reads as none. */
+function editableLayout(refId: string): EdgeLayout | undefined {
+  return effectiveEdgeLayout(store.getState().edgeLayouts.get(refId));
+}
+
+/**
+ * Drops a stored shape the router ignored (legacy A*, spec 05 §9) before an edit on its route, so the
+ * edit starts from what is drawn and a side flip cannot revive waypoints routed for other ports.
+ * Color kept; outside undo, since the dropped shape was never visible.
+ */
+export function forgetIgnoredShape(route: EdgeRoute): void {
+  if (!route.shapeIgnored || edgeDragActive || isCanvasReadOnly(store.getState())) return;
+  const color = store.getState().edgeLayouts.get(route.id)?.color;
+  store.getState().applyEdgeLayouts([[route.id, color ? { color } : null]]);
+}
+
 function snapshotWaypoints(refId: string): Waypoint[] {
-  const layout = store.getState().edgeLayouts.get(refId);
+  const layout = editableLayout(refId);
   return layout?.waypoints ? layout.waypoints.map((w) => ({ x: w.x, y: w.y })) : [];
 }
 
@@ -234,6 +251,7 @@ function runEdgeDrag(
   e.preventDefault();
   const from = snapshotWaypoints(refId);
   const before = store.getState().edgeLayouts.get(refId);
+  const fromAuto = effectiveEdgeLayout(before)?.auto === true;
   const startX = e.clientX;
   const startY = e.clientY;
   const origin = viewportOrigin(target);
@@ -267,7 +285,7 @@ function runEdgeDrag(
 
     const to = snapshotWaypoints(refId);
     const op = to.length > from.length ? 'add' : to.length < from.length ? 'remove' : 'move';
-    const cmd = buildWaypointCommand(refId, from, to, op, before?.auto === true);
+    const cmd = buildWaypointCommand(refId, from, to, op, fromAuto);
     if (cmd) store.getState().pushWaypointCommand(cmd);
     // A gesture that ended where it began edited nothing: hand back the pre-drag layout, `auto` included.
     else if (before?.auto) store.getState().applyEdgeLayouts([[refId, before]]);
@@ -287,6 +305,7 @@ function runEdgeDrag(
  * snapshot + cumulative delta (idempotent).
  */
 export function startSegmentSlide(route: EdgeRoute, segIndex: number, e: PointerEvent, target: SVGElement | HTMLElement): void {
+  if (e.button === 0) forgetIgnoredShape(route);
   runEdgeDrag(route.id, e, target, (dxWorld, dyWorld) =>
     slideSegment(route, segIndex, dxWorld, dyWorld, gridSnapper()),
   );
@@ -306,6 +325,7 @@ export function startNotchDrag(
   target: SVGElement | HTMLElement,
 ): void {
   const axis: 'h' | 'v' = route.segments[segIndex]?.axis ?? 'h';
+  if (e.button === 0) forgetIgnoredShape(route);
   runEdgeDrag(route.id, e, target, (dxWorld, dyWorld, ev, startX, startY) => {
     const perpScreen = axis === 'v' ? ev.clientX - startX : ev.clientY - startY;
     if (Math.abs(perpScreen) < CREATE_THRESHOLD_PX) return null; // graze → no notch yet
@@ -316,9 +336,10 @@ export function startNotchDrag(
 /** Double-click a notch's dip-run to delete the whole notch (restore the flat run). */
 export function deleteEdgeNotch(route: EdgeRoute, segIndex: number): void {
   if (isCanvasReadOnly(store.getState())) return;
+  forgetIgnoredShape(route);
   const refId = route.id;
   const from = snapshotWaypoints(refId);
-  const fromAuto = store.getState().edgeLayouts.get(refId)?.auto === true;
+  const fromAuto = editableLayout(refId)?.auto === true;
   const to = deleteNotch(route, segIndex);
   store.getState().setEdgeWaypoints(refId, to);
   const cmd = buildWaypointCommand(refId, from, to, to.length < from.length ? 'remove' : 'move', fromAuto);

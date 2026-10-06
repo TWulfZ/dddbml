@@ -9,7 +9,7 @@ import { commitEdgeStyle, readEdgeStyle } from '../drag/dragController';
 import type { EdgeLayout, Layout } from '../../shared/types';
 
 const K = 'public.a::c0|public.b::c0';
-const autoShape: EdgeLayout = { waypoints: [{ x: 10, y: 10 }, { x: 10, y: 90 }], sourceSide: 'top', color: '#abc', auto: true };
+const autoShape: EdgeLayout = { waypoints: [{ x: 10, y: 10 }, { x: 10, y: 90 }], sourceSide: 'right', color: '#abc', auto: true };
 
 const seed = (layout: EdgeLayout) => store.setState({ edgeLayouts: new Map([[K, layout]]), past: [], future: [] });
 
@@ -88,5 +88,28 @@ describe('auto marker (F20) — undo/redo replays', () => {
     expect(store.getState().edgeLayouts.get(K)).toEqual(autoShape);
     store.getState().redo();
     expect(store.getState().edgeLayouts.get(K)).toEqual({ ...autoShape, color: '#123456' });
+  });
+});
+
+describe('legacy A* top/bottom shapes (spec 05 §9) — edits start from what is drawn', () => {
+  const legacy: EdgeLayout = { waypoints: [{ x: 10, y: 10 }, { x: 10, y: 90 }], sourceSide: 'bottom', targetSide: 'top', color: '#abc', auto: true };
+
+  it('a waypoint edit replaces the ignored shape whole, keeping only its color', () => {
+    seed(legacy);
+    const to = [{ x: 20, y: 10 }, { x: 20, y: 90 }];
+    store.getState().setEdgeWaypoints(K, to);
+    expect(store.getState().edgeLayouts.get(K)).toEqual({ color: '#abc', waypoints: to });
+  });
+
+  it('a side flip replaces the ignored shape whole, keeping only its color', () => {
+    seed(legacy);
+    store.getState().setEdgeSide(K, 'source', 'left');
+    expect(store.getState().edgeLayouts.get(K)).toEqual({ color: '#abc', sourceSide: 'left' });
+  });
+
+  it('re-applying the drawn (empty) waypoints leaves the stored shape untouched', () => {
+    seed(legacy);
+    store.getState().setEdgeWaypoints(K, []);
+    expect(store.getState().edgeLayouts.get(K)).toEqual(legacy);
   });
 });

@@ -51,7 +51,7 @@ segmentos completos.
    conectada con segmentos ortogonales directos + fillets.
    - **Vértice REAL (azul) en el medio de cada sección editable** (`!rigid && len ≥ MIN_HANDLE_LEN`),
      visible al seleccionar (sin hover). Arrastrarlo — o agarrar la sección en cualquier punto
-     (hit-line) — **DESLIZA toda la sección** perpendicular (`slideSegment`, 1-DOF). Son los "3 nodos
+     (hit-line, que agarra toda sección no rígida de largo > 0, aun sin vértice) — **DESLIZA toda la sección** perpendicular (`slideSegment`, 1-DOF). Son los "3 nodos
      por defecto" de dbdiagram (uno por sección de un H-V-H). Deslizar mueve las 2 esquinas de la
      sección; donde el vecino es **paralelo** (stub rígido / brazo colineal) inserta un codo para que
      el ancla del puerto **no se mueva**; donde es **perpendicular** la esquina compartida sólo se
@@ -89,8 +89,9 @@ segmentos completos.
 3. **Color por arista:** `EdgeLayout.color` reusando `ColorPopup` + paleta BC.
 4. **Flip de puerto: sólo izq↔der**, vía `EdgeLayout.sourceSide`/`targetSide`
    (override de `chooseSides`); arrastre del endpoint cruza el centro de la tabla.
-   *(El flip **manual** queda L/R; el pase A* on-demand de §9 sí puede asignar `top`/`bottom` — los
-   tipos `sourceSide`/`targetSide` admiten los 4 lados, ver §9 "modelo de lado híbrido".)*
+   *(Ni `chooseSides` ni el pase A* de §9 asignan `top`/`bottom` (decisión 2026-10-03, Limitaciones
+   5); los tipos `sourceSide`/`targetSide` siguen admitiendo los 4 lados por back-compat de overrides
+   manuales, ver §9.)*
 5. **"Reset line":** resetea forma (waypoints + sides), conserva color.
 6. **Endpoint = sólo flip de lado.** El "nodo real" (endpoint sobre la tabla)
    conmuta izq↔der (§4); **no** traslada la arista ni re-ancla a otra columna
@@ -107,15 +108,24 @@ segmentos completos.
    sin waypoints usa `defaultEditableCorners`; luego envuelve con los dos stubs).
    `slideSegment`/`notchAtQuarter`/`isDipRun`/`deleteNotch` materializan las esquinas
    (`editableCornersOf`) entre `sourceStub`/`targetStub`, así editar una sección no toca el resto.
-   **Clamp anti-spike:** sólo para stubs **opuestos sobre el mismo eje** (der↔izq,
-   abajo↔arriba), la longitud se limita a la mitad de la distancia entre puertos en
-   ese eje, así los dos stubs **se encuentran en vez de cruzarse** cuando las tablas
-   están a < `2*MIN_STUB`. Stubs en la **misma dirección** (p. ej. tras un flip, ambos
-   `left`) o perpendiculares nunca se cruzan y conservan el largo completo — antes
-   el clamp los colapsaba a 0 y la arista corría pegada al borde, sin sección
-   editable (auditoría F52). Consecuencia: una arista misma-fila muy cercana queda
-   como conector recto rígido sin sección editable; una arista offset cercana
-   conserva su trunk vertical editable.
+   **Clamp anti-spike (decisión 2026-10-03):** sólo para stubs **opuestos sobre el mismo eje**
+   (der↔izq, abajo↔arriba), cada stub mide `min(MIN_STUB, ⌊gap/4⌋)` (`gap` = distancia entre puertos
+   en ese eje; con `gap < 4` el cuarto queda fraccional para que el stub no colapse sobre el borde).
+   Aplica a todo gap: la **mitad central** del hueco queda siempre como sección editable y los stubs
+   nunca se cruzan. **Excepción — S de hueco angosto (decisión 2026-10-05, estilo dbdiagram; umbral
+   revisado el mismo día con capturas de dbdiagram):** stubs `left`/`right` **enfrentados** con
+   `0 < gap < 2·MIN_STUB` (48) y filas de puerto a `|Δy| ≥ MIN_STUB` (24) conservan **ambos stubs
+   completos** (24) aunque se crucen, y el medio es la S (`narrowGapSJog` en `layout/edgeSides.ts`, §1
+   "S de hueco angosto"), siempre que algún escalón la deje fuera de ambas tablas. Con filas casi
+   alineadas (`|Δy| < 24`, no cabe el escalón con sus esquinas redondeadas), puertos espalda con
+   espalda o tocándose (`gap ≤ 0`), `gap ≥ 48` o una S que correría dentro de sus tablas sigue el clamp
+   a un cuarto. La regla es sólo geométrica (puertos,
+   lados y bboxes de sus dos tablas, nunca waypoints), así las esquinas materializadas de una S editada
+   siguen tocando los mismos stubs.
+   Stubs en la **misma dirección** (p. ej. la C, ambos `right`) o perpendiculares
+   nunca se cruzan y conservan el largo completo — antes el clamp los colapsaba a 0 y la arista
+   corría pegada al borde, sin sección editable (auditoría F52). *(Antes: mitad del gap, así una
+   arista misma-fila a < `2*MIN_STUB` quedaba como conector recto rígido sin sección editable.)*
 8. **Animación de flujo en hover/selected.** Una `<path>` overlay (clon de `r.d`,
    `pointer-events: none`) con puntos redondos (`stroke-dasharray`) y
    `@keyframes ddd-edge-flow` animando `stroke-dashoffset` negativo → los puntos
@@ -147,6 +157,50 @@ segmentos completos.
   auto-arrange, que mueve cada extremo distinto, sigue descartando formas. **Implementado**
   (`computeDragEdgeChanges`) — ver "Marcador `auto`" en §9.
 
+- **¿Las deps lógicas (spec 18, `depRouter.ts`) deberían adoptar la regla de zonas con C por la
+  derecha?** Hoy eligen L/R por centros y recortan stubs a la mitad del gap (§10), así que con
+  x-overlap su curva puede pasar por detrás de las tablas, y una ref y una dep entre las mismas dos
+  tablas salen por lados distintos. Opciones: (a) reusar `chooseHorizontalSides` y el clamp a un cuarto (la C de una
+  curva necesita handles hacia afuera en ambos extremos); (b) dejarlas como están (curva libre,
+  editable por waypoints). Sin decidir; fuera del alcance de la decisión 2026-10-03.
+- **Anidado de C — pendientes (2026-10-05, no bloqueantes).** (1) ~~La caja de culling de una arista
+  es la unión de sus tablas: un trunk anidado muy afuera puede quedar fuera de ella.~~ **Resuelto
+  (2026-10-05):** las C y los lazos también se cullean por su extensión dibujada (§8). (2) Lazos de dos
+  tablas distintas que se enciman no se anidan entre sí (sólo por tabla). (3) ~~Una C bloqueada en
+  un hueco angosto se anidaba a través de la tabla vecina.~~ Resuelto con el espejado por vecinos
+  (arriba); sigue abierto sólo con **ambos** lados bloqueados: el render la anida a través del vecino
+  y A\* la fija dentro (sin solaparse en y con un lazo, por los carriles) o cae a fallback.
+  ~~Los lazos no miran al vecino (dos lazos a `borde + 60`, a 4 px de una columna a 64).~~ **Resuelto
+  (2026-10-05):** la pila se recoge a `LOOP_CLEARANCE` del vecino (§Self-loops).
+  (4) Los carriles salen del pase
+  provisional: si una C bloqueada sale de A\* con waypoints, las C despejadas que anidaba pueden
+  quedar hasta un escalón más adentro de su carril. ¿Conviene un segundo pase?
+  (5) **Z frente a una pila de lazos sin x libre (Limitaciones 7).** Con el hueco por defecto (64) la
+  Z cruza la pila de una tercera tabla y "Ordenar aristas" no lo corrige. Opciones: (a) aceptarlo
+  (vigente, decisión 2026-10-05: sin x libre el trunk conserva el medio); (b) que la pila ceda un
+  carril a toda Z que pase a su lado, tratando el fin de stub de la Z como un vecino más en
+  `loopRoom` (con 2 lazos y columna a 64 ⇒ lazos a `W+32`/`W+38`, trunk de la Z en `W+47`): el
+  alcance de los lazos pasa a depender de rutas ajenas, y `routeMoved` debe recalcularlo cuando se
+  mueve cualquier Z cercana. Sin decidir.
+- **S de hueco angosto — pendientes (2026-10-05, no bloqueantes).** (1) En `gap` 47 → 48 → 49 la
+  forma es continua (las verticales se juntan en el punto medio y las esquinas conservan el radio). Sí
+  hay salto en los otros bordes de la ventana: con `|Δy|` 24 → 23 o al dejar de despejar sus tablas la
+  ruta pasa de stubs completos con escalón a stubs recortados con trunk al medio. *(Historia: una
+  revisión intermedia del 2026-10-05 cortaba en 32 porque el escalón de 1–15 px de gap 33–47 se veía
+  como un serrucho; las capturas de dbdiagram muestran que ese escalón chico es el aspecto buscado, y
+  el serrucho venía de redondear a enteros el fillet de < 1 px y de medir el radio contra el stub
+  recortado — §1 "Esquinas".)* (2) Sólo `left`/`right`: un override manual `top`/`bottom` enfrentado y angosto
+  sigue con el clamp. (3) Una S editada (waypoints) cuyo par sale de la ventana al mover una tabla
+  pasa a stubs recortados y `cornersThrough` inserta un codo contra las esquinas guardadas (igual que
+  cualquier cambio de clamp). (4) Tablas encimadas en x (gap < 24) sin hueco vertical no tienen S: el
+  clamp las deja como Z con trunk en el hueco visible, que con pocos px sigue siendo angosto.
+- ~~**¿Handles en las mitades de una fila alineada con hueco chico?**~~ **Resuelto (2026-10-03,
+  verificación visual):** con el umbral de `MIN_HANDLE_LEN` (16) sobre la hit-line, un par alineado
+  con hueco < ~64 px no se podía editar (hueco 40 ⇒ mitades de 10 px: sin vértice y el arrastre sólo
+  seleccionaba), lo que incumplía la decisión 7. Ahora **agarrar** y **mostrar** van separados: toda
+  sección no rígida de largo > 0 se desliza desde su hit-line (con cursor por eje), y sólo el vértice
+  azul (`≥ MIN_HANDLE_LEN`) y los fantasmas (`≥ MIN_GHOST_LEN`) siguen con umbral, porque no caben
+  en un tramo corto.
 - **Undo de color/flip** vive en `EdgeStyleCommand` (`history.ts`); el undo de
   forma en `WaypointCommand`. "Reset line" emite **un solo** `ArrangeCommand` de sólo
   aristas (`buildEdgesResetCommand`, snapshot completo del `EdgeLayout`): un Ctrl+Z
@@ -167,18 +221,128 @@ segmentos completos.
 
 Para cada ref, dado bbox source y target:
 
-**Elegir lados** (`chooseSides`): horizontal por defecto —
-`dx = tgtCenter.x - srcCenter.x`; `dx >= 0` ⇒ source=right, target=left; si no,
-source=left, target=right. **Excepción x-overlap** (decisión 2026-10-01, Limitaciones 5): si los
-extents-x de las dos tablas se solapan (`src.x < tgt.x + tgt.w && tgt.x < src.x + src.w`), la
-arista sale por `bottom` y entra por `top` (o `top`→`bottom` si el centro del target queda arriba),
-así el tramo medio V-H-V corre por el hueco vertical y nunca detrás de las tablas. Si los bboxes
-además se intersecan (sin hueco limpio en ningún eje) gana el eje de menor penetración: con
-`gapX`/`gapY` = separación entre bordes (negativa si se solapan), vertical sólo si
-`gapX < 0 && gapY > gapX`; dos tablas lado a lado que se pisan unos px siguen en L/R (decisión
-2026-10-02: el V-H-V las cruzaba a ambas de punta a punta). (Override manual:
-ver §4 — un override L/R en **cualquiera** de los dos extremos devuelve el extremo automático a la
-regla horizontal, para no unir un lado L/R con uno vertical mediante un codo que cruce la tabla.)
+**Elegir lados** (`chooseSides` → `chooseHorizontalSides` en `layout/edgeSides.ts`, compartida con
+A\*, §9): **siempre `left`/`right`**, por zonas al estilo dbdiagram con la **derecha favorecida**
+(decisión 2026-10-03, Limitaciones 5). Con `gapR = tgt.x − (src.x + src.w)` y
+`gapL = src.x − (tgt.x + tgt.w)`:
+
+- `gapR > 0` (target enteramente a la derecha) ⇒ source=`right`, target=`left` (Z).
+- `gapL > 0` (target enteramente a la izquierda) ⇒ source=`left`, target=`right` (Z espejada).
+- Solape en x, **tocarse incluido** (`gap ≤ 0`), **con hueco vertical** (`gapY > 0`) ⇒
+  source=`right`, target=`right`: una **C por la derecha** que rodea ambas tablas (la geometría
+  misma-dirección de `defaultEditableCorners`, trunk anidado, abajo).
+- **Bboxes que se intersecan** (solape en x **y** en y, tocarse incluido: lado a lado con `gap = 0`
+  o apiladas con `gapY = 0`, `boxesIntersect`) ⇒ **C por la derecha si no atraviesa ninguna de sus dos
+  tablas; si no, C por la izquierda; si ambas atraviesan, el conector enfrentado** (decisión
+  2026-10-05, reemplaza la Z enfrentada, que con solape real quedaba casi invisible: puertos cruzados
+  bajo la otra tabla). "Atraviesa" (`cClearsEndpoints`): algún brazo (puerto → trunk, stub incluido) o
+  el trunk a `MIN_STUB` del borde más lejano pasa por el **interior** abierto de alguna de las dos
+  tablas (correr sobre un borde no cuenta; cada brazo arranca en el borde de su propia tabla, así que
+  sólo puede atravesar la otra). El anidado sólo empuja el trunk más afuera, así que la C sin anidar
+  decide por todas. El conector enfrentado es la geometría opuesta por orden de centros (centro-x del
+  source ≤ el del target ⇒ `right`→`left`, si no `left`→`right`): en el caso típico (lado a lado,
+  cada fila corre por la otra tabla) los stubs se recortan a 0 y la arista es el tramo vertical sobre
+  el borde compartido. La regla necesita las **filas de puerto**: el router las lee a ratio ½ (fila de
+  columna resuelta, si no el medio del lado; `halfRatioRows`), igual que las specs de trunk, así sólo
+  depende de bboxes + filas de columna y `routeMoved` coincide con un rebuild. Llamadas sin filas
+  (`chooseSides`/`chooseSides4` sólo con bboxes) usan las filas de los centros. La C elegida entra al
+  anidado como cualquier C; su espejado por vecinos (abajo) sólo se permite si la C espejada tampoco
+  atraviesa sus tablas.
+
+**Anidado de C (decisión 2026-10-05, `nestTrunks` en `edgeRouter.ts`).** Antes todo trunk de C caía
+en `max(stub)` = borde + 24, así que dos C distintas compartían una misma vertical y una C corría
+sobre el trunk de un self-loop (visto en `selfloop.dbml`). Ahora, para toda C **automática** (mismo
+lado `left`/`right` en ambos extremos, sin waypoints ni `dx` legacy; manual o `auto` sin waypoints
+incluidas — las que llevan waypoints conservan su forma literal):
+
+- **Piso:** en coordenadas locales del lado (x crece hacia afuera; `−x` a la izquierda), el trunk
+  queda en `max` sobre sus dos tablas de `borde + (n > 0 ? loopReach(n + 1) : MIN_STUB)`, con `n` =
+  lazos de esa tabla en ese lado: **`LOOP_STEP` (12) por fuera del lazo más lejano** de cualquiera de
+  sus tablas (el lazo más lejano está a `loopReach(n)`), aunque sus puertos no caigan en el tramo
+  del lazo. Sin lazos es el `max(stub)` de siempre (redondeado igual).
+- **Anidado:** los lazos se colocan primero (fijos por su rango). Las C de un mismo lado se colocan
+  por **tramo vertical** ascendente (`|a.y − b.y|` de sus puertos; desempate por `ref.id`, nunca el
+  orden de `refs[]`): cada una arranca en su piso y, recorriendo las ya colocadas por trunk
+  ascendente, salta a `otro + LOOP_STEP` cuando (a) sus extensiones verticales se solapan (cerradas),
+  (b) los brazos de la otra arrancan dentro de su alcance (`otro.inner ≤ x`, `inner` = borde más
+  cercano de donde salen sus brazos) y (c) `otro + LOOP_STEP > x`. Una sola pasada basta (los saltos
+  sólo crecen). Resultado: la de tramo menor queda adentro, C con extensiones solapadas quedan a
+  ≥ `LOOP_STEP` entre sí y fuera de todo lazo que toquen (también de una tercera tabla); C de otra
+  columna (brazos fuera de alcance) no se empujan. A la izquierda es el espejo exacto.
+- **Vecinos (decisión 2026-10-05, tras verificación visual).** El anidado empuja trunks hacia
+  afuera sin mirar la columna vecina: con el hueco por defecto del layout (64 px) un trunk a
+  `borde + loopReach(3)` (o la 3.ª C sin lazos) caía **bajo la tabla vecina** y la C parecía entrar
+  en ella. Ahora el router recibe una consulta de obstáculos (`ObstacleQuery`: tablas y grupos
+  colapsados renderizados; los contenedores de grupo no cuentan) y una C **automática** (lados sin
+  persistir) se **espeja** (`left`/`left`) cuando su slot anidado no está libre y el espejado sí.
+  "Libre" = ningún nodo ajeno a sus dos tablas toca la franja que va de su borde más cercano hasta
+  `trunk + MIN_STUB` a lo largo de su tramo vertical (brazos + trunk, y el trunk queda fuera de la
+  franja de stubs del vecino). Con ambos lados bloqueados conserva el suyo (el anidado manda; "Order
+  edges" puede desviarla). Una C con lados persistidos (manual o de A\*) nunca se espeja. Sin consulta
+  (tests, callers viejos) no hay espejado. Con 64 px caben 2 C anidadas por lado sin lazos; con un
+  lazo en una de sus tablas, ninguna. La regla es determinista: la C se decide en el orden del
+  anidado (tramo, `ref.id`) y las specs leen los lados **base** (sin espejar), filas de columna y
+  bboxes —nunca ratios de puertos—, así un espejado no realimenta su propia causa; sólo el tramo de
+  un puerto sin columna resuelta (ratio ½) es aproximado. La usan el canvas (`app.tsx` pasa el
+  `spatialIndex` de la escena), el export de imagen y el pase provisional de A\* (§9).
+- **Drag:** el rango depende de posiciones, así que `routeMoved` recalcula el `TrunkSpec` de cada
+  arista afectada y, si alguna es o era lazo/C —o hay alguna C espejable y consulta de obstáculos,
+  porque mover **cualquier** nodo (aun sin refs) puede bloquear o liberar su lado— re-anida
+  **todas**, re-decide los puertos de las C cuyo espejado cambió y re-rutea cada C cuyo trunk cambió.
+  Las specs no afectadas no cambian (lados base, filas y bboxes), así que equivale a un rebuild
+  completo. Costo: `O(C log C + vecinos)` + una consulta al índice por C espejable, por frame, sólo
+  cuando hay C en juego (huge.dbml: frame incremental ~0,7 ms, sin cambio medible).
+
+La Z llega hasta que las tablas se tocan: con un hueco de 1 px sigue siendo Z, el clamp de stubs
+(decisión 7) deja la mitad central editable y el trunk cae en el **punto medio** del hueco
+(`midpointBetween`: el medio redondeado, o el exacto si redondear lo pegaría a un extremo de stub,
+gaps de 1–3 px). Nunca sale por `top`/`bottom` por sí misma; un override manual `top`/`bottom` (sin
+`auto`) se sigue dibujando. Los self-loops no pasan por esta regla (§Self-loops).
+
+**S de hueco angosto (decisión 2026-10-05, referencia dbdiagram; umbral sólo en x).** Con el clamp a
+un cuarto, un par a pocos px (p. ej. hueco 10 ⇒ stubs de 2) dejaba el trunk apretado contra ambas
+tablas. Ahora, para stubs `left`/`right` enfrentados con `0 < gap < 2·MIN_STUB` (48) y
+`|Δy| ≥ MIN_STUB` entre las filas de puerto (`narrowGapSJog`): ambos stubs miden `MIN_STUB` completos,
+el escalón mide `48 − gap` (1 px en gap 47: un escalón chico es lo esperado, como en dbdiagram) y
+el medio por defecto es `aStub → (aStub.x, jogY) → (bStub.x, jogY) → bStub`: baja (o sube) pegado a
+su stub, cruza en horizontal y baja al stub destino. Son **tres tramos editables** separados (V-H-V),
+cada uno con su vértice/fantasmas cuando su largo alcanza los umbrales. El `dx` legacy no aplica (no
+hay un trunk único).
+**Consciente de las cajas (revisión 2026-10-05).** Con `gap < 24` los stubs completos pasan el borde
+de la otra tabla, y en layouts empaquetados (huecos de 16) la S corría escondida bajo sus propias
+tablas. `jogY` se elige entre dos candidatos, en orden: el punto medio de las filas
+`round((a.y + b.y) / 2)` y, si una tabla está entera encima de la otra, el medio del hueco vertical
+entre ellas (como dbdiagram, que escalona en ese hueco). Se toma el primero con el que **ningún tramo**
+(los dos verticales, el escalón y cada stub contra la otra tabla) entra en el bbox de alguna de las
+dos tablas inflado `S_CLEARANCE` (4 px; un tramo sobre el contorno se dibuja debajo de la tabla). Si
+ninguno sirve (p. ej. lado a lado con filas solapadas a hueco 10–16, o un hueco vertical de < 8 px)
+rige el clamp, cuyo trunk queda en el hueco visible. Fuera de la ventana rige lo de arriba (clamp +
+trunk al punto medio). Aplica también a lados persistidos (manuales o de A\*) que cumplan la
+geometría.
+**Continuidad en 48.** Con `gap = 48` los dos stubs completos terminarían en la misma x, que es
+justo el punto medio donde la Z (clamp a 12 + trunk al medio) pone su trunk: una sola vertical. De
+ahí en adelante rige la Z, así 47 → 48 → 49 mueve cada esquina a lo sumo 1 px. Con `gap ≤ 0` y
+hueco vertical rige la C (arriba).
+**Esquinas** (`roundedPathString`). El radio de cada fillet se acota a la mitad del **tramo recto**
+a cada lado hasta el próximo giro, atravesando puntos colineales (el fin de un stub recortado): en
+gap 48 el trunk tiene el mismo radio 8 que la vertical de la S en 47, en vez de 6 por el stub de 12.
+Un punto colineal se emite sólo fuera de los fillets vecinos (dentro haría retroceder el path). Las
+coordenadas de fillet se redondean a 2 decimales, no a enteros: un escalón de 1 px tiene fillets de
+0,5 que redondeados a entero colapsaban en un `Q` degenerado y un salto seco.
+
+**Z frente a lazos ajenos (decisión 2026-10-05).** El trunk de una Z enfrentada (sin waypoints ni `dx`
+legacy, filas distintas) que en el punto medio cae dentro de la **envolvente** de los lazos de una
+**tercera** tabla —`borde … trunk del lazo` × filas del lazo, inflada `LOOP_CLEARANCE` (8), con las
+filas solapando (cerrado) el tramo vertical de la Z— se **desliza** a la x libre más cercana al medio,
+estrictamente entre los fines de stub (`slideZTrunk`). Si no hay x libre conserva el medio. Los lazos
+de sus propias tablas no cuentan (su puerto sale por esa envolvente igual). Caso de referencia
+(`selfloop.dbml` + `audit` a 64 px): con los dos lazos de employees recogidos a `W+44`/`W+56`
+(§Self-loops) la franja libre entre stubs (`W+16 … W+48`) queda entera dentro de la envolvente, así
+que la Z departments→audit **conserva** el medio `W+32` y su brazo en la fila de `manager_id` sigue
+sobre el brazo de ese lazo, también tras "Ordenar aristas" (Limitaciones 7); con 120 px de hueco el trunk pasa a `W+68`, fuera de la pila. La S no
+desliza (sus verticales son los stubs completos). En `routeMoved`, cuando cambia la envolvente de un
+lazo (su tabla o un vecino se movió) se re-rutea toda ruta cuyos puertos encierran la envolvente
+vieja o nueva, así coincide con un rebuild.
 
 **Distribuir ports** en cada lado: agrupar por `(table, side)`, sortar por el
 otro extremo a lo largo del lado (reducción baricéntrica de cruces: en `left`/`right` por la `y`
@@ -209,8 +373,13 @@ vista.
 sin colapsar — un codo de seguridad sólo para un par no-alineado v1, que junto a un
 stub avanza primero sobre el eje de ese stub, así tras un stub `top`/`bottom` nunca
 corre plano sobre el borde); sin waypoints ⇒ `defaultEditableCorners`: stubs
-horizontales ⇒ recta misma-fila o H-V-H con `midX` centrado (+ `dx` legacy); stubs
-verticales ⇒ el espejo V-H-V con `midY` centrado (el `dx` legacy no aplica); uno de
+horizontales opuestos ⇒ H-V-H con `midX` en el punto medio (`midpointBetween`, + `dx` legacy), salvo
+la **S de hueco angosto** (V-H-V entre stubs completos, `narrowGapSCorners`, ver arriba);
+**misma fila** (`aStub.y === bStub.y`) ⇒ el mismo H-V-H con trunk de largo 0: dos esquinas
+coincidentes en `midX` parten el tramo medio en **dos mitades editables** (deslizar/notch), y se
+dibuja como una sola recta (decisión 2026-10-03; antes era un único tramo recto sin división); stubs
+verticales (sólo override manual) ⇒ el espejo V-H-V con `midY` en el punto medio (el `dx` legacy no
+aplica); uno de
 cada ⇒ una sola L; stubs en la **misma dirección** ⇒ ruta en C cuyo trunk queda más
 allá del stub que más sobresale (`max`/`min`), nunca de vuelta sobre un stub ni a
 través de una tabla. Luego se **envuelve** con los stubs rígidos: `corners = [a, ...editable, b]`,
@@ -244,8 +413,9 @@ un notch local — sin mover el resto.
   editable (`!rigid && len ≥ MIN_HANDLE_LEN`), visible sin hover; más los 2 handles de endpoint
   (flip, §4). En **hover de una sección** (`len ≥ MIN_GHOST_LEN`) ⇒ **2 fantasmas** (`.ddd-edge-ghost`,
   gris) a ¼ y ¾. **No hay handles en las esquinas.**
-- **Deslizar (vértice real / agarrar la sección):** la hit-line `.ddd-edge-segment-handle` o el
-  vértice central inician `startSegmentSlide` → `slideSegment` (1-DOF perpendicular, inmediato). La
+- **Deslizar (vértice real / agarrar la sección):** la hit-line `.ddd-edge-segment-handle` (en toda
+  sección no rígida de largo > 0, también las demasiado cortas para el vértice, p. ej. las mitades de
+  10 px de un par alineado a 40 px) o el vértice central inician `startSegmentSlide` → `slideSegment` (1-DOF perpendicular, inmediato). La
   sección entera se mueve a un nivel paralelo; vecino perpendicular ⇒ la esquina se desplaza, vecino
   paralelo (stub/brazo colineal) ⇒ se inserta un codo (el ancla del puerto no se mueve). Deslizar un
   dip-run lo **profundiza**; arrastrarlo a < `NOTCH_MERGE_SNAP` (10 u) del nivel del pin ⇒ snap y el
@@ -262,9 +432,15 @@ un notch local — sin mover el resto.
   fillet `L (esquina−r) · Q esquina (esquina+r)`, `r = min(CORNER_RADIUS, dPrev/2, dNext/2)`.
   Colineal/coincidente ⇒ `L` plano. Suavizado **sólo de render**; nunca un nodo.
 - **Stubs rígidos:** el primer/último segmento (`rigid`) nunca recibe handle ni se edita.
+- **S de hueco angosto (§1):** sus tres tramos (vertical junto al stub origen, escalón horizontal,
+  vertical junto al stub destino) se deslizan y aceptan notch como cualquier sección; deslizar un
+  vertical inserta el codo contra su stub (vecino paralelo), deslizar el escalón mueve sus dos
+  esquinas. Las esquinas materializadas son literales y, como el largo del stub sólo depende de la
+  geometría, siguen tocando los stubs completos.
 - **Snap a rejilla** si el imán está ON.
 
-Implementación: `edgeLayer.tsx` (vértice real `selected && !rigid && len ≥ MIN_HANDLE_LEN`; fantasmas
+Implementación: `edgeLayer.tsx` (`SelectedEdgeRuns`: hit-line agarrable `!loop && !rigid && len > 0`;
+vértice real `+ len ≥ MIN_HANDLE_LEN`; fantasmas
 `+ len ≥ MIN_GHOST_LEN && hover`; doble-click → `deleteEdgeNotch`), `dragController.ts` →
 `startSegmentSlide` + `startNotchDrag` (gate de 8px) + `deleteEdgeNotch`, ambos sobre el loop
 compartido `runEdgeDrag`. Reusa `setEdgeWaypoints` + `WaypointCommand`. Motor (`edgeRouter.ts`):
@@ -288,9 +464,10 @@ interface EdgeLayout {
 
 `routeRefs` usa el override si existe; si no, `chooseSides`. Drag del endpoint
 más allá del centro del campo conmuta el lado y persiste. El gesto arranca tras
-`CLICK_THRESHOLD_PX` (4 px de pantalla), como el drag de tabla: un puerto `top`/`bottom`
-automático (x-overlap) cae cerca del centro-x de la tabla, y sin umbral el temblor de un click
-fijaba `left`/`right` y reemplazaba la ruta automática (2026-10-02).
+`CLICK_THRESHOLD_PX` (4 px de pantalla), como el drag de tabla: sin umbral, el temblor de un click
+sobre un puerto cercano al centro-x de la tabla (p. ej. uno `top`/`bottom` de override manual)
+fijaba un lado y reemplazaba la ruta automática (2026-10-02). El flip parte del layout **dibujado**:
+sobre una forma `auto` legada con `top`/`bottom` (ignorada, §9) la reemplaza entera.
 
 ### 5. Toolbar de arista seleccionada (color + reset) — reemplaza click derecho
 
@@ -348,7 +525,11 @@ Cuatro piezas, escalonadas:
    incremental").
 2. **Route-all-then-cull (puertos estables).** Se rutean **todas** las
    `effectiveRefs` (no el subconjunto visible) y luego se filtran las *rutas* por
-   `visibleRefIds` (memo en `app.tsx`: refs con ≥ 1 endpoint en `visibleNames`).
+   `visibleRefIds` (cajas de escena, spec 04) **o** por su extensión dibujada cuando la ruta puede
+   salir de la unión de sus tablas: una C (trunk anidado afuera de lazos y otras C) o un lazo
+   (`routeReachBoxes` + `useVisibleEdgeIds` en `EdgeLayer`, decisión 2026-10-05). Así una arista
+   cuyo trunk está en pantalla nunca se cullea aunque ambas tablas estén fuera, sin importar la
+   profundidad del anidado (antes sólo lo cubría `VISIBILITY_MARGIN`, ~19 niveles).
    Esto además **arregla un jitter**: la distribución de puertos
    (`ratio = (i+1)/(n+1)` por `(table, side)`) dependía del subconjunto visible,
    así que `n` cambiaba al panear y los puertos **temblaban**. Ruteando sobre el
@@ -394,7 +575,8 @@ deshacible y persistida (escribe `EdgeLayout`), con indicador de progreso porque
 > **Estado real de las 4 metas (auditoría 2026-09-08):** la meta 3, *mejor selección de lado*,
 > sigue **abierta**: `routeOneEdge` hace **una** búsqueda con los lados que le da `chooseSides4`
 > y descarta el coste; no existe comparación de coste entre pares de lados (su docstring lo
-> afirmaba y se corrigió). **`MAX_GRID_CELLS` bajó de 4M a 250k**: `searchGrid` reserva ~105 B por
+> afirmaba y se corrigió). Desde 2026-10-03 la única alternativa de lado es la C de
+> `provisionalSides` cuando una franja de stub está bloqueada (abajo). **`MAX_GRID_CELLS` bajó de 4M a 250k**: `searchGrid` reserva ~105 B por
 > celda antes del primer pop, así que el tope es en realidad un tope de memoria (250k ≈ 26 MB por
 > arista; 4M permitía ~420 MB con una sola tabla lejana). Ventanas mayores caen al H-V-H por defecto.
 
@@ -419,40 +601,86 @@ modo duplican superficie + obligan a reconciliar puertos ajenos con nuestro ancl
 `columnYResolver`. Un solo router respeta nativamente los stubs rígidos (decisión 7) y el anclaje a
 fila de columna PK/FK.
 
-##### Modelo de lado híbrido (resuelto con el usuario — resuelve el conflicto decisión-7 ↔ meta-3)
+##### Modelo de lados: sólo `left`/`right` (decisión 2026-10-03, reemplaza el modelo híbrido)
 
-El spec tenía una tensión aparente: la decisión 7 dice "el router A* rutea **entre los stubs ya
-elegidos**", mientras la meta-3 + "ampliar `chooseSides`" implican que A* **elige** el lado (incl.
-top/bottom). Resolución acordada:
+La decisión 7 dice que A* rutea **entre los stubs ya elegidos**; la meta 3 sugería que A* eligiera
+el lado (incl. top/bottom). Del 2026-05-31 al 2026-10-02 rigió un modelo **híbrido** (A* podía
+persistir `top`/`bottom`, y desde 2026-10-01 también el render con x-overlap); se revirtió porque
+dejaba FKs pegadas bajo la tabla, puertos despegados de la fila de columna y tablas apiladas unidas
+por una recta vertical (Limitaciones 5). Modelo vigente:
 
-- **Camino de render siempre-activo (`chooseSides`, §1): `left`/`right`, salvo x-overlap.**
-  Preserva el anclaje a fila de columna y mantiene el ruteo barato/predecible. *(Decisión
-  2026-10-01: con los extents-x solapados elige `top`/`bottom` — Limitaciones 5.)*
-- **El pase A* on-demand SÍ puede reasignar un extremo a `top`/`bottom`** (selección de 4 lados,
-  `chooseSides4` en `astar.ts`) cuando reduce cruces/obstáculos, y persiste
-  `sourceSide`/`targetSide ∈ 'left'|'right'|'top'|'bottom'` (E3 **se usa de verdad**). El render path
-  luego dibuja fielmente ese lado persistido vía `portPoint` (que ya soporta los 4 lados).
-  **Sólo se persisten lados que aportan información** (auditoría F20): si el par coincide con lo que
-  `chooseSides` del render elegiría no se escribe (con x-overlap eso incluye `bottom`/`top`; un
-  L/R de A\* sobre tablas x-solapadas sí se escribe), y un fallback (`ok:false`) no escribe lados
-  provisionales. Los lados persistidos van marcados `auto` (abajo), así que no cuentan como forma
-  manual.
-- **Stub vertical sin lugar (decisión 2026-10-02).** El adaptador descarta el par `top`/`bottom`
-  de `chooseSides4` cuando la franja de un stub vertical (todo el lado × `ASTAR_CELL + CLEARANCE`
-  hacia afuera) toca una **tercera** tabla: en una columna apilada por el smart layout (hueco
-  `BASE_MIN_GAP` = 16 < stub) el extremo del stub cae dentro de la tabla vecina y A\* no tiene ruta
-  limpia. En su lugar prueba, en orden, el par L/R enfrentado (sólo si los extents-x no se solapan),
-  una C por la **izquierda** (`left`/`left`; los self-loops van a la derecha por defecto) y una C por
-  la derecha; la primera con ambas franjas libres gana, si ninguna lo está se queda el par vertical.
-  El par elegido difiere de `chooseSides` ⇒ se persiste con `auto`. `provisionalSides` en
-  `smartLayout/edgeOrdering.ts`.
-- **`columnY` ancla sólo en `left`/`right`**; un puerto `top`/`bottom` usa un x-ratio sin ancla de
-  fila. Ambas reglas ya estaban gateadas a L/R en `routeRefs` (líneas ~153-162).
-- Sin contradicción: A* **rutea entre los stubs** (decisión 7 se mantiene) — pero el **adaptador**
-  (`edgeOrdering.ts`) asigna los lados provisionales de 4 vías a TODAS las aristas **antes** de su
-  pase `routeRefs`, de modo que los stubs ya distribuidos que A* conecta son los que persisten (sin
-  codo en el primer render). El motor permanece agnóstico de puertos; el adaptador es dueño de los
-  stubs finales.
+- **Render y A* usan la misma regla de zonas** (§1, `chooseHorizontalSides` en
+  `layout/edgeSides.ts`; `chooseSides` y `chooseSides4` la delegan). El módulo es puro y sólo importa
+  tipos, así `edgeOrder/` sigue sin importar nada de `render/edgeRouter.ts`. Siempre `left`/`right`:
+  el puerto queda anclado a su fila de columna (`columnY` ancla sólo en L/R).
+- **Franja de stub bloqueada.** `provisionalSides` (`smartLayout/edgeOrdering.ts`) prueba, en
+  orden, el par de zonas, una C por la **derecha** y una C por la **izquierda**; gana el primero cuyas
+  dos franjas de stub (todo el lado × `ASTAR_CELL + CLEARANCE` hacia afuera) no tocan una **tercera**
+  tabla — en tablas empaquetadas (hueco `BASE_MIN_GAP` = 16 < stub) el extremo del stub caería dentro
+  de la vecina y A\* sólo llegaría a él cruzándola. Si ninguno está libre se queda el par de zonas.
+  Una C candidata además debe despejar sus **dos tablas** (`cClearsEndpoints` con las filas de
+  columna de los puertos): lado a lado, un brazo de cualquier C atraviesa la otra tabla y la arista
+  queda escondida (revisión 2026-10-05, par `quotas → payment_applications` de isga al ordenar).
+  *(Desde esta decisión el chequeo corre también sobre L/R, así layouts empaquetados pueden persistir
+  más C por la izquierda que antes.)* Tablas que se intersecan no prueban C aquí: conservan el par de
+  zonas, cuya C o conector enfrentado elige el render en vivo (§1).
+- **C despejadas quedan al render (decisión 2026-10-05).** El pase `routeRefs` provisional incluye
+  **todas** las refs dibujables (lazos y manuales preservadas también: comparten grupos de puertos y
+  el render anida contra ellas) y recibe el índice de tablas como `ObstacleQuery`, así espeja las C
+  que un vecino bloquea igual que el canvas (§1 "Vecinos"). Para eso el resolver provisional **no**
+  fija el par de zonas (sólo un par distinto, p. ej. el de franja bloqueada), y los lados que A\*
+  recibe son los **dibujados** (`sidesOf` de la ruta), no los provisionales. Una arista cuya ruta por
+  defecto —ya anidada y quizá espejada— es una C que no cruza el interior de una **tercera** tabla no
+  pasa por A\*, tampoco una **S de hueco angosto** (§1, que `narrowGapSJog` ya dejó fuera de sus dos tablas) que no cruza el interior de una tercera tabla
+  (su escalón a media altura entre stubs completos es justo lo que A\* aproximaría en su grilla, y viva
+  sigue a las tablas), ni un par de tablas que se intersecan dibujado como **conector enfrentado** (§1;
+  si el render eligió una C que no atraviesa sus tablas, es una C más): sale con `[]` waypoints
+  (lados sólo si difieren de `chooseSides`) y el render la anida a `LOOP_STEP`, más fino que la
+  grilla de 24 de A\* y re-anidada en vivo al mover tablas (los waypoints de A\* son fijos). Sólo una
+  C bloqueada va a A\*. Si A\* la resuelve con una recta entre stubs (`[]`), `pinStraightC` la fija
+  como waypoints en esa columna (nunca dentro de un stub; stubs alineados ⇒ una esquina al medio):
+  sin waypoints el render la volvería a anidar contra la tabla que la bloqueó. Una C espejada por el
+  render sale `{}` (su par base coincide con `chooseSides`): no se persiste el espejado, así el render
+  lo re-decide en vivo si la vecina se mueve. Llega a A\* sólo una C con ambos lados bloqueados.
+- **Carriles (lanes) — A\* nunca corre por un trunk de lazo ni de C (decisión 2026-10-05).** El
+  adaptador pasa como `lanes` los tramos verticales editables de los lazos, de las C que quedaron al
+  render y de las C manuales preservadas; `orderEdges` suma los tramos verticales de cada C que rutea
+  (lados iguales, con waypoints) para las aristas siguientes. `RouteGrid.rasterizeLane` marca cada
+  celda cuyo centro cae a ≤ `CLEARANCE` del carril (también en y) como **prohibida en vertical**:
+  `searchGrid` no entra ni sale en N/S de ella, pero cruzarla en horizontal sigue permitido (un
+  puerto dentro del tramo de un lazo puede salir). Garantía: ningún tramo vertical de A\* queda a
+  menos de `LOOP_STEP` de un carril con extensión solapada; si no hay salida, fallback `ok:false`
+  (ruta por defecto, anidada). Se descartó usar el sobre del lazo como obstáculo duro: bloqueaba
+  todo puerto del lado dentro del tramo del lazo y forzaba fallbacks.
+- **Waypoints siempre con sus dos lados; sin waypoints, sólo lados que aportan información**
+  (auditoría F20, ajuste 2026-10-03): toda salida de A\* con waypoints persiste `sourceSide` y
+  `targetSide` aunque coincidan con `chooseSides`, así el render nunca empareja un desvío con otros
+  puertos y un `auto` con waypoints y sin lados queda reconocible como legado (abajo). Sin waypoints,
+  un par igual a `chooseSides` no se escribe (la C izquierda sí), y un fallback (`ok:false`) no
+  escribe lados provisionales. Todo va marcado `auto` (abajo), así que no cuenta como forma manual.
+- **Formas `auto` legadas se ignoran** (`isLegacyAutoShape`, `layout/edgeSides.ts`): se tratan como
+  ausentes (`effectiveEdgeLayout` las reduce a su color) (a) un `auto` con algún lado `top`/`bottom`
+  (el A\* anterior podía persistirlos), y (b) un `auto` con waypoints, **sin** lados, entre tablas
+  cuyo par de zonas es la C `right`/`right` (x-solape): los pases anteriores dejaban los lados
+  implícitos y ruteaban para `bottom`/`top` (v0.3.0, columnas apiladas del auto-arrange) o para L/R
+  por centros (antes de `1b3e970`), nunca para la C, y dibujarlos con sus stubs la hacía volver
+  atrás atravesando la tabla. (b) necesita los bboxes, así que el filtro corre en `decideSides` y el
+  layout filtrado viaja en la decisión hasta `buildRoute`: lados y waypoints de una ruta salen
+  siempre del mismo layout. Un `auto` sin lados entre tablas sin x-solape se conserva (su zona no
+  cambió). La ruta marca `shapeIgnored`; la edición parte de lo dibujado: `forgetIgnoredShape`
+  (`dragController.ts`) borra la forma ignorada (conserva el color, fuera del undo: nunca se veía)
+  antes de deslizar, hacer/borrar un notch o tocar un endpoint, así un flip no revive waypoints
+  ruteados para otros puertos. `setEdgeWaypoints`, `setEdgeSide` y el snapshot del drag además leen
+  el layout efectivo sin bboxes (cubre (a)). Un override **manual** (sin `auto`) se respeta siempre.
+- **S bloqueada.** Una S que sí cruza una tercera tabla va a A\* entre los stubs **completos** que dibuja
+  el render (los extremos cruzados: `aStub.x` más allá de `bStub.x`); su fallback (`ok:false`, sin
+  waypoints) es la S misma. Los lados de una intersección se deciden en el render con las filas reales:
+  el adaptador sólo compara pares por bboxes (`chooseSides4` = `chooseSides` sin filas), así que nunca
+  persiste lados para ellas y el render los re-decide en vivo.
+- Sin contradicción con la decisión 7: el **adaptador** asigna los lados provisionales a TODAS las
+  aristas **antes** de su pase `routeRefs`, de modo que los stubs ya distribuidos que A* conecta son
+  los que persisten (sin codo en el primer render). El motor permanece agnóstico de puertos (sigue
+  ruteando lados `top`/`bottom` si un llamador se los da).
 
 **Dos planos de trabajo, distinta cadencia:**
 
@@ -460,9 +688,7 @@ top/bottom). Resolución acordada:
    existente de `routeRefs` (§1 "Distribuir ports"), sin comando: sort baricéntrico con **desempate
    estable** determinista (menos cruces de aristas paralelas en un lado) + **espaciado uniforme**.
    Sigue O(aristas), memoizada, corre en cada cambio de geometría como hoy. El tramo medio queda en
-   el H-V-H por defecto (sin A* en el camino caliente). **Nota:** el camino caliente sólo elige
-   top/bottom con x-overlap (V-H-V por el hueco vertical, Limitaciones 5); la selección de 4 vías por
-   coste la produce el pase A* on-demand y se persiste en `EdgeLayout`.
+   el H-V-H por defecto, o la C por la derecha con x-overlap (sin A* en el camino caliente).
 2. **Ruteo A* obstacle-avoiding — ON-DEMAND, costoso (E1).** El comando "ordenar aristas" corre A*
    sobre una grilla propia (cell = `ASTAR_CELL = 24` = `MIN_STUB`). Las celdas-obstáculo de las tablas
    se reúnen reusando la **clase** `SpatialIndex` — un índice **desechable** que el adaptador
@@ -488,8 +714,9 @@ top/bottom). Resolución acordada:
   `portPoint` ya dibuja los 4 lados. El **validador de lectura del host** (`layoutStore.ts:108-109`,
   antes hardcodeado a `left`/`right`) se amplió al whitelist de 4 lados — sin esto un `top`/`bottom`
   persistido se descartaba en cada reapertura. El **serializador no cambió** (ya hace
-  `JSON.stringify` del valor; defaults omitidos sólo por ausencia, no por valor). `chooseSides`
-  sólo se amplió para el caso x-overlap (decisión 2026-10-01, Limitaciones 5).
+  `JSON.stringify` del valor; defaults omitidos sólo por ausencia, no por valor). Desde la decisión
+  2026-10-03 ningún camino automático escribe `top`/`bottom`: el whitelist de 4 lados queda por
+  back-compat (overrides manuales y sidecars viejos, cuyo `auto` vertical se ignora).
 
 **Integración con el runner (`runner.ts`, spec 13):** hoy el arrange **limpia** los waypoints de
 aristas cuyos dos extremos se movieron (para que `columnYResolver` re-rutee limpio). Con edge-ordering
@@ -499,7 +726,7 @@ aristas, como ya ocurre. `preservar manuales` ⇒ se excluyen del re-ruteo las a
 previa (waypoints/sides/dx-dy **sin** `auto`).
 
 **Marcador `auto` (auditoría F20, decisión 2026-10-01).** Toda forma que escribe el pase A\*
-(`edgeOrdering.ts`: waypoints y/o lados que aportan información) lleva `EdgeLayout.auto: true`, que
+(`edgeOrdering.ts`: waypoints con sus dos lados y/o lados que aportan información) lleva `EdgeLayout.auto: true`, que
 viaja por todo el camino de persistencia (sidecar `edges.*.auto`, spec 03; `persistence.ts`;
 `store.setLayout`). Reglas:
 
@@ -566,9 +793,10 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
 - **E2 · Calidad de puertos siempre-on.** → **Sí.** Sort crossing-reduced + desempate estable +
   espaciado uniforme ya están en el `routeRefs` base (fase 1, commit `00551f2`; gratis para todo
   diagrama). La selección de lado de 4 vías y el A* son la parte on-demand.
-- **E3 · Lados top/bottom.** → **Sí — `sourceSide`/`targetSide` ampliados a `'left'|'right'|'top'|'bottom'`** (`EdgeSide`).
-  Sólo los produce el pase A* on-demand; `chooseSides` (render) queda L/R *(salvo x-overlap,
-  decisión 2026-10-01, Limitaciones 5)*.
+- **E3 · Lados top/bottom.** → ~~Sí, los produce el pase A* on-demand~~ **Revertido (decisión
+  2026-10-03, Limitaciones 5):** ni A\* ni `chooseSides` producen `top`/`bottom`. El tipo `EdgeSide`
+  conserva los 4 lados (`'left'|'right'|'top'|'bottom'`) para overrides manuales y lectura de
+  sidecars viejos; un `auto` legado con `top`/`bottom` se ignora al dibujar (§9 "Modelo de lados").
 - **E4 · Progreso.** → **Porcentaje real** (loop A* propio, cede + emite progreso, cancelable).
 - **E5 · `preserveManualEdges`.** → **El usuario elige por corrida; default ON** (preservar).
 
@@ -586,7 +814,7 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
 
 ### 10. Aristas `Dep` (spec 18)
 
-Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traza una **curva** entre dos stubs horizontales rígidos de 24 px (mismo `MIN_STUB`, mismo recorte a la mitad del gap). Sin waypoints es una Bézier con handles horizontales; con waypoints, Catmull-Rom → Béziers que pasan por cada punto, tangente a los stubs en los extremos. Lados izquierda/derecha por centros (la regla horizontal de `chooseSides`, sin la excepción x-overlap); puerto Y = centro de la primera columna (`rows.indexOf`) o `headerCenterY()` para deps a nivel tabla. Edición: sólo la dep seleccionada muestra handles de inserción (t=0.5 de cada tramo) y de waypoint (mover / doble clic = borrar); reutiliza `runEdgeDrag` + `WaypointCommand`. Se pintan en el **mismo SVG** (`DepPaths` en la capa base, `DepOverlay` en la de overlay) y se cullean con el mismo `visibleRefIds`. No participan en auto-layout, A* ni puertos compartidos con refs, nunca llevan `auto` (§9) y los resets de forma por movimiento de tablas no las tocan. Durante un drag se re-rutean sólo las deps de las tablas movidas (`DepRouteCache`, spec 04 "Drag incremental").
+Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traza una **curva** entre dos stubs horizontales rígidos de 24 px (mismo `MIN_STUB`, recortados a la mitad del gap; las refs usan un cuarto, decisión 7). Sin waypoints es una Bézier con handles horizontales; con waypoints, Catmull-Rom → Béziers que pasan por cada punto, tangente a los stubs en los extremos. Lados izquierda/derecha por centros (no la regla de zonas de `chooseSides`, §1: una dep nunca hace C; ver Preguntas abiertas); puerto Y = centro de la primera columna (`rows.indexOf`) o `headerCenterY()` para deps a nivel tabla. Edición: sólo la dep seleccionada muestra handles de inserción (t=0.5 de cada tramo) y de waypoint (mover / doble clic = borrar); reutiliza `runEdgeDrag` + `WaypointCommand`. Se pintan en el **mismo SVG** (`DepPaths` en la capa base, `DepOverlay` en la de overlay) y se cullean con el mismo `visibleRefIds`. No participan en auto-layout, A* ni puertos compartidos con refs, nunca llevan `auto` (§9) y los resets de forma por movimiento de tablas no las tocan. Durante un drag se re-rutean sólo las deps de las tablas movidas (`DepRouteCache`, spec 04 "Drag incremental").
 
 ## Limitaciones conocidas
 
@@ -622,6 +850,21 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
 - **Apilado.** Los lazos de un mismo (tabla, lado) se ordenan por alto del tramo (menor adentro, así
   los anidados no se cruzan), desempate por id. El rango sólo depende de refs, filas y layouts —nunca
   de posiciones— así un drag (`routeMoved`) no re-ordena y coincide con un rebuild completo.
+- **Vecino cercano (decisión 2026-10-05, `clampedLoopReach`).** Con consulta de obstáculos, si un
+  nodo a nivel de la tabla (solape en y) queda más cerca del lado que `loopReach(n) + LOOP_CLEARANCE`
+  (8), la pila se recoge: el lazo más lejano termina a `LOOP_CLEARANCE` del vecino y el resto lo sigue
+  a `LOOP_STEP`, comprimiendo el paso hasta `LOOP_STEP / 2` sin bajar de `MIN_STUB + CORNER_RADIUS`
+  (32, un fillet pasado el stub). Si ni así cabe (vecino a < ~40 px con un lazo) queda en esa pila
+  mínima, dentro del vecino: no hay geometría de lazo por ese lado que lo evite, y cambiar de lado
+  solo es decisión del usuario (flip). Ejemplo: 2 lazos y columna a 64 ⇒ `borde + 44 / + 56` (antes
+  48/60, a 4 px). La reach depende de posiciones, así que `routeMoved` la recalcula en cada frame con
+  consulta y lazos (una consulta al índice por pila) y re-rutea los lazos que cambian. El piso de
+  las C (`loopReach(n + 1)`) y la caja de culling de escena siguen con el alcance sin recoger
+  (superset).
+- **C por fuera (decisión 2026-10-05).** Toda C automática de ese lado de la tabla pone su trunk
+  `LOOP_STEP` más allá del lazo más lejano (`loopReach(n + 1)`), y una C que pasa junto a lazos de
+  una tercera tabla también los esquiva (§1 "Anidado de C"). Los lazos nunca se mueven por una C. En
+  "Ordenar aristas" sus trunks son carriles que A\* no puede recorrer (§9).
 - **Lado.** `sourceSide ?? targetSide` (sólo `left` cuenta; `top`/`bottom` persistidos se ignoran);
   `right` por defecto y **no se persiste**: el flip a la derecha borra el override. Waypoints
   persistidos de un lazo se ignoran.
@@ -636,36 +879,141 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
 - **Culling/export.** Caja = tabla ∪ alcance del lado (spec 04); el export rutea con `routeRefs` y
   sus bounds incluyen las esquinas del lazo.
 4. **Sin curvatura** en codos (90° rígidos). v1.1 opcional.
-5. ~~**Retroceso en x-overlap**~~ **Decisión 2026-10-01:** en el render path, cuando los extents-x de
-   las dos tablas se solapan, `chooseSides` usa puertos `top`/`bottom` (el mismo modelo híbrido que
-   A\*, §9) en vez de L/R, así la arista va por el hueco vertical entre tablas y no pasa por detrás de
-   ellas ni tapa sus filas. Un override manual L/R del usuario se respeta (y devuelve el otro
-   extremo, si es automático, a la regla horizontal); los `top`/`bottom` persistidos por A\* se
-   dibujan igual; los self-loops no cambian. Los puertos `top`/`bottom` reusan el grupo de puertos
-   `(tabla, lado)` y su reparto por x del extremo lejano (§1). `routeMoved` re-decide los lados de
-   las refs afectadas, así un drag que entra o sale del x-overlap coincide con un rebuild completo;
-   el export de imagen usa el mismo `routeRefs`. Implementación: `chooseSides` +
-   `chooseHorizontalSides` en `edgeRouter.ts`; tests en `edgeRouter.xOverlap.test.ts`. Texto original:
-   **Retroceso en x-overlap** (target con borde izq dentro del extent-x del source ⇒
-   `chooseSides` invierte el span y la ruta se devuelve, incluso a cero-waypoints):
-   régimen degenerado contra-natura (v2). Las geometrías bien separadas (caso normal)
-   quedan limpias; el `clamp(newX)` evita que el slide lo agrave.
+5. ~~**Retroceso en x-overlap**~~ **Decisión 2026-10-03 (con el usuario, estilo dbdiagram):**
+   zonas con la derecha favorecida (§1): target enteramente a la derecha ⇒ Z `right→left`;
+   enteramente a la izquierda ⇒ Z `left→right`; cualquier solape en x, tocarse incluido ⇒ C
+   `right→right` que rodea ambas tablas. La Z llega hasta que las tablas se tocan, con el trunk en el
+   punto medio del hueco, y dos tablas alineadas en la misma fila siempre tienen una división
+   editable en el medio (decisión 7, §1 "Computar path"). A\* usa la misma regla (§9) y una forma
+   `auto` legada con `top`/`bottom` se ignora al dibujar. `routeMoved` re-decide los lados de las
+   refs afectadas, así un drag que cruza `gap = 0` (Z↔C) coincide con un rebuild completo; el export
+   de imagen usa el mismo `routeRefs`. Tests en `edgeRouter.xOverlap.test.ts`.
+   *Historia:* el retroceso original (target con borde izq dentro del extent-x del source ⇒ la ruta
+   se devolvía) se atacó el 2026-10-01 con puertos `bottom`→`top` en el render cuando los extents-x
+   se solapaban (`1b3e970`), y el 2026-10-02 con el eje de menor penetración para bboxes que se
+   intersecan (`7dee0a3`) y el descarte de stubs verticales bloqueados en A\*. Ambas decisiones se
+   **revierten**: las FKs quedaban bajo la tabla, el puerto se despegaba de la fila de su columna y
+   dos tablas apiladas quedaban unidas por una recta vertical sin intersecciones editables. Sobreviven
+   el umbral de click del flip (§4) y el chequeo de franjas de stub de A\*, ahora sobre pares L/R (§9).
+   ~~*Pendiente conocido:* bboxes que se intersecan con la C atravesando la tabla target.~~
+   **Decisión 2026-10-05:** bboxes que se intersecan (tocarse lado a lado incluido) usan la C por la
+   derecha si no atraviesa ninguna de sus tablas, si no la izquierda, y sólo si ambas atraviesan el
+   conector enfrentado (§1); la Z enfrentada que se usó brevemente antes quedaba casi invisible.
+   Toda C se anida fuera de lazos y de otras C (§1 "Anidado de C").
+6. **Tablas tocándose lado a lado o muy encimadas pueden esconder la relación (aceptado, decisión
+   2026-10-05).** Cuando ninguna C despeja ambas tablas, el conector enfrentado corre sobre el borde
+   compartido o bajo la otra tabla (§1, bboxes que se intersecan) y la arista puede quedar casi
+   invisible. No se agregan rutas `top`/`bottom` para este caso: separar las tablas la vuelve a
+   mostrar.
+7. **Z/S frente a lazos ajenos sin hueco libre.** El trunk de una Z sólo se desliza dentro del hueco
+   entre stubs (§1 "Z frente a lazos ajenos"); con el hueco por defecto (64) junto a una pila de dos
+   lazos no queda x libre y la Z cruza la pila, incluso con un brazo sobre el brazo de un lazo cuando
+   comparten fila. La S tampoco desliza. **"Ordenar aristas" tampoco lo resuelve** (verificado en el
+   caso de referencia: no escribe nada y la Z queda igual): el fin del stub del puerto lejano
+   (`audit.dept_id`, `W+48` con stubs de 16) cae dentro de la envolvente inflada del lazo de
+   `manager_id` (`W … W+44` + 8) y entre los dos trunks de lazo, a menos del `CLEARANCE` (16) de
+   ambos carriles; ninguna ruta ortogonal llega a ese puerto sin entrar en la envolvente y A\* cae a
+   fallback (la ruta por defecto, sin forma persistida). La única salida geométrica es que la pila
+   ceda un carril a la Z: recogida a `W+32`/`W+38` deja libre `W+47`, a 1 px del fin de stub (se
+   dibuja como una esquina normal, porque el radio se mide sobre todo el tramo recto con puntos
+   colineales, §1 "Esquinas"). Eso hace depender el alcance de los lazos de aristas ajenas (las Z que
+   pasan junto a la pila), con su propia invalidación en `routeMoved`; queda como pregunta abierta,
+   no implementado (decisión 2026-10-05: si no hay x libre, el trunk conserva el medio).
 
 ## Test plan
 
 `test/unit/edgeRouter*.test.ts` (actualizar `edgeRouter.waypoints.test.ts`):
 
 - Misma fila, target a la derecha ⇒ source=right, target=left; recta enmarcada
-  por dos stubs rígidos (`M…aStub…bStub…b`), una sección editable en medio.
+  por dos stubs rígidos, con el tramo medio partido en dos mitades editables.
 - Override `sourceSide`/`targetSide` respetado sobre `chooseSides`.
-- **x-overlap (`edgeRouter.xOverlap.test.ts`):** tablas apiladas con extents-x solapados ⇒
-  source `bottom` → target `top` (o al revés si el target está arriba), primer/último tramo
-  verticales, ningún segmento dentro del bbox de una tabla; sin solape ⇒ L/R; bboxes que se
-  intersecan ⇒ eje de menor penetración (lado a lado ⇒ L/R, apiladas ⇒ `bottom`/`top`); varias
-  aristas al mismo `top` se reparten por x del extremo lejano (aunque su orden en y sea el opuesto); override L/R en ambos extremos respetado; override
-  L/R en un extremo ⇒ el otro queda horizontal sin cruzar tablas; `top`/`bottom` persistidos y
-  self-loops sin cambio; `routeMoved` == rebuild completo en drags que cruzan el borde del solape
-  (fuzz en una franja-x estrecha que exige > 20 cruces).
+- **Zonas (`edgeRouter.xOverlap.test.ts`):** target a la derecha ⇒ Z desde `right` con trunk en el
+  punto medio; a la izquierda ⇒ Z espejada; **S de hueco angosto:** gaps 1–47 (1, 2, 3, 10, 24, 32,
+  40, 47) con filas a 300 ⇒ stubs de 24, escalón de `48 − gap` y esquinas exactas
+  `aStub → (aStub.x, midY) → (bStub.x, midY) → bStub` (V-H-V, tres tramos no rígidos), espejo a la
+  izquierda con `midY` redondeado; `|Δy| = 24` ya es S, `|Δy| < 24` vuelve al clamp con trunk al medio
+  (también en 47); gap 48 ⇒ una sola vertical en `W + 24` (path exacto); 49/60/95 ⇒ Z (stubs
+  `⌊gap/4⌋`, un trunk al medio); **continuidad 47 → 48 → 49:** puntos de control de los fillets
+  exactos (a lo sumo 1 px de diferencia) y radio 8 en la esquina del trunk en los tres; escalones de
+  1–7 px (gaps 41/45/46/47) sin `NaN` y con el path monótono (nunca retrocede);
+  **empaquetadas:** lado a lado con filas solapadas a hueco 10/16 ⇒ clamp sin tramos dentro de las
+  tablas y trunk en el hueco; una sobre la otra con el medio de las filas dentro de una tabla
+  (geometría de isga `evaluation_coordinator_assignments → indicator_evidences`) ⇒ escalón exacto en
+  el medio del hueco vertical; hueco vertical de 1 px ⇒ clamp; gaps chicos con filas casi
+  alineadas (incl. 1 px) siguen en Z con trunk editable en el punto medio exacto y sin espolón; x-overlap (target corrido a izq o der, tocarse incluido) ⇒ C
+  `right`/`right` sin tramos dentro de ninguna tabla; nunca sale por `top`/`bottom` sola; self-loops
+  sin cambio. **Misma fila:** el medio se parte en dos tramos editables y se dibuja como una recta.
+  **Lados persistidos:** `auto` legado `top`/`bottom` ignorado entero (lados + waypoints); la salida
+  exacta de A\* v0.3.0 para a(0,0)→b(0,600) rodeando m(0,300) (waypoints `auto` sin lados) se dibuja
+  igual que sin layout; `auto` sin lados sin x-solape y `auto` `right`/`right` con waypoints
+  conservados; `auto` L/R conservado; override manual `top`/`bottom` y L/R en ambos extremos respetados. `routeMoved` ==
+  rebuild completo barriendo ambos bordes `gap = 0` y en drags aleatorios con > 20 flips Z↔C.
+- **Edición de las formas nuevas (`edgeRouter.segmentDrag.test.ts`):** deslizar o hacer notch en
+  cualquiera de las dos mitades de una fila alineada (también con hueco chico) dobla la línea sin
+  mover puertos ni stubs; el trunk de una Z de hueco angosto con filas casi alineadas desliza de
+  costado; en la **S** los tres tramos son editables: deslizar cada vertical (codo contra su stub) y
+  el escalón (sus dos esquinas) da las esquinas exactas, y un notch en cualquiera queda local; al
+  re-rutear con esos waypoints puertos y stubs completos no se mueven y las esquinas son literales.
+  **Overlay (`edgeLayer.selected.test.ts`):** la S seleccionada expone tres hit-lines agarrables con
+  su vértice.
+- **Pase A\* (`edgeOrdering.test.ts`):** waypoints persisten siempre con ambos lados (C bloqueada y Z
+  incluidas), así ninguna forma nueva cumple `isLegacyAutoShape`; una C despejada sale `{}` (el render
+  la anida); una C cuyo trunk derecho cruza una tercera tabla sale `{}` (el render la espeja a la
+  izquierda libre); bloqueada en ambos lados va a A\* (waypoints + ambos lados) y, con la columna del
+  stub libre, queda fijada a esa columna (`pinStraightC`); tablas que se intersecan (solape, lado a
+  lado, encimadas) salen `{}`; una superposición donde el render elige la C izquierda sale `{}` y se
+dibuja a la izquierda. **S:** una S despejada sale `{}` y se dibuja con stubs completos y tramos
+V-H-V; con franjas bloqueadas, lado a lado (hueco 32, filas alineadas, tercera tabla bajo b en la
+franja de a) nunca persiste una C cuyo brazo cruce a o b; empaquetadas lado a lado (hueco 16, filas solapadas) ningún tramo queda dentro de las tablas
+tras ordenar; una sobre la otra a 16 px sale `{}` con el escalón en el medio del hueco; una S cruzada por una tercera tabla va a A\* (waypoints + `right`/`left` + `auto`) y la ruta
+dibujada conserva los stubs completos, sin retroceso ni tramos dentro de las tres tablas. **Columna vecina a 64 px** (la del fixture "nb": `audit` a la derecha
+  con una Z desde departments): `emp.dept` y `proj.owner` salen `{}`, se dibujan a la izquierda y
+  ningún tramo cruza una tercera tabla. **Columna de `selfloop.dbml`** (employees con 2 lazos /
+  projects / departments con 1, huecos 16), tal cual y con una tabla bloqueando el trunk de
+  `proj.owner` (sin carriles corría por el trunk del lazo `mentor`): ningún tramo vertical a menos de
+  `LOOP_STEP` de un trunk de lazo ni de otra ruta con extensión solapada; las C despejadas sin
+  waypoints y fuera de todos los lazos.
+- **Anidado de C (`edgeRouter.nest.test.ts`):** trunk a `borde + loopReach(n + 1)` con lazos en
+  cualquiera de sus tablas (también con puertos fuera del tramo del lazo); lazos del otro lado no
+  empujan; C manual `left`/`left` espejada; C con waypoints intacta; dos C de una columna ⇒ tramo
+  menor adentro a `LOOP_STEP`, igual con `refs[]` invertido; empate de tramo ⇒ por `ref.id`; C sin
+  solape vertical o de otra columna no se empujan; columna de `selfloop.dbml` y 30 columnas
+  aleatorias ⇒ ningún par de trunks (lazo/C) con extensión solapada a < `LOOP_STEP`. **Bboxes que se
+  intersecan:** b sobre la esquina inferior derecha de a (la fila de a corre por b) ⇒ C izquierda,
+  ambos puertos visibles y ningún tramo dentro de las tablas; solape que la C derecha despeja ⇒ C
+  derecha; lado a lado (cada fila corre por la otra) ⇒ conector directo sobre el borde compartido,
+  ambos sentidos; apiladas tocándose / encimadas ⇒ C derecha sin `NaN`; hueco vertical de 1 px ⇒ C;
+  un vecino espeja una C de intersección sólo si la C espejada despeja ambas tablas. **Cache:** `routeMoved` == rebuild en 200 drags aleatorios de
+  una columna angosta con lazos, C, lados manuales, waypoints y `dx` (> 50 trunks anidados vistos), y
+  un drag de una tercera tabla re-anida una C que no toca; `routeMoved` == rebuild en 250 drags de un cúmulo apretado con consulta de
+obstáculos que recorren la S (> 50), la C derecha, la C izquierda y el conector enfrentado de
+intersección (> 30 cada uno). **Vecinos:** sin `ObstacleQuery` el trunk
+  queda en su slot (bajo la vecina); con ella la C se espeja a `−MIN_STUB` sin cruzar terceros y los
+  lazos no se mueven; bloqueada en ambos lados conserva el suyo; con lados persistidos nunca se
+  espeja; 4 C de una columna con vecina a 64 ⇒ `W+24`, `W+36`, `−24`, `−36` (igual con `refs[]`
+  invertido); `routeMoved` == rebuild en 150 drags con tablas sin refs cruzando la franja (> 20
+  espejados vistos); con la vecina a 64 los dos lazos se recogen a `W+44`/`W+56`.
+- **Lazos y vecinos, Z frente a lazos (`edgeRouter.loopNeighbours.test.ts`):** `clampedLoopReach`
+  (pila que cabe intacta; recogida a la room con `LOOP_STEP`; compresión a `LOOP_STEP/2` sobre 32 y
+  pila mínima si no cabe); 2 lazos con columna a 64 ⇒ `W+44`/`W+56` (sin consulta, 48/60); vecino
+  fuera de nivel o más allá de la pila no recoge; espejo a la izquierda. Z departments→audit con
+  hueco 120 ⇒ trunk en `W+68` (sin lazos, `W+60`); hueco 64 ⇒ conserva `W+32`; lazos propios o fuera
+  de sus filas no la mueven; `routeMoved` == rebuild en 200 drags de la tabla con lazos, extremos de
+  la Z y un vecino (> 5 deslizamientos vistos).
+- **Culling por extensión (`useVisibleNames.test.ts`):** `routeReachBoxes` cubre todos los puntos de
+  30 C anidadas y de un lazo, y omite la Z; con la cámara pasado `tablas + 256 + 50` la caja de escena
+  no se ve pero la C exterior sí.
+- **Carriles A\* (`astar.test.ts`):** un carril sobre el tramo vertical libre de una Z lo desplaza
+  ≥ `LOOP_STEP`; un carril que corta el corredor recto se cruza (`[]`); una C ruteada deja su carril:
+  en un corredor de una sola columna la segunda C cae a fallback en vez de compartirla.
+  `chooseSides4` con bboxes que se intersecan (filas de centros) ⇒ conector enfrentado si ambas C
+  atraviesan una tabla; apiladas tocándose ⇒ C derecha; si sólo la izquierda despeja ⇒ C izquierda.
+- **Overlay (`edgeLayer.selected.test.ts`):** par alineado a 40 px ⇒ dos mitades de 10 px sin
+  vértice que se agarran desde su hit-line. **`forgetIgnoredShape` (`dragController.test.ts`):** un
+  flip sobre una ruta con forma legada ignorada no revive sus waypoints.
+- **Legado en el store (`store.edgeAuto.test.ts`):** editar waypoints o el lado de una arista con
+  `auto` `top`/`bottom` reemplaza la forma entera conservando el color; re-aplicar los waypoints
+  dibujados (vacíos) no toca lo guardado.
 - **Deslizar (`edgeRouter.segmentDrag.test.ts`):** `slideSegment` sobre el trunk vertical ⇒ mueve
   sus 2 esquinas (sin agregar puntos); sobre un brazo (colineal con su stub) ⇒ inserta un codo (el
   ancla del puerto no se mueve). 1-DOF (v ignora `dy`, h ignora `dx`); `rigid` ⇒ no-op; idempotente.
@@ -679,12 +1027,14 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
   largo exacto `MIN_STUB`; los interiores `rigid===false`; existe ≥ 1 sección
   editable. `slideSegment`/`notchAtQuarter` sobre un `rigid` es no-op. Ambos extremos en el
   mismo lado (`left`/`left`, `right`/`right`) ⇒ stubs completos de 24 + ruta en C editable, sin
-  retroceso ni tramos dentro de una tabla. Lados `top`/`bottom` persistidos ⇒ stubs verticales
+  retroceso ni tramos dentro de una tabla. Stubs opuestos recortados a un cuarto del gap (la mitad
+  central queda editable), salvo la S (gap 10–47 con filas a 200 ⇒ stubs de 24; 48 ⇒ 12, 95 ⇒ 23). Lados `top`/`bottom` manuales ⇒ stubs verticales
   fuera del borde, ningún tramo sobre el borde de la tabla; puertos alineados conservan un tramo
   medio editable; par mixto (`right`→`top`) ⇒ L sin retroceso (`edgeRouter.stub.test.ts`).
 - **Deslizar sin movimiento neto** perpendicular devuelve los waypoints guardados (una ruta
   automática sigue automática, sin entrada de undo).
-- **Esquinas redondeadas** (`edgeRouter.rounding.test.ts`): `roundedPathString` deja recta
+- **Esquinas redondeadas** (`edgeRouter.rounding.test.ts`, más continuidad/escalones en
+  `edgeRouter.xOverlap.test.ts`): `roundedPathString` deja recta
   una polilínea colineal (sin `Q`); redondea una esquina interior con un `Q` cuyo punto de
   control es el vértice; clampa `r` a media-sección adyacente; descarta puntos coincidentes;
   `≤ 2` puntos ⇒ segmento plano. Vía `routeRefs`: arista misma-fila sin `Q`; arista doblada
@@ -697,7 +1047,7 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
   (`imageExport.test.ts`), resets/drag (`edgeReset.test.ts`), A\* (`edgeOrdering.test.ts`) y flip
   (`dragController.test.ts`).
 - Bbox faltante ⇒ arista omitida (no crash).
-- Back-compat: `waypoints=[]` ⇒ ruta recta misma-fila / H-V-H offset con stubs.
+- Back-compat: `waypoints=[]` ⇒ recta misma-fila (dividida al medio) / H-V-H offset con stubs.
 
 `history.waypoint.test.ts` / `store.history.test.ts`: undo/redo de notch (create/deepen/
 delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`move`/`remove`).
@@ -717,8 +1067,9 @@ delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`mov
   stub desde el lado-tabla — `orderEdges` no cruza su propia tabla en una columna apilada con una
   tabla en medio, en ambos sentidos; e2e `computeEdgeOrdering → routeRefs` sin retrocesos en
   `smartLayout/edgeOrdering.test.ts`); corredor limpio ⇒ `[]`
-  waypoints; `chooseSides4` elige top/bottom apilado vertical, L/R lado-a-lado, y rutea un edge
-  top/bottom rodeando un obstáculo lateral; **fallback** a `[]` (sin throw) al exceder `MAX_EXPLORED`;
+  waypoints; `chooseSides4` sigue la regla de zonas (`right`/`left`, `left`/`right`, C derecha con
+  x-overlap, nunca `bottom`/`top`), y el motor aún rutea lados `top`/`bottom` dados por el llamador
+  rodeando un obstáculo lateral; **fallback** a `[]` (sin throw) al exceder `MAX_EXPLORED`;
   batch **determinista** (dos corridas byte-iguales; independiente del orden del array de entrada para
   aristas que no interactúan); **crossing accumula** (una arista paralela se desvía del corredor
   compartido — `WorldUsage` world-keyed); progreso monótono 0→100; **abort** lanza `AbortError` y no
@@ -734,7 +1085,9 @@ delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`mov
   idéntica (la auto se re-rutea), `false` la re-rutea; no-op sin aristas; `computeEdgeOrdering`
   determinista. **Columna apilada con una tabla en medio** (geometría de `selfloop.dbml` al abrir,
   huecos 16 y 80, ambos sentidos): ningún waypoint dentro de una tabla extremo, sin espolón de
-  retroceso y ningún tramo cruza el interior de ninguna de las tres tablas.
+  retroceso y ningún tramo cruza el interior de ninguna de las tres tablas. Tablas apiladas ⇒ C por
+  la derecha con stubs horizontales, sin lados persistidos (coincide con `chooseSides`); una tercera
+  tabla en la franja del stub derecho ⇒ C por la izquierda persistida con `auto`.
 - **Tipos/store (`store.edgeSide.test.ts`):** `setEdgeSide` acepta `top`/`bottom` y `null`;
   `EdgeStyleCommand` con `top` round-trip por undo/redo.
 - **Serializador (`layoutStore.waypoints.test.ts`):** `sourceSide`/`targetSide` `top`/`bottom`

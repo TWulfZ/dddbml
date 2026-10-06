@@ -62,3 +62,39 @@ describe('selected self-loop controls (spec 05 §Self-loops)', () => {
     expect(render(edge).handles.length).toBeGreaterThan(0);
   });
 });
+
+describe('selected edge between close aligned tables (spec 05 §2)', () => {
+  // 40 px gap, same row: 10 px stubs and a 20 px middle split at its midpoint into two 10 px halves.
+  const close = (name: string) => ({ t: { x: 0, y: 0, w: 200, h: 100 }, u: { x: 240, y: 0, w: 200, h: 100 } })[name];
+  const sameRow = () => 30;
+  const edge = routeRefs([ref('e', 't', 'u')], close, sameRow)[0]!;
+  const halves = edge.segments.map((s, i) => ({ s, i })).filter(({ s }) => !s.rigid);
+
+  it('has two short editable halves', () => {
+    expect(halves.map(({ s }) => Math.abs(s.x2 - s.x1))).toEqual([10, 10]);
+  });
+
+  it('grabs either half from its hit line even though it is too short for a knob', () => {
+    const { lines, handles, onSelect, onRunGrab } = render(edge);
+    expect(handles).toEqual([]);
+    for (const { i } of halves) lines[i]!.props.onPointerDown?.(press());
+    expect(onRunGrab).toHaveBeenCalledTimes(2);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe('selected narrow-gap S (spec 05 §1)', () => {
+  // 10 px gap, rows 30 / 270: full stubs cross, so the middle is down 120, across 38, down 120.
+  const narrow = (name: string) => ({ t: { x: 0, y: 0, w: 200, h: 100 }, u: { x: 210, y: 240, w: 200, h: 100 } })[name];
+  const rows = () => 30;
+  const edge = routeRefs([ref('e', 't', 'u')], narrow, rows)[0]!;
+  const runs = edge.segments.map((s, i) => ({ s, i })).filter(({ s }) => !s.rigid);
+
+  it('exposes its three middle runs, each with a slide knob', () => {
+    expect(runs.map(({ s }) => s.axis)).toEqual(['v', 'h', 'v']);
+    const { lines, handles, onRunGrab } = render(edge);
+    expect(handles.filter((h) => (h.props.class ?? '').includes('ddd-edge-handle'))).toHaveLength(3);
+    for (const { i } of runs) lines[i]!.props.onPointerDown?.(press());
+    expect(onRunGrab).toHaveBeenCalledTimes(3);
+  });
+});
