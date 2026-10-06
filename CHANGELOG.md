@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-10-05
+
+Relationships route like dbdiagram: always out of the column rows on the left/right sides, never under a table.
+
+### Changed
+- **Left/right-only edges** (`specs/05`): a target to the right gets a Z with its bend at the midpoint of the gap; between 0 and 48 px the stubs keep their full length and the line jogs into an S; once the tables overlap horizontally the relation wraps around the favored right side as a C (left side when the right one is blocked). Replaces the 0.3.0 top/bottom ports for stacked tables, in both the canvas and *Order edges*. Old auto-routed top/bottom shapes in layout files are ignored and redrawn; manual ones are kept.
+- C routes nest outside self-loops and each other (12 px apart, shorter span inside); self-loop stacks pull in near a neighbouring table and yield a lane to a relation passing beside them.
+- Tables on the same row get an editable split at the midpoint instead of a flat line, and every middle segment can be dragged, even short ones.
+- The records preview grows to fit its columns (up to the window width) instead of a fixed 560 px box.
+- `Ctrl`+click anywhere in a `Table` block (not only its name) focuses it in the diagram.
+
+### Fixed
+- Edges whose trunk is on screen no longer disappear when their tables are panned out of view.
+- *Order edges* no longer saves a C that cuts through one of its own tables.
+
+### Known limitations
+- Tables touching side by side or heavily overlapping can hide the relation between them (no left/right route clears both tables).
+
 ## [0.3.0] — 2026-10-02
 
 Bug audit (99 findings, 88 fixed in the first pass) plus assisted editing, DBML `records`/`Dep` support and a faster, safer canvas.

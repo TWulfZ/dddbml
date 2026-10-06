@@ -28,7 +28,7 @@ Open a `.dbml` file and run **`dddbml: Open Diagram`** (command palette or the e
 - Double-click a table header (or a column) to jump to its declaration in the `.dbml`; `Ctrl`+click a `Table` name in the editor to focus it in the diagram.
 
 **Relationships**
-- Orthogonal edges that leave and enter at the FK/PK column rows, with crow's-foot / bar cardinality markers. Stacked tables connect through the gap between them; self-references draw as loops.
+- Orthogonal edges that leave and enter at the FK/PK column rows, with crow's-foot / bar cardinality markers. Like dbdiagram, edges always leave from the left/right sides: a Z across a wide gap, an S when the tables are close, and a C around the right side once they overlap. Self-references draw as nested loops.
 - Edit an edge by sliding a segment or dragging a ghost handle to add a notch; flip the port side by dragging an endpoint; recolor; "Reset line" to tidy.
 - **Auto-arrange** (whole diagram or the selection) with an obstacle-avoiding edge router, cancelable with real progress.
 
