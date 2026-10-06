@@ -868,8 +868,10 @@ ahora dibujan muescas y rodeos. "Reset" los arreglaba, pero arista por arista o 
      `buildEdgesResetCommand`, etiqueta "Update relations"), sella el marcador y persiste una vez.
      Ctrl+Z restaura las formas; la respuesta queda registrada (el archivo sigue marcado), así que tras
      deshacer equivale a "Keep".
-   - **Keep** (`secondary`): conserva las formas, sella el marcador y persiste una vez. No vuelve a
-     preguntar.
+   - **Keep** (`secondary`): pide confirmación con un `<Modal>` que avisa que no volverá a preguntar
+     y que borrar `"edgeRouting": 2` del `.dbml.layout.json` (y reabrir) recupera la opción (decisión
+     2026-10-06: un Keep por error no tenía vuelta atrás visible). Al confirmar conserva las formas,
+     sella el marcador y persiste una vez. No vuelve a preguntar.
    Los **self-loops** se excluyen de "Update": su única forma es el flip izquierda/derecha, que ambos
    routers dibujan igual (descartarlo perdería una elección del usuario que el cambio de router no
    invalidó). Un lado `top`/`bottom` en un lazo ya se dibuja a la derecha (`loopSide`).
