@@ -171,7 +171,7 @@ describe('routeRefs — same-direction ports (F52)', () => {
   });
 });
 
-describe('routeRefs — persisted top/bottom sides are ignored whole (spec 05 §Migración)', () => {
+describe('routeRefs — persisted top/bottom sides are ignored whole (spec 05 §11)', () => {
   const A = bbox(0, 0);
   const stacked = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? bbox(60, 400) : undefined);
   const mixed = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? bbox(400, 300) : undefined);

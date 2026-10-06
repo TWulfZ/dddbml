@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useEffect, useReducer, useRef } from 'preact/hooks';
 import type { AppSettings, ColumnDiffEntry, ColumnRef, EdgeLayout, EdgeSide, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
-import { defaultSettings, EDGE_ROUTING_VERSION, hasAutoShape, hasRefEdgeShapes, isEdgeSide } from '../../shared/types';
+import { defaultSettings, hasAutoShape, isEdgeSide } from '../../shared/types';
 import type { ExporterMeta } from '../../shared/exporters/types';
 import type { ArrangeCommand, EditCommand, EdgeStyleCommand, MoveCommand, SchemaEditCommand, WaypointCommand } from './history';
 import { isEdgeKey } from '../render/edgeKey';
@@ -40,10 +40,6 @@ export interface AppState {
   hiddenTables: Set<QualifiedName>;
   tableColors: Map<QualifiedName, string>;
   edgeLayouts: Map<string, EdgeLayout>;
-  /** The loaded layout's router marker (spec 03 `edgeRouting`); rides every persist once set. */
-  edgeRouting: number | undefined;
-  /** Unmarked layout with FK shapes: the one-time update/keep notice is due (spec 05 §Migración). */
-  edgeMigrationPending: boolean;
   /** Currently selected edge (ref id) — drives the floating edge toolbar. Null = none. */
   selectedEdgeId: string | null;
   groups: Record<string, GroupLayout>;
@@ -159,8 +155,6 @@ export interface AppState {
 export interface AppActions {
   setSchema(schema: Schema, parseError: ParseError | null): void;
   setLayout(layout: Layout): void;
-  /** Records the user's answer to the migration notice: the shapes are current from now on. */
-  stampEdgeRouting(): void;
   setTablePos(name: QualifiedName, x: number, y: number): void;
   setViewport(vp: Partial<ViewportLayout>): void;
   setTheme(kind: 'light' | 'dark'): void;
@@ -244,8 +238,6 @@ const initial: AppState = {
   hiddenTables: new Set(),
   tableColors: new Map(),
   edgeLayouts: new Map(),
-  edgeRouting: undefined,
-  edgeMigrationPending: false,
   selectedEdgeId: null,
   groups: {},
   viewport: { x: 0, y: 0, zoom: 1 },
@@ -369,17 +361,12 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       hiddenTables,
       tableColors,
       edgeLayouts,
-      edgeRouting: layout.edgeRouting,
-      edgeMigrationPending: layout.edgeRouting === undefined && hasRefEdgeShapes(edgeLayouts),
       groups: { ...layout.groups },
       viewport: s.cameraAdopted ? s.viewport : { ...layout.viewport },
       cameraAdopted: true,
       past: [],
       future: [],
     }));
-  },
-  stampEdgeRouting() {
-    set({ edgeRouting: EDGE_ROUTING_VERSION, edgeMigrationPending: false });
   },
   setTablePos(name, x, y) {
     set((s) => {

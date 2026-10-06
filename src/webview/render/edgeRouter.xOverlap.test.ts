@@ -316,7 +316,8 @@ describe('routeRefs — persisted sides', () => {
   });
 
   it('keeps auto waypoints that carry their right/right sides (what the A* pass writes now)', () => {
-    const layout: EdgeLayout = { auto: true, sourceSide: 'right', targetSide: 'right', waypoints: [{ x: W + 60, y: 40 }, { x: W + 60, y: 340 }] };
+    // Trunk past both stub ends, as A* anchors it (`anchorEndpoint`); one behind a stub end is tidied (spec 05 §11).
+    const layout: EdgeLayout = { auto: true, sourceSide: 'right', targetSide: 'right', waypoints: [{ x: W + 100, y: 40 }, { x: W + 100, y: 340 }] };
     const r = route(stacked, layout);
     expect(r.shapeIgnored).toBeUndefined();
     expect(r.waypoints).toEqual(layout.waypoints);

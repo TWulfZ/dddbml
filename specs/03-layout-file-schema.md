@@ -56,7 +56,7 @@ desde los flags del sidecar y el siguiente persist lo guarda. Time-travel nunca 
 |---|---|---|---|
 | `$schema` | string | opcional | Referencia a JSON schema formal (publicar en v1.1). |
 | `version` | integer | `1` | Bump en breaking changes. Host rechaza versiones mayores a la soportada. **No se bumpeará por sacar el view-state** (rompería equipos con versiones mixtas: una extensión vieja rechazaría v2). |
-| `edgeRouting` | integer | ausente = pre-0.4 | Generación del router FK para el que se guardaron las formas de `edges` (`EDGE_ROUTING_VERSION = 2`: router left/right de v0.4.0). Ver "Marcador de router". |
+| `edgeRouting` | integer | ausente = escrito por ≤ 0.4.0 | Generación del router FK que escribió el archivo (`EDGE_ROUTING_VERSION = 2`: router left/right de v0.4.0). Informativo. Ver "Marcador de router". |
 | ~~`viewport.*`~~ | — | — | **Movido a estado de vista local** (no versionado). Ver sección abajo. |
 | `tables` | object | `{}` | Keys = nombre qualified (`schema.tableName`). |
 | `tables.*.x` | integer | — | Requerido. Coord de mundo (enteros para evitar ruido subpixel). |
@@ -102,28 +102,28 @@ Reglas:
 
 Las aristas DBML `Dep` comparten `edges` con las refs bajo el namespace `dep:` + la misma clave compuesta (`dep:public.a::x|public.b::y`). Sus `waypoints` son puntos **libres** por los que pasa la curva (no esquinas ortogonales) y usan la misma serialización (enteros, claves ordenadas). `color` sólo se escribe si el usuario lo cambia desde la UI; el `color` del bloque `Dep` y el `headercolor` de tablas del `.dbml` son fallback de display y **nunca** se escriben aquí (precedencia: sidecar > DBML > token).
 
-### Marcador de router (`edgeRouting`, decisión 2026-10-06)
+### Marcador de router (`edgeRouting`, decisión 2026-10-06, revisada el mismo día)
 
-Distingue formas de arista guardadas para el router actual de las de versiones anteriores
-(spec 05 §11). Campo de raíz aditivo y opcional; **no** se bumpea `version`: el cambio no altera el
-schema de `tables`/`groups`/`edges` (sólo cómo se interpretan sus formas), el lector ignora claves
-desconocidas, y un bump haría que una extensión vieja que valide la versión rechace el archivo
-(misma razón que el view-state, arriba). Mezclar generación de router y versión de archivo obligaría
-además a bumpear el archivo en cada cambio de router.
+Generación del router FK que escribió el archivo. Lo introdujo 0.4.1 para un aviso único de migración
+("Update relations" / "Keep") que se **retiró**: el usuario no acepta perder formas hechas a mano, así que
+las formas pre-0.4 se dibujan siempre como están guardadas, con el tidy de extremos de spec 05 §11. El
+marcador **se conserva** sólo para que los archivos escritos por 0.4.1 no pierdan la línea (churn en el
+diff) y para que un router futuro pueda distinguir generaciones; **nada lo lee para decidir cómo
+dibujar**.
+
+Campo de raíz aditivo y opcional; **no** se bumpea `version`: el schema de `tables`/`groups`/`edges` no
+cambia, el lector ignora claves desconocidas, y un bump haría que una extensión vieja que valide la
+versión rechace el archivo (misma razón que el view-state, arriba).
 
 - **Lector** (`parseLayout`): acepta un entero positivo (otro valor = ausente); un marcador mayor al
-  de esta build se preserva tal cual. Si falta y el archivo **no** tiene forma FK que migrar
-  (waypoints/lados/`dx`/`dy` en claves no-`dep:` con `::` que no sean self-loops, `isLoopEdgeKey`;
-  spec 05 §11), lo sella en memoria con el actual
-  (`resolveEdgeRouting`): un archivo así se escribe marcado en su próximo guardado normal, sin aviso ni
-  escritura forzada (`diskSharedSerialized` ya es la forma marcada). Con formas, queda **sin**
-  marcar: pre-0.4, pendiente del aviso.
+  de esta build se preserva tal cual. Un archivo sin marcador se lee sin marcar (en memoria).
 - **Writer** (`serializeSharedLayout` y `serializeLayout`): siempre escribe
-  `resolveEdgeRouting(layout)` en un slot fijo justo después de `version` (metadata de archivo; la raíz
-  mantiene orden de schema, no alfabético). La única ausencia posible es un archivo pre-0.4 aún sin
-  respuesta: un guardado normal no lo sella, para que el aviso siga apareciendo.
-- **Merge de persist** (`mergeLayout`): `payload.edgeRouting ?? current.edgeRouting`; un webview que no
-  lo manda no lo borra. El webview lo manda en cada `layout:persist` una vez definido.
+  `resolveEdgeRouting(layout)` (el propio, o `EDGE_ROUTING_VERSION` si falta) en un slot fijo justo
+  después de `version` (metadata de archivo; la raíz mantiene orden de schema, no alfabético). Un archivo
+  de ≤ 0.4.0 recibe la línea en su próximo guardado **normal**; abrirlo no fuerza escritura (el
+  churn-guard compara contra `serializeSharedLayout(parseLayout(disco))`, que ya la trae).
+- **Merge de persist** (`mergeLayout`): `payload.edgeRouting ?? current.edgeRouting`. El webview **no**
+  lo manda (no está en el store), así que un persist nunca lo borra ni lo reescribe.
 - **View-state / merge 3-way:** `applyViewState` y `applyDecisions` lo copian; reglas del 3-way en
   spec 14 §Motor.
 - **Nuevo diagrama** (`emptyLayout`): nace marcado.
@@ -288,8 +288,8 @@ Cuando `version` cambie:
 - Migración escrita como función pura `migrate(v1, v2)` en `layoutStore.ts`.
 
 > Estado real: el lector actual **no** valida `version` (lo ignora y siempre produce v1); lo de
-> arriba es intención para un futuro bump. Las migraciones de contenido sin bump van por marcadores
-> aditivos: las formas de aristas pre-0.4 usan `edgeRouting` (arriba) y el aviso de spec 05 §11.
+> arriba es intención para un futuro bump. Las formas de aristas pre-0.4 no se migran en el archivo:
+> se normalizan al dibujar (spec 05 §11) y sólo se reescriben cuando el usuario edita esa arista.
 
 ## Ejemplo completo (proyecto e-commerce DDD)
 
@@ -360,8 +360,9 @@ Este test es crítico: garantiza que re-guardar un archivo sin cambios no produc
 - **GC de view-state huérfano.** Archivos en `globalStorage` keyed por hash del URI
   se acumulan al renombrar/borrar el `.dbml`. ¿Comando `dddbml: Prune view-state` vs
   barrido en `activate` por `lastSeen`? Diferido; severidad baja (JSON minúsculos).
-- **Marcador perdido por v0.4.0** (spec 05 §11): una extensión v0.4.0 reescribe el archivo sin
-  `edgeRouting`; si quedan formas, v0.4.1+ vuelve a preguntar. Aceptado (no-bloqueante).
+- ~~**Marcador perdido por v0.4.0**~~ **Resuelto (2026-10-06):** sin aviso ya no importa; una
+  extensión v0.4.0 reescribe el archivo sin `edgeRouting` y la siguiente versión lo vuelve a escribir
+  (una línea de diff en equipos con versiones mixtas, aceptado).
 - **Decisión bloqueada:** `viewport` se omite **por completo** del sidecar (no línea
   congelada) — el lector ya defaultea `{0,0,1}` y el viewport real sale del archivo
   local.

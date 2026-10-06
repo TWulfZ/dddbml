@@ -93,12 +93,9 @@ export function mergeThreeWay(base: Layout, ours: Layout, theirs: Layout): Merge
   return { merged, conflicts };
 }
 
-/**
- * Both sides come from `parseLayout`, so an unmarked side still holds FK shapes from an older router
- * (spec 05 §Migración). Its shapes can reach the merge, so the result stays unmarked and the notice
- * asks again; the writer stamps it anyway once no FK shape is left. Marked on both: the newer wins.
- */
+/** Root scalar, never a conflict: the marker only moves forward, so the newer side wins (spec 14). */
 function mergeEdgeRouting(ours: number | undefined, theirs: number | undefined): number | undefined {
-  if (ours === undefined || theirs === undefined) return undefined;
+  if (ours === undefined) return theirs;
+  if (theirs === undefined) return ours;
   return Math.max(ours, theirs);
 }

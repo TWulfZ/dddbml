@@ -81,3 +81,20 @@ describe('A* auto marker (F20)', () => {
     expect(persist.type === 'layout:persist' && persist.payload.edges?.['k']).toEqual({ waypoints: [{ x: 1, y: 2 }], sourceSide: 'top', auto: true });
   });
 });
+
+describe('pre-0.4 layouts load silently (spec 05 §11: no migration prompt)', () => {
+  it('an unmarked layout keeps every saved shape, raises no pending state and is not written on load', () => {
+    const K = 'public.a::b_id|public.b::id';
+    const shape = { waypoints: [{ x: 568, y: 40 }, { x: 568, y: 337 }], sourceSide: 'right' as const, color: '#abc' };
+    store.getState().setLayout({ version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: { [K]: shape } });
+    const s = store.getState() as unknown as Record<string, unknown>;
+    expect(store.getState().edgeLayouts.get(K)).toEqual(shape);
+    expect('edgeMigrationPending' in s).toBe(false);
+    expect('edgeRouting' in s).toBe(false);
+    expect(persists()).toHaveLength(0);
+    // The marker is the host's to keep: a persist never carries it, so it cannot drop or rewrite it.
+    schedulePersist();
+    expect(persists()[0]![0]).toMatchObject({ payload: { edges: { [K]: shape } } });
+    expect('edgeRouting' in (persists()[0]![0] as { payload: object }).payload).toBe(false);
+  });
+});

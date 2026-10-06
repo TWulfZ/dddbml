@@ -2,6 +2,7 @@ import type { EdgeLayout, QualifiedName, Ref, Waypoint } from '../../shared/type
 import { densityMetrics } from '../layout/density';
 import { boxesIntersect, cClearsEndpoints, chooseHorizontalSides, EDGE_CORNER_RADIUS, EDGE_STUB, effectiveEdgeLayout, narrowGapSJog, type PortRows } from '../layout/edgeSides';
 import { isSelfRef } from './edgeKey';
+import { tidyStubEnds } from './edgeTidy';
 import type { Bbox } from './spatialIndex';
 
 export type Side = 'left' | 'right' | 'top' | 'bottom';
@@ -84,7 +85,10 @@ export interface EdgeSegment {
 export interface EdgeRoute {
   id: string;
   d: string;
-  /** Copy of the user's waypoints in world coords for rendering circles. */
+  /**
+   * The saved corners as drawn: the user's waypoints with stub-end artifacts tidied (`tidyStubEnds`).
+   * Edits start from these, so editing a tidied edge saves the tidied corners.
+   */
   waypoints: Waypoint[];
   /** Orthogonal segments composing the path, in order. Used for hover hit-testing and "click to add waypoint". */
   segments: EdgeSegment[];
@@ -263,13 +267,13 @@ function buildRoute(
   if (isSelfRef(d.ref)) return buildLoopRoute(d, a, b, ctx.loopReach, ctx.unyieldedReach);
 
   const layout = d.layout;
-  const waypoints = waypointsOf(layout);
+  const saved = waypointsOf(layout);
   const legacyDx = legacyDxOf(layout);
 
   const sJog = narrowGapSJog(a, b, d.sourceSide, d.targetSide, d.srcBbox, d.tgtBbox);
-  const lane = facingZLane(a, b, d.sourceSide, d.targetSide, waypoints, legacyDx, sJog, d.ref.source.table, d.ref.target.table);
+  const lane = facingZLane(a, b, d.sourceSide, d.targetSide, saved, legacyDx, sJog, d.ref.source.table, d.ref.target.table);
   const zTrunkX = lane ? ctx.placeZ(lane) : undefined;
-  const { corners, aStub, bStub } = buildPath(a, b, waypoints, legacyDx, d.sourceSide, d.targetSide, ctx.trunkX, sJog, zTrunkX);
+  const { corners, aStub, bStub, waypoints } = buildPath(a, b, saved, legacyDx, d.sourceSide, d.targetSide, ctx.trunkX, sJog, zTrunkX);
   return {
     id: d.ref.id,
     d: roundedPathString(corners, CORNER_RADIUS),
@@ -1323,7 +1327,10 @@ export function routeRefs(
  * non-axis-aligned pair, as back-compat for v1 free waypoints). Nothing is collapsed/canonicalized,
  * so local notches (a dip whose pins are colinear with the run) survive.
  *
- * Returns the full corner list (`[a, ...editable..., b]`) plus the fixed stub ends.
+ * Saved corners are first tidied against the stub ends (`tidyStubEnds`, spec 05 §11): the one place
+ * render, `routeMoved`, image export, A* and edits all read them through.
+ *
+ * Returns the full corner list (`[a, ...editable..., b]`), the fixed stub ends and the corners drawn.
  */
 function buildPath(
   a: Point,
@@ -1335,7 +1342,7 @@ function buildPath(
   trunkX?: number,
   sJog?: number,
   zTrunkX?: number,
-): { corners: Point[]; aStub: Point; bStub: Point } {
+): { corners: Point[]; aStub: Point; bStub: Point; waypoints: Waypoint[] } {
   const dirA = STUB_DIR[sourceSide];
   const dirB = STUB_DIR[targetSide];
   // Geometry-only, so stored waypoints materialized from an S still meet the same stub ends.
@@ -1343,12 +1350,13 @@ function buildPath(
   const aStub = { x: a.x + dirA.x * stubLen, y: a.y + dirA.y * stubLen };
   const bStub = { x: b.x + dirB.x * stubLen, y: b.y + dirB.y * stubLen };
 
+  const drawn = tidyStubEnds(aStub, bStub, dirA, dirB, waypoints);
   let editable: Point[];
-  if (waypoints.length > 0) editable = cornersThrough(aStub, bStub, waypoints, dirA.y !== 0, dirB.y !== 0);
+  if (drawn.length > 0) editable = cornersThrough(aStub, bStub, drawn, dirA.y !== 0, dirB.y !== 0);
   else if (sJog !== undefined) editable = narrowGapSCorners(aStub, bStub, sJog);
   else editable = defaultEditableCorners(aStub, bStub, dirA, dirB, legacyDx, trunkX, zTrunkX);
   const corners = [{ x: a.x, y: a.y }, ...editable, { x: b.x, y: b.y }];
-  return { corners, aStub, bStub };
+  return { corners, aStub, bStub, waypoints: drawn };
 }
 
 /**

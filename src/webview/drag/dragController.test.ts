@@ -5,8 +5,8 @@ vi.mock('../persistence', () => ({ schedulePersist: vi.fn() }));
 
 import { store } from '../state/store';
 import { zoomAt } from '../render/viewport';
-import { commitEdgeStyle, deleteDepWaypoint, flipLoopSide, forgetIgnoredShape, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag } from './dragController';
-import type { EdgeRoute } from '../render/edgeRouter';
+import { commitEdgeStyle, deleteDepWaypoint, flipLoopSide, forgetIgnoredShape, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag, startSegmentSlide } from './dragController';
+import { routeRefs, type EdgeRoute } from '../render/edgeRouter';
 import type { EdgeLayout, Ref } from '../../shared/types';
 import { depKey, edgeKey } from '../render/edgeKey';
 
@@ -215,6 +215,23 @@ describe('edge edits', () => {
     store.setState({ edgeLayouts: new Map([['k', { color: '#ff0000' }]]) });
     resetEdgeWaypoints('k');
     expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('editing a tidied edge saves the tidied corners; undo restores the saved ones (spec 05 §11)', () => {
+    // Pre-0.4 shape whose last corner sits 3 px off the target port row: drawn without the stair.
+    const saved: EdgeLayout = { waypoints: [{ x: 568, y: 40 }, { x: 568, y: 337 }], color: '#ff0000' };
+    const r: Ref = { id: 'k', source: { table: 'a', columns: ['fk'], relation: '*' }, target: { table: 'b', columns: ['id'], relation: '1' } };
+    const boxes: Record<string, { x: number; y: number; w: number; h: number }> = { a: { x: 0, y: 0, w: 200, h: 100 }, b: { x: 600, y: 300, w: 200, h: 100 } };
+    store.setState({ edgeLayouts: new Map([['k', saved]]) });
+    const route = routeRefs([r], (n) => boxes[n], () => 40, (id) => store.getState().edgeLayouts.get(id))[0]!;
+    expect(route.waypoints).toEqual([{ x: 568, y: 40 }, { x: 568, y: 340 }]);
+    const trunk = route.segments.findIndex((sg) => sg.axis === 'v' && !sg.rigid);
+    startSegmentSlide(route, trunk, ptr(300, 100), fakeNode());
+    move(200, 100);
+    up(200, 100);
+    expect(store.getState().edgeLayouts.get('k')).toEqual({ waypoints: [{ x: 468, y: 40 }, { x: 468, y: 340 }], color: '#ff0000' });
+    store.getState().undo();
+    expect(store.getState().edgeLayouts.get('k')).toEqual(saved);
   });
 });
 

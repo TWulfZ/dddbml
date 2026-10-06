@@ -88,12 +88,11 @@ conflicto y lanza `LayoutConflictError` (en vez de borrar el layout). El caller
    `eq` = deep-equal estructural (waypoints comparan orden). Cubre add/add
    distinto (base ausente) y editar-vs-borrar como conflicto.
 
-   **Marcador `edgeRouting` (spec 03, spec 05 §11):** escalar de raíz, nunca
-   conflicto. Ambos lados marcados → el mayor (sólo avanza). Si un lado viene sin
-   marcar (tras `parseLayout`, eso significa que aún trae formas FK de un router
-   pre-0.4), el resultado queda sin marcar y el aviso de migración vuelve a
-   preguntar tras aplicar el merge; si en el resultado ya no queda ninguna forma
-   FK, el writer lo sella igual. `applyDecisions` y `applyViewState` lo preservan.
+   **Marcador `edgeRouting` (spec 03):** escalar de raíz, informativo, nunca
+   conflicto: el mayor de los lados que lo traen (sólo avanza); un lado sin marcar
+   (archivo de ≤ 0.4.0) no lo borra. El writer escribe el actual si el resultado
+   queda sin marcar. `applyDecisions` y `applyViewState` lo preservan. Tras 0.4.1
+   ya no decide ningún aviso (spec 05 §11).
 5. Conflictos → QuickPick nativo (abajo). Diseño compartido ya resuelto se aplica
    en silencio.
 6. `writeSharedLayout` escribe el sidecar limpio (forma compartida). Si no se
@@ -276,9 +275,8 @@ Tailwind en `@layer utilities` ganarían sobre `@layer components`; por eso no h
   conflicto, add/add, edit/delete, both-deleted) + el caso institution (disjunto
   auto-merge, sólo el solapamiento conflicta) + `deepEqual`.
 - `layoutStore.edgeRouting.test.ts`: el marcador `edgeRouting` en el merge 3-way
-  (ambos marcados → el mayor; un lado sin marcar → sin marcar; "Update" de un lado
-  sin formas restantes → sellado al escribir) y a través de `applyDecisions` /
-  `applyViewState`.
+  (ambos marcados → el mayor; un lado sin marcar → el del otro; ninguno → sin
+  marcar, sellado al escribir) y a través de `applyDecisions` / `applyViewState`.
 - `mergeResolver.test.ts`: `toSerializableConflicts` mapea `undefined → null` y
   arma `id = '<section>::<key>'`; `applyResolvedConflicts` aplica un
   `Record<id,'ours'|'theirs'>` sobre el `merged` provisional (ours/theirs/borrado),

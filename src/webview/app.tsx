@@ -35,7 +35,6 @@ import { RecordsModal } from './render/recordsModal';
 import { GitPanel } from './render/gitPanel';
 import { EdgeOrderProgress } from './render/edgeOrderProgress';
 import { GitBanner, buildDiffTargets, countHiddenChanges } from './render/gitBanner';
-import { EdgeMigrationBanner } from './render/edgeMigrationBanner';
 import { DiffGhosts } from './render/diffGhosts';
 import { groupDiffStatuses } from './render/groupDiffStatus';
 import { ErrorBoundary } from './ui/ErrorBoundary';
@@ -597,19 +596,12 @@ export function App(_props: AppProps) {
           {ready && gitView ? <GitBanner diffTargets={diffTargets} hiddenChanges={hiddenChanges} /> : null}
         </ErrorBoundary>
       </div>
-      <div class="ddd-top-stack">
-        {parseError ? (
-          <div class="ddd-banner" title={parseError.message}>
-            Parse error
-            {parseError.line != null ? ` (line ${parseError.line})` : ''}: {parseError.message}
-          </div>
-        ) : null}
-        {ready && !readOnly ? (
-          <ErrorBoundary scope="notices">
-            <EdgeMigrationBanner />
-          </ErrorBoundary>
-        ) : null}
-      </div>
+      {parseError ? (
+        <div class="ddd-banner" title={parseError.message}>
+          Parse error
+          {parseError.line != null ? ` (line ${parseError.line})` : ''}: {parseError.message}
+        </div>
+      ) : null}
       {ready ? (
         <div class="ddd-statusbar">
           {visibleCount}/{totalTableCount} visible · {derived.effectiveRefs.length} refs · zoom <ZoomPct />% · LOD {lod}

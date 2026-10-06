@@ -136,7 +136,7 @@ const isVerticalSide = (side: string | undefined): boolean => side === 'top' || 
 
 /**
  * A saved shape the current zone rule cannot draw, so render and edits ignore it whole (sides +
- * waypoints, which were routed for other ports), keeping only its color (spec 05 §Migración).
+ * waypoints, which were routed for other ports), keeping only its color (spec 05 §11).
  * - Any `top`/`bottom` port, manual or `auto`: no current router or UI writes one (the endpoint flip
  *   only pins left/right), so it can only be a pre-0.4 router's choice.
  * - Side-less `auto` waypoints between x-overlapping tables (needs both bboxes): older passes left the

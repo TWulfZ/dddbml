@@ -219,7 +219,7 @@ function editableLayout(refId: string): EdgeLayout | undefined {
 }
 
 /**
- * Drops a stored shape the router ignored (legacy, spec 05 §Migración) before an edit on its route, so the
+ * Drops a stored shape the router ignored (legacy, spec 05 §11) before an edit on its route, so the
  * edit starts from what is drawn and a side flip cannot revive waypoints routed for other ports.
  * Color kept; outside undo, since the dropped shape was never visible.
  */

@@ -91,7 +91,7 @@ describe('auto marker (F20) — undo/redo replays', () => {
   });
 });
 
-describe('legacy top/bottom shapes (spec 05 §Migración) — edits start from what is drawn', () => {
+describe('legacy top/bottom shapes (spec 05 §11) — edits start from what is drawn', () => {
   const legacy: EdgeLayout = { waypoints: [{ x: 10, y: 10 }, { x: 10, y: 90 }], sourceSide: 'bottom', targetSide: 'top', color: '#abc', auto: true };
 
   it('a manual (non-auto) top/bottom shape is ignored the same way', () => {

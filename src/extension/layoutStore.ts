@@ -51,7 +51,7 @@ export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
     edges: payload.edges ?? current.edges ?? {},
   };
   if (tablesFrom.hiddenUnplaced && tablesFrom.hiddenUnplaced.length > 0) merged.hiddenUnplaced = tablesFrom.hiddenUnplaced;
-  // Most persists come from webviews that never touched the marker: they must not drop it.
+  // The webview never sends the marker: a newer build's value must survive its persists.
   const edgeRouting = payload.edgeRouting ?? current.edgeRouting;
   if (edgeRouting !== undefined) merged.edgeRouting = edgeRouting;
   return merged;
@@ -118,7 +118,7 @@ export function parseLayout(text: string): Layout {
   const groups = toGroups(r.groups);
   const edges = toEdges(r.edges);
   const layout: Layout = { version: 1, viewport, tables, groups, edges };
-  const edgeRouting = resolveEdgeRouting({ edgeRouting: toEdgeRouting(r.edgeRouting), edges });
+  const edgeRouting = toEdgeRouting(r.edgeRouting);
   if (edgeRouting !== undefined) layout.edgeRouting = edgeRouting;
   return layout;
 }
@@ -238,8 +238,7 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
   lines.push('{');
   lines.push(`  "version": ${layout.version},`);
   // Fixed slot beside `version` (file metadata), not alphabetical: the top level keeps schema order.
-  const edgeRouting = resolveEdgeRouting(layout);
-  if (edgeRouting !== undefined) lines.push(`  "edgeRouting": ${edgeRouting},`);
+  lines.push(`  "edgeRouting": ${resolveEdgeRouting(layout)},`);
   if (!shared) {
     const vp = layout.viewport;
     lines.push(`  "viewport": { "x": ${Math.round(vp.x)}, "y": ${Math.round(vp.y)}, "zoom": ${Math.round(vp.zoom * 1000) / 1000} },`);

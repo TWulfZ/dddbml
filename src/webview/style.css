@@ -313,26 +313,12 @@
     border-radius: var(--ddd-radius-xs);
   }
 
-  /* Top-of-canvas messages (parse error, edge-migration notice) flow in one column so a second one
-     pushes the first's neighbour down instead of drawing over it, whatever their heights. Symmetric
-     insets clear the top-left app-menu trigger (≈ space-8 wide) and keep the column centred. No
-     z-index here: each child keeps its own layer against the toolbars. */
-  .ddd-top-stack {
+  .ddd-banner {
     position: absolute;
     top: var(--ddd-space-4);
+    /* Clear the top-left app-menu trigger (≈ space-8 wide) so they never overlap. */
     left: calc(var(--ddd-space-4) + var(--ddd-space-8) + var(--ddd-space-4));
-    right: calc(var(--ddd-space-4) + var(--ddd-space-8) + var(--ddd-space-4));
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--ddd-space-3);
-    pointer-events: none;
-  }
-  .ddd-top-stack > * { pointer-events: auto; }
-
-  .ddd-banner {
-    position: relative;
-    align-self: stretch;
+    right: var(--ddd-space-4);
     padding: var(--ddd-space-3) var(--ddd-space-5);
     background: var(--vscode-inputValidation-errorBackground, rgba(200, 40, 40, 0.20));
     border: 1px solid var(--vscode-inputValidation-errorBorder, var(--ddd-danger));
@@ -1754,26 +1740,17 @@
     color: var(--ddd-accent);
   }
 
-  /* ----- Floating canvas bar: git overlay (spec 16) and the edge-migration notice (spec 05),
-     never both: the notice only shows on an editable canvas. ----- */
+  /* ----- Git canvas bar (time-travel / diff overlay; spec 16) ----- */
   .ddd-git-bar {
     position: absolute;
     top: var(--ddd-space-5);
     left: 50%;
     transform: translateX(-50%);
-    max-width: calc(100% - var(--ddd-space-8) * 2);
-  }
-  /* Laid out by `.ddd-top-stack`, below the parse-error banner when both show. */
-  .ddd-edge-migration-bar {
-    position: relative;
-    max-width: 100%;
-  }
-  .ddd-git-bar,
-  .ddd-edge-migration-bar {
     z-index: 40;
     display: flex;
     align-items: center;
     gap: var(--ddd-space-4);
+    max-width: calc(100% - var(--ddd-space-8) * 2);
     padding: var(--ddd-space-3) var(--ddd-space-5);
     background: var(--ddd-surface-raised);
     border: 1px solid var(--ddd-border);
@@ -1786,15 +1763,6 @@
   .ddd-git-bar__label {
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* Wraps instead of truncating: the sentence is the whole point of a one-time notice. */
-  .ddd-edge-migration-bar__label {
-    min-width: 0;
-  }
-  .ddd-edge-migration-bar > svg,
-  .ddd-edge-migration-bar > button {
-    flex: none;
     white-space: nowrap;
   }
   .ddd-git-bar__label strong { color: var(--ddd-fg-strong); }

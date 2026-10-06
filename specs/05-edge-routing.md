@@ -189,7 +189,7 @@ segmentos completos.
   recortado — §1 "Esquinas".)* (2) Sólo `left`/`right`: un override manual `top`/`bottom` enfrentado y angosto
   sigue con el clamp. (3) Una S editada (waypoints) cuyo par sale de la ventana al mover una tabla
   pasa a stubs recortados y `cornersThrough` inserta un codo contra las esquinas guardadas (igual que
-  cualquier cambio de clamp). (4) Tablas encimadas en x (gap < 24) sin hueco vertical no tienen S: el
+  cualquier cambio de clamp); el tidy de extremos (§11) lo absorbe mientras el corrimiento sea < 24. (4) Tablas encimadas en x (gap < 24) sin hueco vertical no tienen S: el
   clamp las deja como Z con trunk en el hueco visible, que con pocos px sigue siendo angosto.
 - ~~**¿Handles en las mitades de una fila alineada con hueco chico?**~~ **Resuelto (2026-10-03,
   verificación visual):** con el umbral de `MIN_HANDLE_LEN` (16) sobre la hit-line, un par alineado
@@ -294,7 +294,7 @@ La Z llega hasta que las tablas se tocan: con un hueco de 1 px sigue siendo Z, e
 (decisión 7) deja la mitad central editable y el trunk cae en el **punto medio** del hueco
 (`midpointBetween`: el medio redondeado, o el exacto si redondear lo pegaría a un extremo de stub,
 gaps de 1–3 px). Nunca sale por `top`/`bottom`: ni por sí misma ni por un lado persistido, manual o
-`auto`, que se ignora entero (§Migración de formas pre-0.4). Los self-loops no pasan por esta regla (§Self-loops).
+`auto`, que se ignora entero (§11). Los self-loops no pasan por esta regla (§Self-loops).
 
 **S de hueco angosto (decisión 2026-10-05, referencia dbdiagram; umbral sólo en x).** Con el clamp a
 un cuarto, un par a pocos px (p. ej. hueco 10 ⇒ stubs de 2) dejaba el trunk apretado contra ambas
@@ -377,7 +377,8 @@ vista.
 
 **Computar path** (`buildPath`): polilínea ortogonal de ejes alternados. El
 **polígono editable** se rutea entre los extremos fijos `aStub`/`bStub` (decisión
-7) conectando las **esquinas literales** del usuario directamente (`cornersThrough`,
+7) conectando las **esquinas literales** del usuario directamente, tras normalizar sólo los artefactos
+pegados a los stubs (`tidyStubEnds`, §11) (`cornersThrough`,
 sin colapsar — un codo de seguridad sólo para un par no-alineado v1, que junto a un
 stub avanza primero sobre el eje de ese stub, así tras un stub `top`/`bottom` nunca
 corre plano sobre el borde); sin waypoints ⇒ `defaultEditableCorners`: stubs
@@ -674,7 +675,7 @@ por una recta vertical (Limitaciones 5). Modelo vigente:
   escribe lados provisionales. Todo va marcado `auto` (abajo), así que no cuenta como forma manual.
 - **Formas legadas se ignoran** (`isLegacyEdgeShape`, `layout/edgeSides.ts`): se tratan como
   ausentes (`effectiveEdgeLayout` las reduce a su color) (a) cualquier forma con algún lado
-  `top`/`bottom`, **manual o `auto`** (decisión 2026-10-06, §Migración de formas pre-0.4: el A\*
+  `top`/`bottom`, **manual o `auto`** (decisión 2026-10-06, §11: el A\*
   anterior podía persistirlos y la UI sólo fija izquierda/derecha), y (b) un `auto` con waypoints, **sin** lados, entre tablas
   cuyo par de zonas es la C `right`/`right` (x-solape): los pases anteriores dejaban los lados
   implícitos y ruteaban para `bottom`/`top` (v0.3.0, columnas apiladas del auto-arrange) o para L/R
@@ -813,7 +814,7 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
 - **E3 · Lados top/bottom.** → ~~Sí, los produce el pase A* on-demand~~ **Revertido (decisión
   2026-10-03, Limitaciones 5):** ni A\* ni `chooseSides` producen `top`/`bottom`. El tipo `EdgeSide`
   conserva los 4 lados (`'left'|'right'|'top'|'bottom'`) sólo para leer sidecars viejos; cualquier
-  forma con `top`/`bottom`, manual o `auto`, se ignora al dibujar (§Migración de formas pre-0.4).
+  forma con `top`/`bottom`, manual o `auto`, se ignora al dibujar (§11).
 - **E4 · Progreso.** → **Porcentaje real** (loop A* propio, cede + emite progreso, cancelable).
 - **E5 · `preserveManualEdges`.** → **El usuario elige por corrida; default ON** (preservar).
 
@@ -833,69 +834,116 @@ selector granular que el memo de ruteo **no** lee → pumping el % no re-rutea; 
 
 Las dependencias lógicas no usan el ruteo ortogonal: `render/depRouter.ts` traza una **curva** entre dos stubs horizontales rígidos de 24 px (mismo `MIN_STUB`, recortados a la mitad del gap; las refs usan un cuarto, decisión 7). Sin waypoints es una Bézier con handles horizontales; con waypoints, Catmull-Rom → Béziers que pasan por cada punto, tangente a los stubs en los extremos. Lados izquierda/derecha por centros (no la regla de zonas de `chooseSides`, §1: una dep nunca hace C; ver Preguntas abiertas); puerto Y = centro de la primera columna (`rows.indexOf`) o `headerCenterY()` para deps a nivel tabla. Edición: sólo la dep seleccionada muestra handles de inserción (t=0.5 de cada tramo) y de waypoint (mover / doble clic = borrar); reutiliza `runEdgeDrag` + `WaypointCommand`. Se pintan en el **mismo SVG** (`DepPaths` en la capa base, `DepOverlay` en la de overlay) y se cullean con el mismo `visibleRefIds`. No participan en auto-layout, A* ni puertos compartidos con refs, nunca llevan `auto` (§9) y los resets de forma por movimiento de tablas no las tocan. Durante un drag se re-rutean sólo las deps de las tablas movidas (`DepRouteCache`, spec 04 "Drag incremental").
 
-### 11. Migración de formas pre-0.4 (decisión 2026-10-06)
+### 11. Migración silenciosa de formas pre-0.4 (decisión 2026-10-06, revisada el mismo día)
 
 **Problema.** El router left/right de v0.4.0 (Z, S y C estilo dbdiagram) sólo ignoraba las formas
 legadas marcadas `auto` (§9). Los diagramas guardados antes de 0.4 traen waypoints y lados **sin**
 `auto` (overrides de versiones viejas o salidas de A\* previas al marcador), así que se dibujaban como
-manuales: FKs saliendo por `top`/`bottom` y waypoints calculados para la geometría vieja de stubs que
-ahora dibujan muescas y rodeos. "Reset" los arreglaba, pero arista por arista o reubicando tablas.
+manuales: FKs saliendo por `top`/`bottom`, y esquinas guardadas para la geometría vieja (fila de puerto
+3 px más arriba, stubs de 16 px) que `cornersThrough` une a los stubs actuales con un codo o un retroceso:
+rayitas de pocos px junto a las tablas.
+
+**Historia.** 0.4.1 lo resolvía con un aviso único ("Relations in this diagram were drawn by an earlier
+version.") con **Update relations** (borrar las formas de todas las aristas FK) o **Keep**. **Retirado**
+(decisión del usuario): las formas acomodadas a mano son trabajo que no se puede perder, "Update" las
+reseteaba todas, y lo que de verdad se veía roto en las formas conservadas eran las rayitas de los
+extremos, no las formas. Sin aviso, sin barra (`.ddd-top-stack` también se retiró: el banner de parse
+error vuelve a ir solo), sin estado pendiente en el store y sin escritura forzada.
 
 **Decisiones (resueltas con el usuario):**
 
-1. **`top`/`bottom` se ignoran siempre**, manual o `auto`, sin preguntar. La UI sólo fija
-   izquierda/derecha (flip de endpoint, decisión 4) y ningún router actual los produce, así que sólo
-   pueden venir de un router anterior. Ignorar un lado ignora la forma entera del par de extremos
-   (lados + waypoints + `dx/dy`), conservando el color, igual que el filtro de §9: es la misma
-   función (`isLegacyEdgeShape` → `effectiveEdgeLayout`), así render (`routeRefs`), `routeMoved`,
-   export de imagen (pasa por `routeRefs`), ediciones (`forgetIgnoredShape`, `setEdgeSide`,
-   `setEdgeWaypoints`, snapshot del drag) y "Order edges" (`hasManualShape`) coinciden.
-2. **Marcador de router en el sidecar:** `edgeRouting: 2` en la raíz (spec 03). Un archivo **sin**
-   marcador cuyas aristas FK traen forma guardada (waypoints, lados o `dx/dy`; no cuentan color, deps,
-   claves ≤0.2.8 sin `::` ni self-loops) es **pre-0.4**. Los self-loops se reconocen por la clave
-   (`isLoopEdgeKey`: misma tabla antes del primer `::` y tras el `|`), porque el host no tiene el
-   schema al leer; "Update" usa el mismo test, así que el aviso nunca ofrece una acción que no cambia
-   nada (un archivo cuyo único flip guardado es el de un lazo se sella al leerse). Cualquier otro archivo sin marcador recibe el marcador al
-   leerse (`resolveEdgeRouting`) y lo escribe en su próximo guardado normal: sin aviso ni escritura
-   forzada (el churn-guard compara contra la forma ya marcada).
-3. **Aviso único** en el diagrama para un archivo pre-0.4 (`render/edgeMigrationBanner.tsx`, barra
-   flotante superior apilada bajo el banner de parse error en `.ddd-top-stack`, mismo estilo que la
-   barra git de spec 16 —spec 12 §Barra flotante—; UI en inglés como el resto):
-   *"Relations in this diagram were drawn by an earlier version."* con dos acciones
-   (`layout/edgeMigration.ts`):
-   - **Update relations** (`<Button variant="primary">`): borra waypoints, lados y `dx/dy` de **todas**
-     las aristas FK (color conservado; deps intactas) como **un solo** comando de undo (`arrange`,
-     `buildEdgesResetCommand`, etiqueta "Update relations"), sella el marcador y persiste una vez.
-     Ctrl+Z restaura las formas; la respuesta queda registrada (el archivo sigue marcado), así que tras
-     deshacer equivale a "Keep".
-   - **Keep** (`secondary`): pide confirmación con un `<Modal>` que avisa que no volverá a preguntar
-     y que borrar `"edgeRouting": 2` del `.dbml.layout.json` (y reabrir) recupera la opción (decisión
-     2026-10-06: un Keep por error no tenía vuelta atrás visible). Al confirmar conserva las formas,
-     sella el marcador y persiste una vez. No vuelve a preguntar.
-   Los **self-loops** se excluyen de "Update": su única forma es el flip izquierda/derecha, que ambos
-   routers dibujan igual (descartarlo perdería una elección del usuario que el cambio de router no
-   invalidó). Un lado `top`/`bottom` en un lazo ya se dibuja a la derecha (`loopSide`).
+1. **`top`/`bottom` se ignoran siempre**, manual o `auto`. La UI sólo fija izquierda/derecha (flip de
+   endpoint, decisión 4) y ningún router actual los produce, así que sólo pueden venir de un router
+   anterior. Ignorar un lado ignora la forma entera del par de extremos (lados + waypoints + `dx/dy`),
+   conservando el color, igual que el filtro de §9: es la misma función (`isLegacyEdgeShape` →
+   `effectiveEdgeLayout`), así render (`routeRefs`), `routeMoved`, export de imagen (pasa por
+   `routeRefs`), ediciones (`forgetIgnoredShape`, `setEdgeSide`, `setEdgeWaypoints`, snapshot del drag)
+   y "Order edges" (`hasManualShape`) coinciden.
+2. **Toda otra forma guardada se dibuja como está, con el tidy de extremos** (`tidyStubEnds`,
+   `render/edgeTidy.ts`): sólo se normalizan los artefactos pegados a los stubs rígidos; ninguna curva
+   del usuario se mueve más del umbral y la ruta conserva sus vueltas.
+3. **Un solo lugar:** `buildPath` pasa las esquinas guardadas por `tidyStubEnds` antes de
+   `cornersThrough`, y `EdgeRoute.waypoints`/`segments` salen de las esquinas ya normalizadas. Así lo ven
+   igual el render (`routeAll`), `routeMoved` (función pura de puertos, stubs y esquinas ⇒ == rebuild
+   completo), el export de imagen (`routeRefs`), el pase A\* (sus aristas preservadas pasan por
+   `routeRefs`) y la edición: `slideSegment`/`notchAtQuarter`/`deleteNotch` materializan las esquinas
+   del `EdgeRoute`, así que **editar una arista guarda su versión normalizada** (un solo
+   `WaypointCommand`; Ctrl+Z vuelve a las esquinas guardadas). Sin editar, el archivo conserva las
+   esquinas originales.
+4. **El marcador `edgeRouting` queda en el formato** (spec 03): el lector lo preserva, el writer lo
+   escribe y los merges lo conservan, para que los archivos de 0.4.1 no pierdan la línea; ya no decide
+   nada.
 
-**Gate de solo lectura.** El aviso no se muestra ni actúa durante merge, diff ni time-travel
-(`showEdgeMigrationNotice` = pendiente ∧ `!isCanvasReadOnly`); las acciones son no-op ahí y nada se
-escribe (además el host descarta todo `layout:persist` en solo lectura). Al salir del overlay el host
-reenvía el layout de trabajo y `setLayout` recalcula si el aviso corresponde.
+**Medición (copia de un diagrama real pre-0.4: 59 aristas guardadas, 55 con waypoints, ninguna `auto`;
+45 resuelven a refs actuales ⇒ 90 extremos).** `off` = distancia de la primera esquina al eje del stub,
+`fwd` = distancia a lo largo del stub desde su extremo (negativa = detrás):
 
-**Flujo de datos.** El host lee el marcador (`parseLayout`), lo preserva en `mergeLayout` (un persist
-sin marcador conserva el actual), `applyViewState`, `applyDecisions` y el merge 3-way (spec 14), y lo
-escribe con `serializeSharedLayout`. El webview lo guarda en el store (`edgeRouting`,
-`edgeMigrationPending` calculado en `setLayout`) y lo manda en cada `layout:persist` una vez definido.
-Un guardado normal de un archivo pre-0.4 sin respuesta **no** lo sella (el aviso vuelve a aparecer al
-reabrir), salvo que ya no quede forma FK que migrar.
+| Tipo | Extremos | Medidas | Se ve como |
+|---|---|---|---|
+| Codo por deriva de fila (`off ≠ 0`, `fwd ≠ 0`, `\|off\| < 24`) | 59 | `off` = −3 (56), −19/−23/+17 (fila ± 3) | escalón en el stub destino (32), púa en el trunk origen (19), invisible (8) |
+| … de ellos, además detrás del stub | 8 | `fwd` = −8 (6: stubs de 16 px), −312/−344 (2) | gancho sobre el stub |
+| Retroceso sobre el eje (`off = 0`, `−24 < fwd < 0`) | 1 | `fwd` = −8 | gancho de 8 px |
+| Escalón chico en el extremo (`fwd = 0`, tramo nivelado después) | 2 | `off` = 3, −1 | rayita de 1–3 px pegada al stub |
+| Duplicados / colineales / esquina sobre el stub | 0 | — | — |
+| Escalón grande con la esquina pasada del stub (`\|off\| ≥ 24`, `fwd` = 8, tramo nivelado) | 2 | `off` = −61, +67 | stub que parece de 32 px |
+| Fuera de alcance (`≥ 24`) | 20 | lado cambiado (esquinas 200–416 px detrás del stub), saltos de 31–1827 px | rodeos reales |
+| Limpios | 6 | alineados con su stub | — |
+
+Tras el tidy: 39 de las 45 rutas con waypoints cambian (7 esquinas descartadas, ninguna movida 24 px o
+más), quedan **0** artefactos `< 24` (los 2 escalones grandes conservan su nivel, con la esquina en la
+columna del stub) y los 20 de fuera de alcance más los 2 ganchos de −312/−344 (ya sin su escalón de
+deriva) se dibujan como antes; volver a guardar lo dibujado lo dibuja igual en las 45.
+
+**Regla** (`tidyStubEnds`, por extremo, en orden; sólo stubs horizontales):
+
+1. **Codo** (esquina fuera del eje del stub y fuera de la columna de su extremo: `cornersThrough`
+   inventaría un codo). Si el tramo siguiente es nivelado y está a `|off| ≥ STUB_JOG_MIN` del eje, es un
+   **escalón del usuario y conserva su nivel**: la esquina pasa a la columna del extremo si
+   `|fwd| < TIDY_MAX`, **desde cualquier lado** (delante o detrás del extremo: un arrastre de una sola
+   tabla deja las esquinas donde estaban, así que el extremo cae a uno u otro lado del escalón), y si no
+   se queda como está. En otro caso su tramo pasa al eje del stub si `|off| < TIDY_MAX` (un trunk sólo
+   se alarga; un tramo nivelado de rayita sigue a su puerto); detrás del extremo sin eje alcanzable, la
+   columna.
+2. **Gancho** (esquina sobre el eje, detrás del extremo, `−fwd < TIDY_MAX`): su columna pasa al extremo
+   del stub.
+3. **Rayita** (esquina en la columna del extremo, tramo nivelado después, `|off| < STUB_JOG_MIN`): el
+   tramo nivelado pasa al eje.
+
+Una esquina que queda sobre el extremo del stub, o sobre el eje delante de él con el tramo siguiendo
+recto, se descarta (y la nueva primera esquina vuelve a evaluarse). **Garantías:** ninguna esquina
+termina a `TIDY_MAX` o más de donde se guardó (sumando ambos extremos); un snap nunca colapsa ni invierte
+el tramo siguiente; la lista nunca queda vacía; el resultado es **punto fijo** (si el tope deja una
+esquina a medio camino, la forma se dibuja como está guardada, para que editarla no la haga saltar).
+Una forma alineada con sus stubs (lo que escriben el router, A\* y las ediciones) no cambia, salvo por 2
+y 3, que actúan de **imán** al deslizar un tramo hacia la zona del stub.
+
+**Umbrales.** `TIDY_MAX = EDGE_STUB = 24`: la medición separa limpio las derivas (3 px de fila, 8 px de
+largo de stub, una fila ± 3 ⇒ ≤ 23) de las curvas propias (el siguiente desvío medido es 31 px), y 24 es
+el tramo rígido que la UI nunca deja editar. `STUB_JOG_MIN = EDGE_CORNER_RADIUS = 8`: un escalón en el
+extremo más corto que un radio no puede formar sus dos fillets (cada uno se recorta a la mitad del
+escalón), así que se lee como mancha, no como escalón; los medidos son de 1 y 3 px. Un escalón
+deliberado de 8 px o más en el extremo se respeta siempre: nunca se aplana contra el eje, sólo su
+esquina se acerca a la columna del stub. En el archivo medido ningún extremo desalineado `< 24` tiene un
+tramo nivelado después (las derivas de fila ± 3 van todas seguidas de un trunk), así que aplanar
+escalones no limpiaría nada real y sí borraría curvas hechas a mano en 0.4.
+
+**Consecuencias aceptadas.**
+
+- Arrastrar una tabla con forma manual: mientras la deriva de su extremo quede bajo el umbral, el tramo
+  del extremo sigue al puerto (imán) y un escalón ≥ 8 px mantiene su nivel con la esquina en el extremo
+  del stub; al superarlo vuelve el codo de siempre (salto de hasta 24 px), o el retroceso si la tabla
+  pasó del escalón.
+- Deslizar un tramo hacia un gancho (`< 24`) o una rayita (`< 8`) se dibuja ya normalizado, pero se guarda
+  como se arrastró hasta la próxima edición (`slideSegment` no recorta).
 
 **Preguntas abiertas.**
 
-- **Equipos con versiones mixtas.** v0.4.0 no conoce el marcador y lo pierde al reescribir el
-  archivo; si además quedan formas, v0.4.1+ vuelve a preguntar. Aceptado: la transición es corta y
-  preguntar de más es inocuo (no-bloqueante).
-- **Formas manuales post-0.4 sin marcador.** Un archivo editado sólo con v0.4.0 (sin marcador) cuyas
-  formas ya eran del router nuevo también recibe el aviso una vez; "Keep" lo resuelve. No hay forma
-  de distinguirlas sin el marcador (no-bloqueante).
+- **Imán vs. continuidad al arrastrar tablas** (no-bloqueante): ¿mover las esquinas del extremo con la
+  tabla en vez de normalizar al dibujar? Cambiaría el modelo de waypoints absolutos (§3).
+- **Formas grandes fuera de alcance** (22 extremos en la medición: lados que cambiaron, saltos de fila
+  ≥ 24): siguen como están; "Reset line" por arista. ¿Una acción explícita para resetear sólo esas?
+  No-bloqueante.
+- **Recorte en `slideSegment`** de las zonas imán para que lo guardado sea lo dibujado (no-bloqueante).
 
 ## Limitaciones conocidas
 
@@ -1230,14 +1278,24 @@ delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`mov
 - **Serializador (`layoutStore.waypoints.test.ts`):** `sourceSide`/`targetSide` `top`/`bottom`
   round-trip; coexisten con waypoints; defaults omitidos; idempotente byte-estable; **rechaza** un
   valor de lado inválido (whitelist de 4).
-- **Migración pre-0.4 (§11):** `layoutStore.edgeRouting.test.ts` — el lector conserva el marcador,
-  deja sin marcar un archivo con formas FK, sella uno sin nada que migrar (color, deps, claves sin
-  `::`), ignora marcadores malformados y preserva uno más nuevo; el writer lo pone tras `version` en
-  ambas formas, round-trip byte-estable marcado o pendiente, un guardado normal no sella un pendiente
-  y sí uno sin formas; `mergeLayout`, merge 3-way (ambos marcados → el mayor; un lado sin marcar →
-  sin marcar), `applyDecisions` y `applyViewState` lo preservan. `edgeMigration.test.ts` — detección,
-  oculto en time-travel/diff/merge, "Update" (formas FK fuera, color/lazos/deps intactos, marcador,
-  un persist) es un solo undo que restaura todo, "Keep" no toca formas ni historia, el marcador viaja
-  en persists posteriores, y en solo lectura ninguna acción edita, sella ni escribe.
-  `edgeRouter.stub/xOverlap.test.ts` y `store.edgeAuto.test.ts` — `top`/`bottom` manual ignorado
-  entero en render y edición; `edgeReset.test.ts` — una forma `top`/`bottom` no cuenta como manual.
+- **Migración silenciosa pre-0.4 (§11):** `edgeTidy.test.ts` — cada tipo medido (escalón en el stub
+  destino, púa en el trunk origen, deriva invisible, gancho de 8 px, deriva + gancho, fila ± 3, tramo
+  nivelado que conserva su escalón, rayita) con esquinas antes/después; un escalón de 8–23 px en
+  cualquiera de los dos extremos con la tabla movida ±1…±23 en x conserva su nivel con la esquina en el
+  extremo del stub, y a ±24 o más se dibuja como está guardado; sin cambios para formas
+  alineadas (escalón deliberado ≥ 8 incluido), desvíos ≥ 24, tramo siguiente que se invertiría, lista de
+  una esquina y stubs verticales; la ruta dibujada de cada tipo sin escalón/púa/gancho e índices de
+  segmento → waypoint sobre las esquinas dibujadas; fuzz (1500 formas de ediciones aleatorias:
+  punto fijo fuera de las zonas imán; 800 con deriva de una de las dos tablas y de fila: estable al
+  re-guardar, cada esquina a < 24 de una guardada, nunca más segmentos que sin tidy; 1500 con un escalón
+  ≥ 8 en un extremo y su tabla movida < 24 en x: el nivel del escalón se conserva, salvo la rayita
+  `< 8` que el otro extremo aplana del mismo tramo); `routeMoved` == rebuild en 200 drags que
+  entran y salen del umbral. `dragController.test.ts` — editar una arista normalizada guarda las esquinas
+  normalizadas y Ctrl+Z restaura las guardadas. `persistence.test.ts` — un layout sin marcador carga sus
+  formas tal cual, sin estado pendiente ni escritura, y un persist no lleva el marcador.
+  `layoutStore.edgeRouting.test.ts` — el marcador: lector (válido/nuevo/malformado, sin marcar queda sin
+  marcar), writer (slot tras `version`, sella el actual, round-trip byte-estable, sin escritura forzada al
+  abrir), `mergeLayout`, 3-way (el mayor; un lado sin marcar no lo borra), `applyDecisions`,
+  `applyViewState`. `edgeRouter.stub/xOverlap.test.ts` y `store.edgeAuto.test.ts` — `top`/`bottom`
+  manual ignorado entero en render y edición; `edgeReset.test.ts` — una forma `top`/`bottom` no cuenta
+  como manual.
