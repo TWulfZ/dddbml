@@ -6,14 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [0.4.1] — 2026-10-06
 
-Diagrams made before 0.4.0 now migrate to the new edge routing.
+Hotfix for 0.4.0: diagrams made with earlier versions keep their hand-arranged relations.
 
 ### Fixed
-- Layouts saved by earlier versions kept router-made bends and top/bottom sides as if they were drawn by hand, so 0.4.0 showed old kinks and lines under tables until *Reset*. Saved top/bottom sides are now always ignored (only left/right can be set from the UI).
-- Opening a diagram whose layout predates 0.4 shows a one-time prompt: **Update relations** redraws every relation with the current routing (colors kept, undoable with `Ctrl+Z`); **Keep** leaves the saved lines after a confirmation that explains how to get the prompt back. Either answer writes `"edgeRouting": 2` to the layout file once. The prompt is hidden during merge, diff and time travel.
-
-### Known limitations
-- v0.4.0 drops the `edgeRouting` marker when it rewrites a layout, so a team mixing 0.4.0 and 0.4.1 may be asked again.
+- Layouts saved before 0.4.0 store router-made bends without marking them as automatic, so 0.4.0 drew them with small kinks next to the tables. Saved bends are now always kept and only those artifacts are tidied at draw time (elbows and hooks under 24 px, steps under 8 px next to a stub); a step you drew on purpose is never flattened. Nothing is written to the layout file until you edit that relation.
+- Saved top/bottom sides from older versions are ignored, so no relation leaves through the bottom of a table anymore (the UI only pins left/right).
+- The layout file now records `"edgeRouting": 2` (informational; older readers ignore it).
 
 ## [0.4.0] — 2026-10-05
 
