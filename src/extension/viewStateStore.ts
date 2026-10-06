@@ -65,6 +65,7 @@ export function applyViewState(shared: Layout, vs: ViewState): Layout {
   // Built field by field: a `shared` that is the in-memory layout (corrupt-sidecar fallback) may
   // carry stale markers, and the markers must come from `vs` alone.
   const out: Layout = { version: shared.version, viewport: vs.viewport, tables, groups };
+  if (shared.edgeRouting !== undefined) out.edgeRouting = shared.edgeRouting;
   if (shared.edges) out.edges = shared.edges;
   if (hiddenUnplaced.length > 0) out.hiddenUnplaced = hiddenUnplaced;
   return out;

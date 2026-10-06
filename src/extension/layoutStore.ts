@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { EdgeLayout, Layout, GroupLayout, TableLayout, Waypoint } from '../shared/types';
-import { hasAutoShape, isEdgeSide } from '../shared/types';
+import { EDGE_ROUTING_VERSION, hasAutoShape, isEdgeSide, resolveEdgeRouting } from '../shared/types';
 import { cmpCodeUnit } from '../shared/compare';
 
 export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
@@ -8,7 +8,7 @@ export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
 }
 
 export function emptyLayout(): Layout {
-  return { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
+  return { version: 1, edgeRouting: EDGE_ROUTING_VERSION, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
 }
 
 /** The sidecar exists but is not valid JSON (hand edit gone wrong). Distinct from a conflict. */
@@ -51,6 +51,9 @@ export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
     edges: payload.edges ?? current.edges ?? {},
   };
   if (tablesFrom.hiddenUnplaced && tablesFrom.hiddenUnplaced.length > 0) merged.hiddenUnplaced = tablesFrom.hiddenUnplaced;
+  // Most persists come from webviews that never touched the marker: they must not drop it.
+  const edgeRouting = payload.edgeRouting ?? current.edgeRouting;
+  if (edgeRouting !== undefined) merged.edgeRouting = edgeRouting;
   return merged;
 }
 
@@ -114,7 +117,14 @@ export function parseLayout(text: string): Layout {
   const tables = toTables(r.tables);
   const groups = toGroups(r.groups);
   const edges = toEdges(r.edges);
-  return { version: 1, viewport, tables, groups, edges };
+  const layout: Layout = { version: 1, viewport, tables, groups, edges };
+  const edgeRouting = resolveEdgeRouting({ edgeRouting: toEdgeRouting(r.edgeRouting), edges });
+  if (edgeRouting !== undefined) layout.edgeRouting = edgeRouting;
+  return layout;
+}
+
+function toEdgeRouting(raw: unknown): number | undefined {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : undefined;
 }
 
 function toEdges(raw: unknown): Record<string, EdgeLayout> {
@@ -227,6 +237,9 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
   const lines: string[] = [];
   lines.push('{');
   lines.push(`  "version": ${layout.version},`);
+  // Fixed slot beside `version` (file metadata), not alphabetical: the top level keeps schema order.
+  const edgeRouting = resolveEdgeRouting(layout);
+  if (edgeRouting !== undefined) lines.push(`  "edgeRouting": ${edgeRouting},`);
   if (!shared) {
     const vp = layout.viewport;
     lines.push(`  "viewport": { "x": ${Math.round(vp.x)}, "y": ${Math.round(vp.y)}, "zoom": ${Math.round(vp.zoom * 1000) / 1000} },`);

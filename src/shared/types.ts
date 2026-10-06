@@ -151,6 +151,42 @@ export function hasAutoShape(key: string, e: EdgeLayout): boolean {
   return e.auto === true && ((e.waypoints?.length ?? 0) > 0 || e.sourceSide !== undefined || e.targetSide !== undefined);
 }
 
+/** The left/right router of v0.4.0 (spec 05 §Migración). Stored as `Layout.edgeRouting`. */
+export const EDGE_ROUTING_VERSION = 2;
+
+/**
+ * Whether an FK edge key (`src::cols|tgt::cols`, see `edgeKey`) joins a table to itself. Read from
+ * the key alone because the host has no schema when it reads the layout.
+ */
+export function isLoopEdgeKey(key: string): boolean {
+  const sep = key.indexOf('::');
+  if (sep <= 0) return false;
+  return key.includes(`|${key.slice(0, sep)}::`, sep + 2);
+}
+
+/**
+ * Whether any FK (non-`dep:`) edge carries a saved shape: something an older router may have drawn.
+ * A key without `::` is a ≤0.2.8 `Ref.id` entry no edge resolves (spec 03): never drawn, not counted.
+ * Self-loops are skipped like "Update relations" skips them, or a loop-only file would raise a
+ * notice whose update changes nothing.
+ */
+export function hasRefEdgeShapes(edges: Iterable<[string, EdgeLayout]>): boolean {
+  for (const [key, e] of edges) {
+    if (isDepEdgeKey(key) || !key.includes('::') || isLoopEdgeKey(key)) continue;
+    if ((e.waypoints?.length ?? 0) > 0 || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) return true;
+  }
+  return false;
+}
+
+/**
+ * The marker a layout should carry: its own, or the current one when it has no FK shape left to
+ * migrate. A pre-0.4 file with shapes stays unmarked until the user decides (spec 05 §Migración).
+ */
+export function resolveEdgeRouting(layout: Pick<Layout, 'edgeRouting' | 'edges'>): number | undefined {
+  if (layout.edgeRouting !== undefined) return layout.edgeRouting;
+  return hasRefEdgeShapes(Object.entries(layout.edges ?? {})) ? undefined : EDGE_ROUTING_VERSION;
+}
+
 export interface EdgeLayout {
   /**
    * Orthogonal bend vertices in absolute world coords. Empty/undefined = auto H-V-H routing.
@@ -165,10 +201,9 @@ export interface EdgeLayout {
    * Override of the zone-rule source port side (`chooseSides`, spec 05 §1). Absent = `chooseSides`.
    * Written by a user flip, or by the A* pass (marked `auto`): always alongside its waypoints, and
    * without waypoints only when it differs from `chooseSides`.
-   * `left`/`right` anchor the port to a column row (`columnYResolver`); `top`/`bottom` use an
-   * x-ratio with no column-row anchor and are kept only for manual overrides: neither `chooseSides`
-   * nor A* (spec 05 §9) picks them, and a legacy `auto` shape carrying them is ignored whole
-   * (`isLegacyAutoShape`).
+   * Only `left`/`right` are drawn. `top`/`bottom` are still read (pre-0.4 routers wrote them, manual
+   * or `auto`), but no current router or UI produces them, so a shape carrying one is ignored whole
+   * (`isLegacyEdgeShape`, spec 05 §Migración).
    */
   sourceSide?: EdgeSide;
   /** Override of the zone-rule target port side. Absent = `chooseSides`. See `sourceSide`. */
@@ -187,6 +222,11 @@ export interface EdgeLayout {
 
 export interface Layout {
   version: 1;
+  /**
+   * Generation of the FK router the saved ref shapes were drawn for (spec 03 `edgeRouting`). Absent =
+   * pre-0.4 shapes the user has not yet chosen to update or keep.
+   */
+  edgeRouting?: number;
   viewport: ViewportLayout;
   tables: Record<QualifiedName, TableLayout>;
   groups: Record<string, GroupLayout>;

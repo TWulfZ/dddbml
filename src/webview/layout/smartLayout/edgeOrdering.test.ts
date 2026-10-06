@@ -8,7 +8,7 @@ import type { EdgeLayout, Layout, Ref, Schema, Table } from '../../../shared/typ
 import { LOOP_STEP, loopReach, routeRefs, type EdgeRoute } from '../../render/edgeRouter';
 import type { Bbox } from '../../render/spatialIndex';
 import { columnCenterY, estimateSize } from '../autoLayout';
-import { isLegacyAutoShape } from '../edgeSides';
+import { isLegacyEdgeShape } from '../edgeSides';
 
 const mkTable = (name: string, cols = 3): Table => ({
   name,
@@ -185,7 +185,7 @@ describe('computeEdgeOrdering — persisted sides (F20, spec 05 §9)', () => {
     expect(layout.sourceSide).toBe('right');
     expect(layout.targetSide).toBe('right');
     expect(layout.auto).toBe(true);
-    expect(isLegacyAutoShape(layout, bboxAt(0, 0), bboxAt(0, 2 * h + 160))).toBe(false);
+    expect(isLegacyEdgeShape(layout, bboxAt(0, 0), bboxAt(0, 2 * h + 160))).toBe(false);
     for (const wp of layout.waypoints!) expect(wp.x === w + 24 && wp.y > h + 80 && wp.y < 2 * h + 80).toBe(false);
   });
 

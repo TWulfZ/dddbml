@@ -171,44 +171,25 @@ describe('routeRefs — same-direction ports (F52)', () => {
   });
 });
 
-describe('routeRefs — persisted top/bottom sides (F51)', () => {
+describe('routeRefs — persisted top/bottom sides are ignored whole (spec 05 §Migración)', () => {
   const A = bbox(0, 0);
-  const B = bbox(60, 400);
-  const stacked = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? B : undefined);
-  const layouts: EdgeLayout[] = [
-    { sourceSide: 'bottom', targetSide: 'top' },
-    { sourceSide: 'bottom', targetSide: 'top', waypoints: [{ x: 100, y: 250 }, { x: 160, y: 250 }] },
+  const stacked = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? bbox(60, 400) : undefined);
+  const mixed = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? bbox(400, 300) : undefined);
+  const cases: Array<[EdgeLayout, (n: string) => Bbox | undefined]> = [
+    [{ sourceSide: 'bottom', targetSide: 'top' }, stacked],
+    [{ sourceSide: 'bottom', targetSide: 'top', waypoints: [{ x: 100, y: 250 }, { x: 160, y: 250 }] }, stacked],
+    [{ sourceSide: 'right', targetSide: 'top', waypoints: [{ x: 300, y: 50 }] }, mixed],
   ];
 
-  it('stubs leave the border vertically and the path never runs along a table border', () => {
-    for (const layout of layouts) {
-      const r = routeWith(layout, stacked);
-      const first = r.segments[0]!;
-      const last = r.segments[r.segments.length - 1]!;
-      expect(first.axis).toBe('v');
-      expect(last.axis).toBe('v');
-      expect(segLen(first)).toBe(24);
-      expect(segLen(last)).toBe(24);
-      expect(first.y2).toBeGreaterThan(A.y + A.h);
-      expect(last.y1).toBeLessThan(B.y);
-      expect(hasBacktrack(r)).toBe(false);
-      expect(runsAlongOrInside(r, A)).toBe(false);
-      expect(runsAlongOrInside(r, B)).toBe(false);
+  it('manual or not, the edge is drawn as if it had no shape: horizontal stubs, no saved waypoints', () => {
+    for (const [layout, bboxOf] of cases) {
+      const r = routeWith(layout, bboxOf);
+      const plain = routeWith(undefined, bboxOf);
+      expect(r.shapeIgnored).toBe(true);
+      expect(r.segments[0]!.axis).toBe('h');
+      expect(r.segments[r.segments.length - 1]!.axis).toBe('h');
+      expect(r.waypoints).toEqual(plain.waypoints);
+      expect(r.segments).toEqual(plain.segments);
     }
-  });
-
-  it('aligned ports still leave an editable middle segment', () => {
-    const aligned = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? bbox(0, 400) : undefined);
-    const r = routeWith({ sourceSide: 'bottom', targetSide: 'top' }, aligned);
-    expect(r.segments.some((s) => !s.rigid)).toBe(true);
-    expect(r.segments.every((s) => s.axis === 'v')).toBe(true);
-  });
-
-  it('a mixed side pair (right -> top) renders an L without backtracking', () => {
-    const mixed = (n: string): Bbox | undefined => (n === 'public.a' ? A : n === 'public.b' ? bbox(400, 300) : undefined);
-    const r = routeWith({ sourceSide: 'right', targetSide: 'top' }, mixed);
-    expect(r.segments[0]!.axis).toBe('h');
-    expect(r.segments[r.segments.length - 1]!.axis).toBe('v');
-    expect(hasBacktrack(r)).toBe(false);
   });
 });

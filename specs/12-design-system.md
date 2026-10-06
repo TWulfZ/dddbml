@@ -530,6 +530,27 @@ Pase de organización del panel de Settings (ver spec 10 para el comportamiento)
   `layout` (`IconLayout`), `zoom-in` (`IconZoom`), `export` (`IconExport`). El reset reusa
   `discard` (`IconReset`) y la categoría LOD reusa `eye` (`IconEye`).
 
+## Barra flotante de canvas (git overlay + aviso de migración)
+
+`.ddd-git-bar` (spec 16: time-travel/diff) y `.ddd-edge-migration-bar` (spec 05 §11: aviso de formas
+pre-0.4) comparten la piel (`--ddd-surface-raised`, `--ddd-border`, `--ddd-shadow-md`, entrada
+`ddd-menu-in`, z 40). Nunca coexisten: el aviso sólo se muestra con el canvas editable y la barra git
+sólo en solo lectura. Acciones con `<Button size="sm">`: la principal `primary`, la alternativa
+`secondary`. `role="status"`.
+
+**Pila superior (`.ddd-top-stack`).** Los mensajes de arriba del canvas que pueden coincidir —el banner
+de parse error (`.ddd-banner`, ancho completo) y el aviso de migración— van en **una** columna flex
+(insets simétricos que despejan el menú de la app, centrada, `gap: --ddd-space-3`): el segundo empuja
+hacia abajo en vez de taparlo, sea cual sea la altura del primero. La columna no tiene z-index (cada hijo
+conserva su capa) ni recibe clics (`pointer-events: none`, los hijos sí). La barra git sigue posicionada
+sola: en solo lectura no hay aviso con el que chocar.
+
+**Paneles angostos.** La etiqueta del aviso **se ajusta** en varias líneas en vez de cortarse con elipsis
+(la frase es todo el mensaje de un aviso único); ícono y botones no encogen ni parten (`flex: none`,
+`white-space: nowrap`). La etiqueta de la barra git sí es una línea con elipsis. En paneles estrechos el
+aviso (z 40) queda sobre la cabecera de Diagram Views (z 5): aceptado, es una decisión de un clic que
+desaparece al responderla.
+
 ## Preguntas abiertas (Open Questions)
 
 5. ~~Pulido de UI: barra flotante + botones solo-ícono + tooltips~~ **RESUELTO** (este cambio):

@@ -135,22 +135,25 @@ export function narrowGapSJog(
 const isVerticalSide = (side: string | undefined): boolean => side === 'top' || side === 'bottom';
 
 /**
- * An A*-written shape the current zone rule cannot draw, so render and edits ignore it whole (sides +
- * waypoints, which were routed for other ports); a manual override (no `auto`) is always honoured.
- * - Any `auto` top/bottom port: before 2026-10-03 the pass could persist them.
+ * A saved shape the current zone rule cannot draw, so render and edits ignore it whole (sides +
+ * waypoints, which were routed for other ports), keeping only its color (spec 05 §Migración).
+ * - Any `top`/`bottom` port, manual or `auto`: no current router or UI writes one (the endpoint flip
+ *   only pins left/right), so it can only be a pre-0.4 router's choice.
  * - Side-less `auto` waypoints between x-overlapping tables (needs both bboxes): older passes left the
  *   sides implicit, routing for bottom/top (v0.3.0) or centre-ordered left/right, never for today's
  *   zones. The pass now always writes both sides with its waypoints, so no current shape matches.
+ * Any other manual (non-`auto`) shape is honoured.
  */
-export function isLegacyAutoShape(layout: EdgeLayout | undefined, src?: Bbox, tgt?: Bbox): boolean {
-  if (layout?.auto !== true) return false;
+export function isLegacyEdgeShape(layout: EdgeLayout | undefined, src?: Bbox, tgt?: Bbox): boolean {
+  if (!layout) return false;
   if (isVerticalSide(layout.sourceSide) || isVerticalSide(layout.targetSide)) return true;
+  if (layout.auto !== true) return false;
   if (!src || !tgt || !layout.waypoints?.length || layout.sourceSide || layout.targetSide) return false;
   return xOverlaps(src, tgt);
 }
 
-/** What render and edits treat as the stored layout: an ignored legacy auto shape keeps only its color. */
+/** What render and edits treat as the stored layout: an ignored legacy shape keeps only its color. */
 export function effectiveEdgeLayout(layout: EdgeLayout | undefined, src?: Bbox, tgt?: Bbox): EdgeLayout | undefined {
-  if (!isLegacyAutoShape(layout, src, tgt)) return layout;
+  if (!isLegacyEdgeShape(layout, src, tgt)) return layout;
   return layout?.color ? { color: layout.color } : undefined;
 }

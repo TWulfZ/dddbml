@@ -93,13 +93,15 @@ export function countKeys(l: Layout): number {
 }
 
 function cloneLayout(l: Layout): Layout {
-  return {
+  const out: Layout = {
     version: 1,
     viewport: l.viewport,
     tables: { ...l.tables },
     groups: { ...l.groups },
     edges: { ...(l.edges ?? {}) },
   };
+  if (l.edgeRouting !== undefined) out.edgeRouting = l.edgeRouting;
+  return out;
 }
 
 function sectionRecord(layout: Layout, section: ConflictSection): Record<string, unknown> {

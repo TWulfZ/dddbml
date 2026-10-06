@@ -328,10 +328,12 @@ describe('routeRefs — persisted sides', () => {
     expect(r.target.x).toBe(50);
   });
 
-  it('respects a manual top/bottom override', () => {
-    const r = route({ a: { x: 0, y: 0 }, b: { x: 600, y: 300 } }, { sourceSide: 'bottom', targetSide: 'top' });
-    expect(r.source.y).toBe(H);
-    expect(r.target.y).toBe(300);
+  it('ignores a manual top/bottom override whole too: no UI writes one, only pre-0.4 routers did', () => {
+    const r = route({ a: { x: 0, y: 0 }, b: { x: 600, y: 300 } }, { sourceSide: 'bottom', targetSide: 'top', waypoints: [{ x: 100, y: 200 }] });
+    expect(r.shapeIgnored).toBe(true);
+    expect(r.source).toEqual({ x: W, y: 40 });
+    expect(r.target.x).toBe(600);
+    expect(r.waypoints).toEqual([]);
   });
 
   it('respects a manual left/right override on both ends', () => {

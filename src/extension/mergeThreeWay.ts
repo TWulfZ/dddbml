@@ -88,5 +88,17 @@ export function mergeThreeWay(base: Layout, ours: Layout, theirs: Layout): Merge
   mergeSection('edges', base.edges ?? {}, ours.edges ?? {}, theirs.edges ?? {}, edges, conflicts);
 
   const merged: Layout = { version: 1, viewport: ours.viewport, tables, groups, edges };
+  const edgeRouting = mergeEdgeRouting(ours.edgeRouting, theirs.edgeRouting);
+  if (edgeRouting !== undefined) merged.edgeRouting = edgeRouting;
   return { merged, conflicts };
+}
+
+/**
+ * Both sides come from `parseLayout`, so an unmarked side still holds FK shapes from an older router
+ * (spec 05 §Migración). Its shapes can reach the merge, so the result stays unmarked and the notice
+ * asks again; the writer stamps it anyway once no FK shape is left. Marked on both: the newer wins.
+ */
+function mergeEdgeRouting(ours: number | undefined, theirs: number | undefined): number | undefined {
+  if (ours === undefined || theirs === undefined) return undefined;
+  return Math.max(ours, theirs);
 }

@@ -100,7 +100,7 @@ export interface EdgeRoute {
   targetStub: { x: number; y: number };
   /** Self-loop: drawn by its own geometry, never carries editable waypoints (spec 05 §Self-loops). */
   loop?: true;
-  /** The stored shape is a legacy A* one the router ignored (`isLegacyAutoShape`); edits drop it first. */
+  /** The stored shape is a legacy one the router ignored (`isLegacyEdgeShape`); edits drop it first. */
   shapeIgnored?: true;
   /** Facing Z that made loops yield it a lane (spec 05 §1): A* leaves its shape to render. */
   laneClaim?: true;
@@ -126,7 +126,7 @@ interface SideDecision {
   tgtBbox: Bbox;
   sourceSide: Side;
   targetSide: Side;
-  /** The layout both the sides and the waypoints come from, legacy auto shapes already dropped. */
+  /** The layout both the sides and the waypoints come from, legacy shapes already dropped. */
   layout: EdgeLayout | undefined;
   shapeIgnored: boolean;
 }

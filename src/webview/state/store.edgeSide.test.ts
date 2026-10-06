@@ -26,7 +26,7 @@ describe('setEdgeSide — 4-side support (spec 05 §9 / E3)', () => {
   });
 
   it('clears a side when passed null', () => {
-    store.getState().setEdgeSide('e1', 'source', 'top');
+    store.getState().setEdgeSide('e1', 'source', 'left');
     store.getState().setEdgeSide('e1', 'source', null);
     expect(store.getState().edgeLayouts.get('e1')?.sourceSide).toBeUndefined();
   });

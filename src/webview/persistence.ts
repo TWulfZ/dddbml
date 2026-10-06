@@ -45,6 +45,7 @@ export function schedulePersist(): void {
       // Hidden but not yet placed (no position to carry `hidden` on); always sent, it rides with tables.
       hiddenUnplaced: [...state.hiddenTables].filter((n) => !state.positions.has(n)),
       version: 1,
+      ...(state.edgeRouting !== undefined ? { edgeRouting: state.edgeRouting } : {}),
     },
   });
 }

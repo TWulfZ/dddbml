@@ -213,13 +213,13 @@ function commitMove(cmd: MoveCommand): void {
   if (arrange) s.pushArrangeCommand(arrange);
 }
 
-/** The layout an edit starts from: the drawn one, so an ignored legacy vertical A* shape reads as none. */
+/** The layout an edit starts from: the drawn one, so an ignored legacy shape reads as none. */
 function editableLayout(refId: string): EdgeLayout | undefined {
   return effectiveEdgeLayout(store.getState().edgeLayouts.get(refId));
 }
 
 /**
- * Drops a stored shape the router ignored (legacy A*, spec 05 §9) before an edit on its route, so the
+ * Drops a stored shape the router ignored (legacy, spec 05 §Migración) before an edit on its route, so the
  * edit starts from what is drawn and a side flip cannot revive waypoints routed for other ports.
  * Color kept; outside undo, since the dropped shape was never visible.
  */

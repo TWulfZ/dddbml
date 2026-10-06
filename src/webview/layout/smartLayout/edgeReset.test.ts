@@ -70,8 +70,13 @@ describe('A* auto shapes (F20)', () => {
 
   it('an auto shape is not manual, so preserve-manual runs re-order it', () => {
     expect(hasManualShape(autoShape)).toBe(false);
-    const { auto: _auto, ...userShape } = autoShape;
-    expect(hasManualShape(userShape)).toBe(true);
+    expect(hasManualShape({ waypoints: [{ x: 1, y: 1 }], sourceSide: 'left', targetSide: 'right' })).toBe(true);
+  });
+
+  it('a top/bottom shape is never manual: the router ignores it, so preserving would leave it unordered', () => {
+    const { auto: _auto, ...legacy } = autoShape;
+    expect(hasManualShape(legacy)).toBe(false);
+    expect(hasManualShape({ sourceSide: 'bottom', color: '#abc' })).toBe(false);
   });
 
   it('drops an auto shape (waypoints + sides) when either endpoint moved, keeping color', () => {

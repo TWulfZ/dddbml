@@ -269,7 +269,7 @@ export async function computeEdgeOrdering(input: EdgeOrderingInput): Promise<Edg
 
   // Map RoutedEdge[] → EdgeLayout SET pairs, preserving color. Waypoints always persist with both
   // sides they were routed for, so render never pairs them with other ports and a side-less auto
-  // detour stays recognisable as a pre-2026-10-03 legacy shape (`isLegacyAutoShape`); without
+  // detour stays recognisable as a pre-2026-10-03 legacy shape (`isLegacyEdgeShape`); without
   // waypoints, sides persist only when they differ from chooseSides. A fallback (ok:false) gets the
   // plain default route, so its provisional sides are dropped too. Every shape written here is
   // marked `auto`, so later "preserve manual" runs and endpoint moves treat it as A*'s (F20).

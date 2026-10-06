@@ -1,5 +1,6 @@
 import type { Dep, EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
 import { edgeKeyedDeps, edgeKeyedRefs, isSelfRef, type KeyedDepEdge } from '../../render/edgeKey';
+import { effectiveEdgeLayout } from '../edgeSides';
 
 /** Every ref under the key its layout has while both endpoints render as themselves (no hide/collapse). */
 export function rawLayoutRefs(refs: readonly Ref[]): Ref[] {
@@ -25,10 +26,11 @@ export function hasShape(layout: EdgeLayout | undefined): boolean {
 
 /**
  * Whether an edge carries a user-authored shape. The on-demand edge-ordering pass skips these when
- * `preserveManualEdges` is on; an A* shape (`auto`) is not the user's, so it stays re-orderable (F20).
+ * `preserveManualEdges` is on; an A* shape (`auto`) is not the user's, so it stays re-orderable (F20),
+ * and neither is a legacy shape the router ignores, which preserving would leave undrawn and unordered.
  */
 export function hasManualShape(layout: EdgeLayout | undefined): boolean {
-  return hasShape(layout) && layout?.auto !== true;
+  return layout?.auto !== true && hasShape(effectiveEdgeLayout(layout));
 }
 
 /** Tables whose position changed (or are newly placed) between two position maps. */
