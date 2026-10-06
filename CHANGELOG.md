@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] — 2026-10-06
+
+Diagrams made before 0.4.0 now migrate to the new edge routing.
+
+### Fixed
+- Layouts saved by earlier versions kept router-made bends and top/bottom sides as if they were drawn by hand, so 0.4.0 showed old kinks and lines under tables until *Reset*. Saved top/bottom sides are now always ignored (only left/right can be set from the UI).
+- Opening a diagram whose layout predates 0.4 shows a one-time prompt: **Update relations** redraws every relation with the current routing (colors kept, undoable with `Ctrl+Z`); **Keep** leaves the saved lines after a confirmation that explains how to get the prompt back. Either answer writes `"edgeRouting": 2` to the layout file once. The prompt is hidden during merge, diff and time travel.
+
+### Known limitations
+- v0.4.0 drops the `edgeRouting` marker when it rewrites a layout, so a team mixing 0.4.0 and 0.4.1 may be asked again.
+
 ## [0.4.0] — 2026-10-05
 
 Relationships route like dbdiagram: always out of the column rows on the left/right sides, never under a table.
