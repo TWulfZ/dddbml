@@ -384,7 +384,7 @@ real** (≥2 call sites):
 - **`Modal.tsx`** — `<dialog>` nativo. `open` dispara `showModal()`/`close()` vía
   ref+effect; gratis: trampa de foco, **Esc para cerrar**, top-layer (escapa
   z-index/overflow) y scrim `::backdrop` (reemplaza el div `.ddd-modal-overlay`).
-  API: `<Modal open onClose title wide footer>`. Migrados: `exportModal`,
+  API: `<Modal open onClose title wide fit footer>` (`fit` = ancho al contenido hasta el viewport, para grillas de datos). Migrados: `exportModal`,
   `settingsPanel`.
 - **`Field.tsx`** — familia de formulario: `Field` (wrapper label+hint+control) +
   `TextField` / `NumberField` / `SelectField` / `Checkbox`. Reemplaza los `Row*`

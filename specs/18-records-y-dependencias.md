@@ -93,7 +93,7 @@ Un bloque `Dep` no puede mezclar aristas de tabla y de columna (lo rechaza el pa
 - `tableNode` muestra el badge sólo con LOD `full` y si la tabla tiene records. El mapa
   `QualifiedName → TableRecords` se memoiza a partir de `schema.records`; no se recorre en cada
   render.
-- `RecordsModal` envuelve `ui/Modal` (`wide`) y se abre con la flag del store
+- `RecordsModal` envuelve `ui/Modal` (`fit`: crece con el ancho de la grilla hasta el viewport menos 32 px, mínimo el de `wide`; la grilla sólo scrollea cuando no cabe en la pantalla — 2026-10-03, antes 560 px fijos obligaban a scrollear siempre) y se abre con la flag del store
   `recordsTable: QualifiedName | null`. La grilla tiene header sticky y muestra el tipo de cada
   columna. `null` va en itálica atenuada y las expresiones en mono. Si
   `totalRows > rows.length`, muestra "showing 200 of N".

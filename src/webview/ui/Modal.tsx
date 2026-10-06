@@ -10,6 +10,8 @@ export interface ModalProps {
   title: string;
   /** Wider variant (= legacy .ddd-modal--wide). */
   wide?: boolean;
+  /** Sizes to its content up to the viewport — for data grids that would otherwise scroll sideways. */
+  fit?: boolean;
   /** Optional footer row (e.g. action buttons). */
   footer?: ComponentChildren;
   children?: ComponentChildren;
@@ -24,7 +26,7 @@ export interface ModalProps {
  * The dialog stays mounted so `open` can drive `showModal()`/`close()`; gate the
  * heavy body with `{open && …}` at the call site if needed.
  */
-export function Modal({ open, onClose, title, wide, footer, children }: ModalProps) {
+export function Modal({ open, onClose, title, wide, fit, footer, children }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -37,7 +39,7 @@ export function Modal({ open, onClose, title, wide, footer, children }: ModalPro
   return (
     <dialog
       ref={ref}
-      class={cn('ddd-modal', wide && 'ddd-modal--wide')}
+      class={cn('ddd-modal', wide && 'ddd-modal--wide', fit && 'ddd-modal--fit')}
       // Native `close` fires on Esc or .close() — sync parent state.
       onClose={onClose}
       // A click whose target is the dialog itself landed on the backdrop.

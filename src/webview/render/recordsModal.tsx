@@ -20,7 +20,7 @@ export function RecordsModal() {
   const total = data?.blocks.reduce((n, b) => n + b.totalRows, 0) ?? 0;
 
   return (
-    <Modal open={name != null} onClose={close} wide title={data ? `${data.title} · ${total} record${total === 1 ? '' : 's'}` : ''}>
+    <Modal open={name != null} onClose={close} fit title={data ? `${data.title} · ${total} record${total === 1 ? '' : 's'}` : ''}>
       {data?.blocks.map((b, i) => (
         <div key={i} class="ddd-records">
           <table class="ddd-records__grid">

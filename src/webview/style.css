@@ -1425,6 +1425,11 @@
   .ddd-modal--wide {
     width: min(560px, calc(100vw - 32px));
   }
+  .ddd-modal--fit {
+    width: fit-content;
+    min-width: min(560px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+  }
   .ddd-modal__head {
     display: flex;
     align-items: center;
@@ -1455,7 +1460,8 @@
   /* ----- Records preview (spec 18) ----- */
   .ddd-records {
     overflow: auto;
-    max-height: min(60vh, 480px);
+    /* Dialog max-height minus head and body padding, so one block fills the dialog before scrolling. */
+    max-height: calc(100vh - 160px);
     border: 1px solid var(--ddd-border-subtle);
     border-radius: var(--ddd-radius-sm);
   }
