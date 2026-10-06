@@ -254,6 +254,18 @@ mueve la cámara.
   tabla puede reordenar/re-espaciar los stubs de sus vecinas. El resto de rutas conserva
   identidad. El orden del grupo desempata por id de ref y luego por (índice de arista, origen
   antes que destino), así el re-sort incremental coincide con el completo.
+  **Lazos y carriles cedidos (spec 05 §Self-loops, 2026-10-05).** Con consulta de obstáculos y al menos
+  una pila de lazos, cada frame sigue el orden de `routeAll`: (1) decisiones base de las refs de las
+  tablas movidas; (2) room por vecino de **todas** las pilas (una consulta al índice por pila: una caja
+  de grupo colapsado cambia sin que su nombre esté en el delta), y alcance/envolvente previos;
+  (3) los reclamos de las Z cuyo carril se movió (refs de tablas movidas) o toca la banda vieja o nueva
+  de una pila cuya tabla se movió o cuyas envolventes previas cambiaron; las bandas (superset de toda
+  envolvente posible de la pila) viven en un arreglo ordenado por x con búsqueda binaria, y los carriles
+  dibujados en un índice por x (`LaneGrid`), así nunca se recorren aristas × lazos; (4) alcance final de
+  todos los lazos (aritmética O(lazos), sin consultas); los lazos que cambian entran como afectados y
+  las Z cuyo reclamo cambió se re-dibujan. Las Z cuyo carril toca una envolvente final que cambió se
+  re-rutean por el mismo índice de carriles. Sin pilas el camino es el de antes (cero costo extra).
+  Test: `routeMoved` == rebuild en 400 drags (`edgeRouter.loopNeighbours.test.ts`).
 - **Deps (`DepRouteCache`, `render/depRouter.ts`).** Una dep no reparte puertos con nadie: su ruta
   depende sólo de sus dos rects y sus waypoints. Con `deps`, `rows`, `groupSizes`, `edgeLayouts` y
   densidad idénticos y un delta pequeño, `routeMoved` re-rutea sólo las deps con un extremo
@@ -263,7 +275,12 @@ mueve la cámara.
   paint): antes ~7.7–10 ms/frame; ahora ~0.55–0.8 ms/frame (1 tabla) y ~0.7–0.8 ms (50 tablas).
   El resto es la copia del `Map` de 5000 posiciones del store (~0.5 ms). Con 1000 deps
   sintéticas además de las 1000 refs: rebuild ~13–15 ms/frame, incremental ~0.55–0.85 ms (1 y 50 tablas);
-  el ruteo de las 1000 deps solo cuesta ~1.6 ms completo frente a ~0.01 ms incremental. Ver spec 07.
+  el ruteo de las 1000 deps solo cuesta ~1.6 ms completo frente a ~0.01 ms incremental. Con ~1550
+  lazos sintéticos en ~1050 pilas y ~1000 Z que pasan a su lado (> 500 reclamos activos): rebuild
+  ~34–42 ms/frame (antes de los reclamos ~48–51), incremental ~2.2–2.7 ms (1 tabla, antes ~2.7) y
+  ~3.5–4.6 ms (50 tablas; 5883c33 medido lado a lado ~4.4–4.7: el barrido O(rutas × envolventes
+  cambiadas) se reemplazó por el índice de carriles). Lo que queda es la consulta de vecinos por pila (~1.2 ms) y el re-anidado
+  completo, ambos previos a los reclamos. Ver spec 07.
 
 ## Cámara fuera de Preact (pan/zoom sin re-render)
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Ref, Schema } from '../../shared/types';
-import { LOOP_OFFSET } from '../render/edgeRouter';
+import { LOOP_OFFSET, routeRefs } from '../render/edgeRouter';
+import { columnCenterY, estimateSize } from '../layout/autoLayout';
 import { buildExportModel, renderSvg, type ExportDerived, type ExportSource, type ThemeTokens } from './imageExport';
 
 const schema: Schema = {
@@ -171,5 +172,35 @@ describe('buildExportModel — self-loops (spec 05 §Self-loops)', () => {
     expect(m.edges).toHaveLength(1);
     expect(m.edges[0]!.source.x).toBe(m.edges[0]!.target.x);
     expect(m.bounds.x + m.bounds.w).toBeGreaterThanOrEqual(without.bounds.x + without.bounds.w + LOOP_OFFSET);
+  });
+});
+
+describe('buildExportModel — loops yield a lane to a passing Z (spec 05 §Self-loops)', () => {
+  const table = (name: string, cols: number) => ({
+    name, schemaName: 'public', tableName: name, columns: Array.from({ length: cols }, (_, i) => ({ name: `c${i}`, type: 'int' })),
+  });
+  const r = (id: string, s: string, sc: string, t: string, tc: string): Ref =>
+    ({ id, source: { table: s, columns: [sc], relation: '*' }, target: { table: t, columns: [tc], relation: '1' } });
+  const refs = [r('emp-a', 'emp', 'c1', 'emp', 'c0'), r('emp-b', 'emp', 'c2', 'emp', 'c0'), r('dept-audit', 'dept', 'c2', 'audit', 'c0')];
+  const cols: Record<string, number> = { emp: 5, dept: 3, audit: 3 };
+  const w = estimateSize(5).width;
+  const positions = new Map([['emp', { x: 0, y: 0 }], ['dept', { x: 0, y: estimateSize(5).height + 16 }], ['audit', { x: w + 64, y: 0 }]]);
+
+  it('draws the same claimed lane as the live router', () => {
+    const src: ExportSource = {
+      schema: { tables: Object.entries(cols).map(([n, c]) => table(n, c)), refs, groups: [] },
+      positions, tableColors: new Map(), edgeLayouts: new Map(), selection: new Set(), density: 'cozy',
+      derived: { ...derived, effectiveRefs: refs },
+    };
+    const m = buildExportModel(src, { scope: 'all', background: true, filename: 'd' })!;
+    const bboxOf = (n: string) => {
+      const p = positions.get(n)!;
+      const size = estimateSize(cols[n]!);
+      return { x: p.x, y: p.y, w: size.width, h: size.height };
+    };
+    const colY = (_t: string, c: string) => columnCenterY(Number(c.slice(1)));
+    const live = routeRefs(refs, bboxOf, colY, undefined, undefined, () => positions.keys());
+    expect(live.find((e) => e.id === 'dept-audit')!.laneClaim).toBe(true);
+    expect(m.edges.map((e) => e.d)).toEqual(live.map((e) => e.d));
   });
 });

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseDbml } from '../../extension/parser';
-import type { Dep, EdgeLayout, QualifiedName, Schema, Table } from '../../shared/types';
+import type { Dep, EdgeLayout, QualifiedName, Ref, Schema, Table } from '../../shared/types';
 import { columnCenterY, estimateSize } from '../layout/autoLayout';
 import { buildRowGeometry, fkColumnsByTable } from '../layout/tableRows';
 import { store } from '../state/store';
@@ -66,8 +66,10 @@ describe('drag frame — per-frame JS budget (huge.dbml)', () => {
   // A table with refs at both ends of a group, so its container and port groups change every frame.
   const dragged = schema.refs[0]!.source.table;
   const selection = schema.tables.slice(2000, 2050).map((t) => t.name);
+  const sortedNames = [...start.keys()];
+  const withLoops: Schema = { ...schema, refs: [...schema.refs, ...syntheticLoops(sortedNames, cols, [dragged, ...selection])] };
 
-  function run(names: readonly QualifiedName[], incremental: boolean, s: Schema = schema): Stats {
+  function run(names: readonly QualifiedName[], incremental: boolean, s: Schema = schema): Stats & { router: EdgeRouteCache } {
     store.setState({ positions: new Map(start) });
     const scenes = new SceneCache();
     const router = new EdgeRouteCache();
@@ -103,7 +105,7 @@ describe('drag frame — per-frame JS budget (huge.dbml)', () => {
       expect(routes.length).toBeGreaterThan(0);
       expect(depRoutes.length).toBe(scene.derived.effectiveDeps.length);
     }
-    return stats(samples);
+    return { ...stats(samples), router };
   }
 
   it('single-table drag frame stays a small slice of the 16.7 ms frame', () => {
@@ -133,7 +135,49 @@ describe('drag frame — per-frame JS budget (huge.dbml)', () => {
     expect(inc.mean).toBeLessThan(4);
     expect(incMulti.mean).toBeLessThan(4);
   });
+
+  it('a loop-heavy diagram (stacks beside facing Zs) keeps the incremental frame cheap', () => {
+    const full = run([dragged], false, withLoops);
+    const inc = run([dragged], true, withLoops);
+    const fullMulti = run(selection, false, withLoops);
+    const incMulti = run(selection, true, withLoops);
+    const loops = withLoops.refs.length - schema.refs.length;
+    console.log(`drag 1 table + ${loops} synthetic loops/Zs (${inc.router.claimCount} lane claims): full mean ${full.mean.toFixed(2)} ms p95 ${full.p95.toFixed(2)} | incremental mean ${inc.mean.toFixed(2)} ms p95 ${inc.p95.toFixed(2)}`);
+    console.log(`drag 50 tables + loops/Zs: full mean ${fullMulti.mean.toFixed(2)} ms p95 ${fullMulti.p95.toFixed(2)} | incremental mean ${incMulti.mean.toFixed(2)} ms p95 ${incMulti.p95.toFixed(2)}`);
+    // The scenario must exercise the lane claims, or it measures nothing new.
+    expect(inc.router.claimCount).toBeGreaterThan(100);
+    expect(inc.mean).toBeLessThan(full.mean / 2);
+    expect(inc.mean).toBeLessThan(4);
+    // Most of a 50-table frame is the per-stack neighbour query over ~1000 stacks and the full
+    // re-nest, both predating lane claims (spec 07 "Regresiones conocidas": ~6 ms before claims).
+    expect(incMulti.mean).toBeLessThan(fullMulti.mean / 4);
+    expect(incMulti.mean).toBeLessThan(5);
+  });
 });
+
+/**
+ * Loop stacks on every 5th table of the grid (2 loops on every 10th, else 1), plus the dragged and
+ * selected tables, each with a facing Z from its right neighbour to the table below it: the Z runs
+ * through the column gap beside the stack, the case where loops may yield a lane (spec 05 §Self-loops).
+ */
+function syntheticLoops(names: readonly QualifiedName[], cols: number, extra: readonly QualifiedName[]): Ref[] {
+  const out: Ref[] = [];
+  const at = new Map(names.map((n, i) => [n, i]));
+  const stacked = new Set<number>();
+  names.forEach((_, i) => { if (i % 5 === 0) stacked.add(i); });
+  for (const n of extra) stacked.add(at.get(n)!);
+  const ref = (id: string, s: QualifiedName, sc: string, t: QualifiedName, tc: string): Ref =>
+    ({ id, source: { table: s, columns: [sc], relation: '*' }, target: { table: t, columns: [tc], relation: '1' } });
+  for (const i of stacked) {
+    const t = names[i]!;
+    out.push(ref(`loopA${i}`, t, 'name', t, 'id'));
+    if (i % 10 === 0) out.push(ref(`loopB${i}`, t, 'status', t, 'id'));
+    const right = names[i + 1];
+    const below = names[i + cols];
+    if (right && below && (i + 1) % cols !== 0) out.push(ref(`z${i}`, right, 'parent_id', below, 'id'));
+  }
+  return out;
+}
 
 /** Deterministic dep edges, half column-level; the first few start at the dragged table. */
 function syntheticDeps(schema: Schema, count: number): Dep {

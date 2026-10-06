@@ -199,7 +199,9 @@ export async function computeEdgeOrdering(input: EdgeOrderingInput): Promise<Edg
     const sb = bboxes.get(r.source.table)!;
     const tb = bboxes.get(r.target.table)!;
     const narrowS = narrowGapSJog(rt.source, rt.target, sides.sourceSide, sides.targetSide, sb, tb) !== undefined;
-    const clear = (sameSide || narrowS) && !throughThirdTable(rt, r.source.table, r.target.table);
+    // A Z that made a stack yield it a lane stays render-owned too: persisting any shape would end its
+    // claim and widen the stack back over the lane A* just routed through.
+    const clear = (sameSide || narrowS || rt.laneClaim === true) && !throughThirdTable(rt, r.source.table, r.target.table);
     const facingOverlap = !sameSide && boxesIntersect(sb, tb);
     if (clear || facingOverlap) keepDefault.add(r.id);
   }
@@ -213,6 +215,8 @@ export async function computeEdgeOrdering(input: EdgeOrderingInput): Promise<Edg
     for (const sg of rt.segments) {
       if (sg.rigid || sg.axis !== 'v' || sg.y1 === sg.y2) continue;
       lanes.push({ x: sg.x1, y: Math.min(sg.y1, sg.y2), w: 0, h: Math.abs(sg.y2 - sg.y1) });
+      // A loop pulled in for a claiming Z returns there once that Z persists A*'s waypoints.
+      if (rt.unyieldedTrunkX !== undefined) lanes.push({ x: rt.unyieldedTrunkX, y: Math.min(sg.y1, sg.y2), w: 0, h: Math.abs(sg.y2 - sg.y1) });
     }
   }
 

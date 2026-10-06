@@ -29,12 +29,15 @@ export function loopReach(stackSize: number): number {
   return LOOP_OFFSET + Math.max(0, stackSize - 1) * LOOP_STEP;
 }
 
-/** Room a loop stack keeps from a neighbouring node, and a facing Z trunk from a third table's loops. */
+/** Room a loop stack keeps from a neighbouring node, and a facing Z trunk from a loop (`loopBlock`). */
 const LOOP_CLEARANCE = EDGE_CORNER_RADIUS;
 /** Innermost a clamped loop's trunk may sit: one fillet past its stub end. */
 const LOOP_MIN_REACH = MIN_STUB + EDGE_CORNER_RADIUS;
 /** Tightest spacing a clamped stack compresses to before it gives up keeping off the neighbour. */
 const LOOP_MIN_STEP = LOOP_STEP / 2;
+
+/** Outermost reach of a fully compressed stack of `stackSize` loops: the least room `clampedLoopReach` honours. */
+const minStackReach = (stackSize: number): number => LOOP_MIN_REACH + Math.max(0, stackSize - 1) * LOOP_MIN_STEP;
 
 /**
  * Reach of the loop of stack position `rank` among `stackSize`, when the side has `room` before the
@@ -99,6 +102,10 @@ export interface EdgeRoute {
   loop?: true;
   /** The stored shape is a legacy A* one the router ignored (`isLegacyAutoShape`); edits drop it first. */
   shapeIgnored?: true;
+  /** Facing Z that made loops yield it a lane (spec 05 §1): A* leaves its shape to render. */
+  laneClaim?: true;
+  /** Loop pulled in for a passing Z: where its trunk returns once no Z claims, which A* must also keep off. */
+  unyieldedTrunkX?: number;
 }
 
 /** Optional per-endpoint port override — used to align edges with the PK/FK column row. */
@@ -232,27 +239,37 @@ const waypointsOf = (layout: EdgeLayout | undefined): Waypoint[] =>
 const legacyDxOf = (layout: EdgeLayout | undefined): number =>
   waypointsOf(layout).length === 0 && layout?.dx !== undefined ? layout.dx : 0;
 
+/** What `buildRoute` reads from the cache beyond the decision and its ports. */
+interface RouteContext {
+  /** Loop only: its trunk's reach, and the reach it would have if no Z claimed a lane. */
+  loopReach: number;
+  unyieldedReach: number;
+  /** Automatic C only: its nested trunk (`nestTrunks`). */
+  trunkX: number | undefined;
+  /** Facing Z only: its trunk off loops (`loopBlock`), `undefined` keeping the midpoint. */
+  placeZ: (lane: ZLane) => number | undefined;
+  laneClaim: boolean;
+}
+
 function buildRoute(
   d: SideDecision,
   sourceRatio: number,
   targetRatio: number,
   columnYResolver: ColumnYResolver | undefined,
-  loopReachValue: number,
   rowHeight: number,
-  trunkX: number | undefined,
-  envelopes: readonly LoopEnvelope[] = [],
+  ctx: RouteContext,
 ): EdgeRoute {
   const { a, b } = resolvePorts(d, sourceRatio, targetRatio, columnYResolver, rowHeight);
-  if (isSelfRef(d.ref)) return buildLoopRoute(d, a, b, loopReachValue);
+  if (isSelfRef(d.ref)) return buildLoopRoute(d, a, b, ctx.loopReach, ctx.unyieldedReach);
 
   const layout = d.layout;
   const waypoints = waypointsOf(layout);
   const legacyDx = legacyDxOf(layout);
 
   const sJog = narrowGapSJog(a, b, d.sourceSide, d.targetSide, d.srcBbox, d.tgtBbox);
-  const zTrunk = (aStub: Point, bStub: Point, mid: number) =>
-    slideZTrunk(aStub, bStub, mid, envelopes, d.ref.source.table, d.ref.target.table);
-  const { corners, aStub, bStub } = buildPath(a, b, waypoints, legacyDx, d.sourceSide, d.targetSide, trunkX, sJog, zTrunk);
+  const lane = facingZLane(a, b, d.sourceSide, d.targetSide, waypoints, legacyDx, sJog, d.ref.source.table, d.ref.target.table);
+  const zTrunkX = lane ? ctx.placeZ(lane) : undefined;
+  const { corners, aStub, bStub } = buildPath(a, b, waypoints, legacyDx, d.sourceSide, d.targetSide, ctx.trunkX, sJog, zTrunkX);
   return {
     id: d.ref.id,
     d: roundedPathString(corners, CORNER_RADIUS),
@@ -263,6 +280,7 @@ function buildRoute(
     sourceStub: aStub,
     targetStub: bStub,
     ...(d.shapeIgnored ? { shapeIgnored: true as const } : {}),
+    ...(ctx.laneClaim ? { laneClaim: true as const } : {}),
   };
 }
 
@@ -294,7 +312,7 @@ const loopTrunkX = (side: Side, port: Point, reach: number): number => port.x + 
  * A self-loop leaves its source column's port, runs out `reach` past the side (`clampedLoopReach`),
  * down (or up) to the target column's row and back in on the same side.
  */
-function buildLoopRoute(d: SideDecision, a: Point, b: Point, reach: number): EdgeRoute {
+function buildLoopRoute(d: SideDecision, a: Point, b: Point, reach: number, unyieldedReach: number): EdgeRoute {
   const side = d.sourceSide;
   const dir = STUB_DIR[side].x;
   const aStub = { x: a.x + dir * MIN_STUB, y: a.y };
@@ -311,6 +329,7 @@ function buildLoopRoute(d: SideDecision, a: Point, b: Point, reach: number): Edg
     sourceStub: aStub,
     targetStub: bStub,
     loop: true,
+    ...(unyieldedReach > reach ? { unyieldedTrunkX: loopTrunkX(side, a, unyieldedReach) } : {}),
   };
 }
 
@@ -352,56 +371,194 @@ export interface LoopEnvelope {
   lo: number;
   hi: number;
   table: QualifiedName;
+  side: 'left' | 'right';
 }
 
 function envelopeOf(t: TrunkSpec): LoopEnvelope | null {
   if (t.fixed === undefined) return null;
   const inner = localX(t.side, t.inner);
   const trunk = localX(t.side, t.fixed);
-  return { x0: Math.min(inner, trunk), x1: Math.max(inner, trunk), lo: t.lo, hi: t.hi, table: t.tables[0] };
+  return { x0: Math.min(inner, trunk), x1: Math.max(inner, trunk), lo: t.lo, hi: t.hi, table: t.tables[0], side: t.side };
 }
 
 const sameEnvelope = (p: LoopEnvelope | null | undefined, q: LoopEnvelope | null | undefined): boolean =>
-  p === q || (!!p && !!q && p.x0 === q.x0 && p.x1 === q.x1 && p.lo === q.lo && p.hi === q.hi && p.table === q.table);
+  p === q || (!!p && !!q && p.x0 === q.x0 && p.x1 === q.x1 && p.lo === q.lo && p.hi === q.hi && p.table === q.table && p.side === q.side);
+
+/** The beside-the-side run of a loop, independent of its reach: border x and its two port rows. */
+interface LoopRun {
+  border: number;
+  lo: number;
+  hi: number;
+}
 
 /**
- * Where a facing Z's trunk goes instead of `mid` when `mid` runs through a THIRD table's loop
- * envelope over the trunk's rows (spec 05 §1 "Z frente a lazos ajenos"): the free x nearest `mid`,
- * strictly between the stub ends, at least `LOOP_CLEARANCE` off every such envelope. `undefined`
- * keeps `mid`: nothing in the way, or no free x in the gap (the default 64 px column gap beside a
- * stack of two loops has none).
+ * Where a facing Z may put its vertical trunk: strictly between its stub ends (`lo`..`hi`), over its
+ * two port rows. `mid` is the default trunk; `source`/`target` are its own tables.
  */
-export function slideZTrunk(
-  aStub: Point,
-  bStub: Point,
-  mid: number,
-  envelopes: readonly LoopEnvelope[],
+export interface ZLane {
+  lo: number;
+  hi: number;
+  yLo: number;
+  yHi: number;
+  mid: number;
+  source: QualifiedName;
+  target: QualifiedName;
+}
+
+/**
+ * Stub length of a route: opposed stubs on one axis take at most a quarter of the port distance each,
+ * so close tables keep the central half of the gap as an editable middle instead of two stubs meeting
+ * in a rigid line. Sub-pixel quarters stay fractional so neither stub collapses onto the table border.
+ * Same-direction or perpendicular stubs can never cross, and clamping them would collapse them too
+ * (F52). A narrow gap with room for a jog keeps both stubs full instead (the S, `narrowS`).
+ */
+function stubLength(a: Point, b: Point, dirA: Point, dirB: Point, narrowS: boolean): number {
+  const opposed = dirA.x === -dirB.x && dirA.y === -dirB.y;
+  const gap = dirA.x !== 0 ? Math.abs(b.x - a.x) : Math.abs(b.y - a.y);
+  const quarter = gap / 4;
+  return opposed && !narrowS ? Math.min(MIN_STUB, quarter >= 1 ? Math.floor(quarter) : quarter) : MIN_STUB;
+}
+
+/**
+ * The lane of a facing Z drawn by default (no waypoints, no legacy `dx`, not the narrow-gap S) whose
+ * rows differ, else `undefined`: the only routes whose trunk keeps off loops
+ * (`defaultEditableCorners`). The one definition shared by the drawn trunk and the lane claim.
+ */
+function facingZLane(
+  a: Point,
+  b: Point,
+  sourceSide: Side,
+  targetSide: Side,
+  waypoints: readonly Waypoint[],
+  legacyDx: number,
+  sJog: number | undefined,
   source: QualifiedName,
   target: QualifiedName,
-): number | undefined {
-  if (envelopes.length === 0) return undefined;
-  const lo = Math.min(aStub.x, bStub.x);
-  const hi = Math.max(aStub.x, bStub.x);
-  const yLo = Math.min(aStub.y, bStub.y);
-  const yHi = Math.max(aStub.y, bStub.y);
+): ZLane | undefined {
+  if (waypoints.length > 0 || legacyDx !== 0 || sJog !== undefined || a.y === b.y) return undefined;
+  const dirA = STUB_DIR[sourceSide];
+  const dirB = STUB_DIR[targetSide];
+  if (dirA.y !== 0 || dirB.y !== 0 || dirA.x === dirB.x) return undefined;
+  const len = stubLength(a, b, dirA, dirB, false);
+  const ax = a.x + dirA.x * len;
+  const bx = b.x + dirB.x * len;
+  if ((bx - ax) * dirA.x <= 0) return undefined;
+  return { lo: Math.min(ax, bx), hi: Math.max(ax, bx), yLo: Math.min(a.y, b.y), yHi: Math.max(a.y, b.y), mid: midpointBetween(ax, bx), source, target };
+}
+
+/**
+ * The open x range a loop keeps a facing Z's trunk out of, when it reaches into `lane` over its rows:
+ * a third table's whole envelope, but only the trunk of a loop on one of the Z's own tables, whose
+ * port arm has to cross that envelope anyway. Both widened by `LOOP_CLEARANCE`.
+ */
+function loopBlock(e: LoopEnvelope, lane: ZLane): [number, number] | null {
+  if (e.hi < lane.yLo || e.lo > lane.yHi) return null;
+  const own = e.table === lane.source || e.table === lane.target;
+  const trunk = e.side === 'right' ? e.x1 : e.x0;
+  const x0 = (own ? trunk : e.x0) - LOOP_CLEARANCE;
+  const x1 = (own ? trunk : e.x1) + LOOP_CLEARANCE;
+  return x1 > lane.lo && x0 < lane.hi ? [x0, x1] : null;
+}
+
+/**
+ * Where a facing Z's trunk goes among loop `envelopes` (spec 05 §1 "Z frente a lazos"): `'clear'` keeps
+ * `mid`; else the free x nearest `mid`, strictly inside the lane and outside every `loopBlock`;
+ * `'stuck'` when the lane has none.
+ */
+export function placeZTrunk(lane: ZLane, envelopes: Iterable<LoopEnvelope>): 'clear' | 'stuck' | { x: number } {
   const blocks: Array<[number, number]> = [];
   for (const e of envelopes) {
-    if (e.table === source || e.table === target || e.hi < yLo || e.lo > yHi) continue;
-    const x0 = e.x0 - LOOP_CLEARANCE;
-    const x1 = e.x1 + LOOP_CLEARANCE;
-    if (x1 > lo && x0 < hi) blocks.push([x0, x1]);
+    const b = loopBlock(e, lane);
+    if (b) blocks.push(b);
   }
   const blocked = (x: number) => blocks.some(([x0, x1]) => x > x0 && x < x1);
-  if (!blocked(mid)) return undefined;
+  if (!blocked(lane.mid)) return 'clear';
   let best: number | undefined;
   for (const [x0, x1] of blocks) {
     for (const c of [Math.floor(x0), Math.ceil(x1)]) {
-      if (c <= lo || c >= hi || blocked(c)) continue;
-      const d = Math.abs(c - mid);
-      if (best === undefined || d < Math.abs(best - mid) || (d === Math.abs(best - mid) && c < best)) best = c;
+      if (c <= lane.lo || c >= lane.hi || blocked(c)) continue;
+      const d = Math.abs(c - lane.mid);
+      if (best === undefined || d < Math.abs(best - lane.mid) || (d === Math.abs(best - lane.mid) && c < best)) best = c;
     }
   }
-  return best;
+  return best === undefined ? 'stuck' : { x: best };
+}
+
+/** The loops on one (table, side), in stack order, with what decides their reach. */
+interface LoopStack {
+  table: QualifiedName;
+  side: 'left' | 'right';
+  /** Edge indices by rank (innermost first). */
+  loops: number[];
+  /** Room before the nearest node beside the side, `LOOP_CLEARANCE` taken off (`loopRoom`). */
+  neighbourRoom: number;
+  /** Outer reach each claiming facing Z leaves room for, by Z edge index. */
+  claims: Map<number, number>;
+  /** Superset of every envelope the stack can draw at any reach, inflated by `LOOP_CLEARANCE`; null when hidden. */
+  band: Band | null;
+}
+
+/** World box open in x, closed in y (matching `loopBlock`). */
+interface Band {
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}
+
+const laneBand = (l: ZLane): Band => ({ x0: l.lo, x1: l.hi, y0: l.yLo, y1: l.yHi });
+const bandsMeet = (p: Band, q: Band): boolean => p.x1 > q.x0 && p.x0 < q.x1 && p.y1 >= q.y0 && p.y0 <= q.y1;
+
+const LANE_CELL = 512;
+
+/**
+ * Facing-Z lanes by edge index, bucketed by x: which Zs a changed loop envelope or stack band can
+ * reach, without scanning every route on each drag frame. Wide lanes span several buckets.
+ */
+class LaneGrid {
+  private readonly cells = new Map<number, number[]>();
+  private readonly lanes = new Map<number, ZLane>();
+
+  public clear(): void {
+    this.cells.clear();
+    this.lanes.clear();
+  }
+
+  public set(i: number, lane: ZLane | null): void {
+    const old = this.lanes.get(i);
+    if (old === lane || (old && lane && old.lo === lane.lo && old.hi === lane.hi && old.yLo === lane.yLo && old.yHi === lane.yHi)) {
+      if (lane) this.lanes.set(i, lane);
+      return;
+    }
+    if (old) {
+      for (let c = Math.floor(old.lo / LANE_CELL); c <= Math.floor(old.hi / LANE_CELL); c++) {
+        const list = this.cells.get(c)!;
+        list.splice(list.indexOf(i), 1);
+        if (list.length === 0) this.cells.delete(c);
+      }
+      this.lanes.delete(i);
+    }
+    if (!lane) return;
+    this.lanes.set(i, lane);
+    for (let c = Math.floor(lane.lo / LANE_CELL); c <= Math.floor(lane.hi / LANE_CELL); c++) {
+      const list = this.cells.get(c);
+      if (list) list.push(i);
+      else this.cells.set(c, [i]);
+    }
+  }
+
+  /** Adds to `out` every edge whose lane meets `box`. */
+  public collect(box: Band, out: Set<number>): void {
+    for (let c = Math.floor(box.x0 / LANE_CELL); c <= Math.floor(box.x1 / LANE_CELL); c++) {
+      for (const i of this.cells.get(c) ?? []) if (!out.has(i) && bandsMeet(laneBand(this.lanes.get(i)!), box)) out.add(i);
+    }
+  }
+}
+
+function finalRoomOf(s: LoopStack): number {
+  let room = s.neighbourRoom;
+  for (const r of s.claims.values()) if (r < room) room = r;
+  return room;
 }
 
 /** Whether a C on `side` with its trunk at local `x` keeps clear of every third node (`EdgeRouteCache.trunkFits`). */
@@ -469,12 +626,6 @@ function nestTrunks(
   return { x, flip };
 }
 
-/** Whether `e` (with its clearance) reaches the box spanned by a route's two ports. */
-function nearEnvelope(r: EdgeRoute, e: LoopEnvelope): boolean {
-  return e.x0 - LOOP_CLEARANCE < Math.max(r.source.x, r.target.x) && e.x1 + LOOP_CLEARANCE > Math.min(r.source.x, r.target.x)
-    && e.lo <= Math.max(r.source.y, r.target.y) && e.hi >= Math.min(r.source.y, r.target.y);
-}
-
 /**
  * Routing state kept between calls so a table drag re-routes only what the move can change
  * (spec 04, "Commit del drag por frame"): the refs touching a moved table, plus every ref sharing a
@@ -493,14 +644,28 @@ export class EdgeRouteCache {
   private routes: Array<EdgeRoute | null> = [];
   /** Stack position of each loop among the loops on its table side; 0 for every other ref. */
   private loopRank: number[] = [];
-  /** Each loop's reach out of its side, clamped off neighbours (`clampedLoopReach`); 0 for every other ref. */
+  /** Each loop's drawn reach: `clampedLoopReach` under its stack's final room; 0 for every other ref. */
   private loopReachAt: number[] = [];
+  /** Each loop's reach off its neighbours alone, before any Z claim: what claims are decided against. */
+  private preReachAt: number[] = [];
   private loopIdx: number[] = [];
+  private loopRunAt: Array<LoopRun | null> = [];
+  private preEnvelopeAt: Array<LoopEnvelope | null> = [];
   /** Loop envelopes by edge index (null for non-loops): what a facing Z trunk keeps off. */
   private envelopeAt: Array<LoopEnvelope | null> = [];
-  private envelopes: LoopEnvelope[] = [];
-  /** Loops per (table, side): a C on that side keeps its trunk outside all of them. */
-  private readonly loopCount = new Map<string, number>();
+  /** Loops per (table, side), by `portKey`: a C on that side keeps its trunk outside all of them. */
+  private readonly stacks = new Map<string, LoopStack>();
+  private stackOf: Array<LoopStack | undefined> = [];
+  private readonly stackedTables = new Set<QualifiedName>();
+  /** Stacks with a band, sorted by `band.x0`: the lane lookup (`stacksNear`). */
+  private stackIndex: LoopStack[] = [];
+  private maxBandW = 0;
+  /** Lane each facing Z could claim (`claimLaneOf`); only kept with an obstacle query and loops. */
+  private zLaneAt: Array<ZLane | null> = [];
+  /** Lane of every drawn facing Z, claiming or not (`build`): what a changed envelope or band can reach. */
+  private readonly laneGrid = new LaneGrid();
+  /** Stacks each claiming Z made yield, by Z edge index. */
+  private readonly claimedBy = new Map<number, LoopStack[]>();
   private trunkSpecs: Array<TrunkSpec | null> = [];
   private trunkX: Array<number | undefined> = [];
   private rowHeight = DEFAULT_ROW_HEIGHT;
@@ -509,6 +674,11 @@ export class EdgeRouteCache {
   private readonly ports = new Map<string, PortEntry[]>();
   private readonly edgesByTable = new Map<QualifiedName, number[]>();
   private out: EdgeRoute[] = [];
+
+  /** Facing Zs currently holding a lane claim (perf tests prove the scenario exercises claims). */
+  public get claimCount(): number {
+    return this.claimedBy.size;
+  }
 
   /**
    * Routes every ref orthogonally (Manhattan) and distributes ports along each
@@ -521,7 +691,12 @@ export class EdgeRouteCache {
    *
    * Returns an ordered list matching refs[] order — callers can filter by visibility.
    * `rowHeight` (the density's) only splits the ports of a same-column self-loop. Without
-   * `obstacles` no automatic C ever flips sides (spec 05 §1 "Anidado de C").
+   * `obstacles` no automatic C ever flips sides (spec 05 §1 "Anidado de C") and no loop stack
+   * yields a lane to a facing Z (§Self-loops).
+   *
+   * One pass, no feedback: loop reach off neighbours (pre-reach) → Z lane claims, read only from
+   * pre-reach envelopes and base decisions → final loop reach → trunk specs, nesting, ports, routes.
+   * A claim only ever lowers a reach, so it can never block another Z's lane.
    */
   public routeAll(
     refs: readonly Ref[],
@@ -536,11 +711,26 @@ export class EdgeRouteCache {
     this.bboxOf = bboxOf;
     this.obstacles = obstacles;
     this.rankLoops(columnYResolver, layoutResolver);
-    this.loopReachAt = this.computeLoopReach(layoutResolver);
     this.baseDecisions = refs.map((r) => decideSides(r, bboxOf, layoutResolver, columnYResolver));
+    this.loopRunAt = refs.map(() => null);
+    for (const i of this.loopIdx) this.loopRunAt[i] = this.loopRunOf(i, columnYResolver);
+    this.preReachAt = refs.map(() => 0);
+    this.preEnvelopeAt = refs.map(() => null);
+    for (const s of this.stacks.values()) {
+      this.refreshStack(s, null, true);
+      s.band = this.bandOf(s);
+    }
+    this.rebuildStackIndex();
+    this.zLaneAt = [];
+    this.claimedBy.clear();
+    if (obstacles && this.stacks.size > 0) {
+      this.zLaneAt = refs.map((_, i) => this.claimLaneOf(i, columnYResolver));
+      this.zLaneAt.forEach((lane, i) => { if (lane) this.updateClaim(i); });
+    }
+    this.loopReachAt = refs.map(() => 0);
+    this.finalReach(null);
     this.trunkSpecs = this.baseDecisions.map((_, i) => this.trunkSpecOf(i, columnYResolver));
     this.envelopeAt = this.trunkSpecs.map((t) => (t ? envelopeOf(t) : null));
-    this.envelopes = this.envelopeAt.filter((e): e is LoopEnvelope => e !== null);
     const nest = nestTrunks(this.trunkSpecs, obstacles ? this.trunkFits : undefined);
     this.trunkX = nest.x;
     this.flipped = nest.flip;
@@ -556,9 +746,8 @@ export class EdgeRouteCache {
       if (d) this.addPorts(d, i, null);
     });
     for (const key of this.ports.keys()) this.spreadPorts(key, null);
-    this.routes = this.decisions.map((d, i) =>
-      d ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, this.loopReachAt[i]!, rowHeight, this.trunkX[i], this.envelopes) : null,
-    );
+    this.laneGrid.clear();
+    this.routes = this.decisions.map((_, i) => this.build(i, columnYResolver));
     return this.collect();
   }
 
@@ -574,17 +763,22 @@ export class EdgeRouteCache {
     layoutResolver?: EdgeLayoutResolver,
   ): EdgeRoute[] {
     this.bboxOf = bboxOf;
+    const movedNames = new Set(moved);
     const affected = new Set<number>();
-    for (const t of moved) for (const i of this.edgesByTable.get(t) ?? []) affected.add(i);
+    let stackMoved = false;
+    for (const t of movedNames) {
+      for (const i of this.edgesByTable.get(t) ?? []) affected.add(i);
+      if (this.stackedTables.has(t)) stackMoved = true;
+    }
+    const decided = new Set<number>();
+    const dirty = new Set<number>();
     // Any moved node, even one no ref touches, can crowd or free a loop stack's side.
-    if (this.obstacles && this.envelopes.length > 0) {
-      const reach = this.computeLoopReach(layoutResolver);
-      reach.forEach((r, i) => { if (r !== this.loopReachAt[i]) affected.add(i); });
-      this.loopReachAt = reach;
+    if (this.stacks.size > 0 && (this.obstacles || stackMoved)) {
+      this.updateLoops(movedNames, stackMoved, affected, decided, dirty, columnYResolver, layoutResolver);
     }
     // Any moved node, even one no ref touches, can block or clear an automatic C's side.
     const flippable = this.obstacles !== undefined && this.trunkSpecs.some((t) => t?.alt !== undefined);
-    if (affected.size === 0 && !flippable) return this.out;
+    if (affected.size === 0 && dirty.size === 0 && !flippable) return this.out;
 
     // A trunk's nest depends on every loop/C it may touch, anywhere, and on the third nodes beside it:
     // when any of them changed, re-nest all. Specs read base sides, column rows and bboxes only (never
@@ -592,7 +786,7 @@ export class EdgeRouteCache {
     let nestInputChanged = flippable;
     const changedEnvelopes: LoopEnvelope[] = [];
     for (const i of affected) {
-      this.baseDecisions[i] = decideSides(this.refs[i]!, bboxOf, layoutResolver, columnYResolver);
+      if (!decided.has(i)) this.baseDecisions[i] = decideSides(this.refs[i]!, bboxOf, layoutResolver, columnYResolver);
       const next = this.trunkSpecOf(i, columnYResolver);
       if (next || this.trunkSpecs[i]) nestInputChanged = true;
       this.trunkSpecs[i] = next;
@@ -605,13 +799,11 @@ export class EdgeRouteCache {
       }
     }
     const resided = new Set<number>(affected);
-    const dirty = new Set<number>(affected);
-    if (changedEnvelopes.length > 0) {
-      this.envelopes = this.envelopeAt.filter((e): e is LoopEnvelope => e !== null);
-      // A facing Z elsewhere may have slid off (or may now return from) a loop that moved.
-      this.routes.forEach((r, i) => {
-        if (r && !r.loop && !dirty.has(i) && changedEnvelopes.some((e) => nearEnvelope(r, e))) dirty.add(i);
-      });
+    for (const i of affected) dirty.add(i);
+    // A facing Z elsewhere may have slid off (or may now return from) a loop that moved. Every other
+    // route ignores envelopes, and a Z's lane only moves with its own tables (then it is in `affected`).
+    for (const e of changedEnvelopes) {
+      this.laneGrid.collect({ x0: e.x0 - LOOP_CLEARANCE, x1: e.x1 + LOOP_CLEARANCE, y0: e.lo, y1: e.hi }, dirty);
     }
     if (nestInputChanged) {
       const next = nestTrunks(this.trunkSpecs, this.obstacles ? this.trunkFits : undefined);
@@ -634,13 +826,292 @@ export class EdgeRouteCache {
       dirty.add(i);
     }
     for (const key of touched) this.spreadPorts(key, dirty);
-    for (const i of dirty) {
-      const d = this.decisions[i];
-      this.routes[i] = d
-        ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, this.loopReachAt[i]!, this.rowHeight, this.trunkX[i], this.envelopes)
-        : null;
-    }
+    for (const i of dirty) this.routes[i] = this.build(i, columnYResolver);
     return this.collect();
+  }
+
+  /**
+   * The loop half of `routeMoved`, in `routeAll`'s order: base decisions of the moved tables' refs,
+   * every stack's neighbour room and pre-reach (one obstacle query per stack, as collapsed-group
+   * boxes can change without their name in `moved`), then the claims of the Zs whose lane moved or
+   * meets a stack band that changed, then every loop's final reach. Loops whose reach changed join
+   * `affected`; Zs whose claim changed join `dirty`.
+   */
+  private updateLoops(
+    moved: ReadonlySet<QualifiedName>,
+    stackMoved: boolean,
+    affected: Set<number>,
+    decided: Set<number>,
+    dirty: Set<number>,
+    columnYResolver: ColumnYResolver | undefined,
+    layoutResolver: EdgeLayoutResolver | undefined,
+  ): void {
+    for (const i of affected) {
+      this.baseDecisions[i] = decideSides(this.refs[i]!, this.bboxOf, layoutResolver, columnYResolver);
+      decided.add(i);
+      if (this.stackOf[i]) this.loopRunAt[i] = this.loopRunOf(i, columnYResolver);
+    }
+    const changedBands: Band[] = [];
+    const preChanged = new Set<number>();
+    for (const s of this.stacks.values()) {
+      const tableMoved = moved.has(s.table);
+      if (!this.obstacles && !tableMoved) continue;
+      const old = s.band;
+      const envChanged = this.refreshStack(s, preChanged, tableMoved);
+      if (tableMoved) s.band = this.bandOf(s);
+      if (tableMoved || envChanged) {
+        if (old) changedBands.push(old);
+        if (s.band && s.band !== old) changedBands.push(s.band);
+      }
+    }
+    if (stackMoved) this.rebuildStackIndex();
+    for (const i of preChanged) affected.add(i);
+    if (!this.obstacles) return;
+    if (this.zLaneAt.length > 0) {
+      const zDirty = new Set<number>();
+      for (const i of decided) {
+        const had = this.zLaneAt[i] ?? null;
+        const lane = this.claimLaneOf(i, columnYResolver);
+        this.zLaneAt[i] = lane;
+        if (had || lane) zDirty.add(i);
+      }
+      // A claim lane is its Z's drawn lane (same ports), so the grid finds the claims a band can change.
+      const near = new Set<number>();
+      for (const b of changedBands) this.laneGrid.collect(b, near);
+      for (const z of near) if (this.zLaneAt[z]) zDirty.add(z);
+      for (const z of zDirty) if (this.updateClaim(z)) dirty.add(z);
+    }
+    this.finalReach(affected);
+  }
+
+  private build(i: number, columnYResolver: ColumnYResolver | undefined): EdgeRoute | null {
+    const d = this.decisions[i];
+    let lane: ZLane | null = null;
+    const route = d
+      ? buildRoute(d, this.sourceRatio[i]!, this.targetRatio[i]!, columnYResolver, this.rowHeight, {
+        loopReach: this.loopReachAt[i]!,
+        unyieldedReach: this.preReachAt[i]!,
+        trunkX: this.trunkX[i],
+        placeZ: (l) => {
+          lane = l;
+          return this.placeZ(l);
+        },
+        laneClaim: this.claimedBy.has(i),
+      })
+      : null;
+    this.laneGrid.set(i, lane);
+    return route;
+  }
+
+  private readonly placeZ = (lane: ZLane): number | undefined => {
+    if (this.stackIndex.length === 0) return undefined;
+    const placed = placeZTrunk(lane, this.envelopesNear(lane, this.envelopeAt));
+    return typeof placed === 'object' ? placed.x : undefined;
+  };
+
+  /** Envelopes from `source` (pre-claim or final) of the loops whose stack band meets `lane`. */
+  private envelopesNear(lane: ZLane, source: ReadonlyArray<LoopEnvelope | null>): LoopEnvelope[] {
+    const out: LoopEnvelope[] = [];
+    for (const s of this.stacksNear(laneBand(lane))) {
+      for (const i of s.loops) {
+        const e = source[i];
+        if (e) out.push(e);
+      }
+    }
+    return out;
+  }
+
+  /** Stacks whose band meets `box`: a binary search on `band.x0`, then the exact test. */
+  private stacksNear(box: Band): LoopStack[] {
+    const idx = this.stackIndex;
+    const from = box.x0 - this.maxBandW;
+    let lo = 0;
+    let hi = idx.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (idx[mid]!.band!.x0 <= from) lo = mid + 1;
+      else hi = mid;
+    }
+    const out: LoopStack[] = [];
+    for (let k = lo; k < idx.length && idx[k]!.band!.x0 < box.x1; k++) {
+      if (bandsMeet(idx[k]!.band!, box)) out.push(idx[k]!);
+    }
+    return out;
+  }
+
+  private rebuildStackIndex(): void {
+    const idx: LoopStack[] = [];
+    let w = 0;
+    for (const s of this.stacks.values()) {
+      if (!s.band) continue;
+      idx.push(s);
+      w = Math.max(w, s.band.x1 - s.band.x0);
+    }
+    this.stackIndex = idx.sort((p, q) => p.band!.x0 - q.band!.x0);
+    this.maxBandW = w;
+  }
+
+  private bandOf(s: LoopStack): Band | null {
+    let border: number | undefined;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    for (const i of s.loops) {
+      const run = this.loopRunAt[i];
+      if (!run) continue;
+      border = run.border;
+      y0 = Math.min(y0, run.lo);
+      y1 = Math.max(y1, run.hi);
+    }
+    if (border === undefined) return null;
+    // `clampedLoopReach` never exceeds `loopReach(n)`, so the band covers every reach a claim leaves.
+    const far = loopReach(s.loops.length) + LOOP_CLEARANCE;
+    return s.side === 'right'
+      ? { x0: border - LOOP_CLEARANCE, x1: border + far, y0, y1 }
+      : { x0: border - far, x1: border + LOOP_CLEARANCE, y0, y1 };
+  }
+
+  private loopRunOf(i: number, columnYResolver: ColumnYResolver | undefined): LoopRun | null {
+    const d = this.baseDecisions[i];
+    if (!d) return null;
+    const { a, b } = resolvePorts(d, 0.5, 0.5, columnYResolver, this.rowHeight);
+    return { border: a.x, lo: Math.min(a.y, b.y), hi: Math.max(a.y, b.y) };
+  }
+
+  /**
+   * Re-reads a stack's neighbour room and, when it or the table (`moved`) changed, sets its loops'
+   * pre-reach and pre-envelope. Records in `preChanged` every loop whose pre-reach moved; returns
+   * whether any pre-envelope changed.
+   */
+  private refreshStack(s: LoopStack, preChanged: Set<number> | null, moved: boolean): boolean {
+    const n = s.loops.length;
+    const room = this.loopRoom(s.table, s.side, n);
+    if (room === s.neighbourRoom && !moved) return false;
+    s.neighbourRoom = room;
+    let changed = false;
+    for (let rank = 0; rank < n; rank++) {
+      const i = s.loops[rank]!;
+      const reach = clampedLoopReach(rank, n, room);
+      if (reach !== this.preReachAt[i]) {
+        this.preReachAt[i] = reach;
+        preChanged?.add(i);
+      }
+      const run = this.loopRunAt[i];
+      const old = this.preEnvelopeAt[i];
+      if (!run) {
+        if (old) changed = true;
+        this.preEnvelopeAt[i] = null;
+        continue;
+      }
+      const x0 = s.side === 'right' ? run.border : run.border - reach;
+      const x1 = s.side === 'right' ? run.border + reach : run.border;
+      if (old && old.x0 === x0 && old.x1 === x1 && old.lo === run.lo && old.hi === run.hi) continue;
+      this.preEnvelopeAt[i] = { x0, x1, lo: run.lo, hi: run.hi, table: s.table, side: s.side };
+      changed = true;
+    }
+    return changed;
+  }
+
+  /**
+   * Lane of edge `i` when it is a facing Z drawn by default with both column rows resolved, else
+   * null. Read from its base decision at the column rows, exactly the ports `buildRoute` resolves, so
+   * the lane claimed is the lane later slid in. An unresolved column's port follows port spreading,
+   * which the claims must not read, so such a Z never claims (it still slides).
+   */
+  private claimLaneOf(i: number, columnYResolver: ColumnYResolver | undefined): ZLane | null {
+    const d = this.baseDecisions[i];
+    if (!d || !columnYResolver || this.stackOf[i]) return null;
+    const horizontal = (s: Side) => s === 'left' || s === 'right';
+    if (!horizontal(d.sourceSide) || !horizontal(d.targetSide) || d.sourceSide === d.targetSide) return null;
+    const sCol = d.ref.source.columns[0];
+    const tCol = d.ref.target.columns[0];
+    const sOff = sCol ? columnYResolver(d.ref.source.table, sCol) : undefined;
+    const tOff = tCol ? columnYResolver(d.ref.target.table, tCol) : undefined;
+    if (sOff === undefined || tOff === undefined) return null;
+    const a = portPoint(d.srcBbox, d.sourceSide, 0.5, d.srcBbox.y + sOff);
+    const b = portPoint(d.tgtBbox, d.targetSide, 0.5, d.tgtBbox.y + tOff);
+    const sJog = narrowGapSJog(a, b, d.sourceSide, d.targetSide, d.srcBbox, d.tgtBbox);
+    const layout = d.layout;
+    return facingZLane(a, b, d.sourceSide, d.targetSide, waypointsOf(layout), legacyDxOf(layout), sJog, d.ref.source.table, d.ref.target.table) ?? null;
+  }
+
+  /**
+   * The stacks a facing Z makes yield, with the outer reach each may keep (spec 05 §Self-loops "Carril
+   * para Z ajenas"); null when it claims nothing. It claims only when its lane has no free x among the
+   * pre-reach envelopes, and then aims its trunk at `free`, 1 px inside the lane's far end (`placeZTrunk`
+   * candidates are `ceil`/`floor` with strict bounds, so fractional positions also work). Yielding
+   * stacks: every blocking one, and every stack of the Z's own tables whose trunk could come within
+   * `LOOP_CLEARANCE` of `free` at any reach. The latter is load-bearing: a claim only lowers reaches,
+   * which shrinks a third table's envelope but slides an own trunk inward, so another Z's claim could
+   * otherwise park it on `free`; claimed here, its trunk stays at most `room` out. Each yielding stack
+   * must face the lane from the claim's side with its table at the lane's near end and compress to its
+   * `room` (`free` less `LOOP_CLEARANCE`); otherwise nothing yields and the trunk keeps its midpoint.
+   */
+  private claimFor(lane: ZLane): Array<[LoopStack, number]> | null {
+    if (placeZTrunk(lane, this.envelopesNear(lane, this.preEnvelopeAt)) !== 'stuck') return null;
+    const near = this.stacksNear(laneBand(lane));
+    const blocks = (s: LoopStack) => s.loops.some((i) => {
+      const e = this.preEnvelopeAt[i];
+      return !!e && loopBlock(e, lane) !== null;
+    });
+    const side = near.find(blocks)?.side;
+    if (!side) return null;
+    const free = side === 'right' ? Math.ceil(lane.hi) - 1 : Math.floor(lane.lo) + 1;
+    const out: Array<[LoopStack, number]> = [];
+    for (const s of near) {
+      const own = s.table === lane.source || s.table === lane.target;
+      if (!blocks(s) && !(own && this.trunkMayReach(s, lane, free))) continue;
+      const border = this.loopRunAt[s.loops[0]!]?.border;
+      if (s.side !== side || border === undefined) return null;
+      if (side === 'right' ? border > lane.lo : border < lane.hi) return null;
+      const room = Math.floor(side === 'right' ? free - border - LOOP_CLEARANCE : border - LOOP_CLEARANCE - free);
+      if (room < minStackReach(s.loops.length)) return null;
+      out.push([s, room]);
+    }
+    return out;
+  }
+
+  /** Whether a loop of `s` over the lane's rows, at any reach from `LOOP_MIN_REACH` to its pre-reach, has its trunk within `LOOP_CLEARANCE` of `x`. */
+  private trunkMayReach(s: LoopStack, lane: ZLane, x: number): boolean {
+    const dir = s.side === 'right' ? 1 : -1;
+    return s.loops.some((i) => {
+      const run = this.loopRunAt[i];
+      if (!run || run.hi < lane.yLo || run.lo > lane.yHi) return false;
+      const d = (x - run.border) * dir;
+      return d > LOOP_MIN_REACH - LOOP_CLEARANCE && d < this.preReachAt[i]! + LOOP_CLEARANCE;
+    });
+  }
+
+  /** Re-decides Z `z`'s claim and moves it between stacks; returns whether it changed. */
+  private updateClaim(z: number): boolean {
+    const lane = this.zLaneAt[z];
+    const next = lane ? this.claimFor(lane) : null;
+    const old = this.claimedBy.get(z);
+    let same = (old?.length ?? 0) === (next?.length ?? 0);
+    for (const s of old ?? []) {
+      if (same && !next?.some(([t, room]) => t === s && room === s.claims.get(z))) same = false;
+      s.claims.delete(z);
+    }
+    if (next) {
+      for (const [s, room] of next) s.claims.set(z, room);
+      this.claimedBy.set(z, next.map(([s]) => s));
+    } else {
+      this.claimedBy.delete(z);
+    }
+    return !same;
+  }
+
+  /** Every loop's drawn reach under its stack's final room (neighbours and claims); changed loops join `affected`. */
+  private finalReach(affected: Set<number> | null): void {
+    for (const s of this.stacks.values()) {
+      const n = s.loops.length;
+      const room = s.claims.size > 0 ? finalRoomOf(s) : undefined;
+      s.loops.forEach((i, rank) => {
+        const reach = room === undefined ? this.preReachAt[i]! : clampedLoopReach(rank, n, room);
+        if (reach === this.loopReachAt[i]) return;
+        this.loopReachAt[i] = reach;
+        affected?.add(i);
+      });
+    }
   }
 
   /**
@@ -665,12 +1136,14 @@ export class EdgeRouteCache {
   };
 
   /**
-   * Nests the loops sharing a table side: the shorter span goes inside so nested loops never cross.
-   * Reads only refs, rows and layouts — never positions — so a drag never re-ranks.
+   * Builds the loop stacks: the loops sharing a table side nest with the shorter span inside so nested
+   * loops never cross. Reads only refs, rows and layouts — never positions — so a drag never re-ranks.
    */
   private rankLoops(columnYResolver: ColumnYResolver | undefined, layoutResolver: EdgeLayoutResolver | undefined): void {
     this.loopRank = this.refs.map(() => 0);
-    this.loopCount.clear();
+    this.stacks.clear();
+    this.stackedTables.clear();
+    this.stackOf = this.refs.map(() => undefined);
     this.loopIdx = [];
     const bySide = new Map<string, number[]>();
     this.refs.forEach((r, i) => {
@@ -681,39 +1154,21 @@ export class EdgeRouteCache {
       if (list) list.push(i);
       else bySide.set(key, [i]);
     });
-    for (const [key, list] of bySide) this.loopCount.set(key, list.length);
-    for (const list of bySide.values()) {
-      if (list.length < 2) continue;
+    for (const [key, list] of bySide) {
       const span = list.map((i) => loopSpan(this.refs[i]!, columnYResolver));
       const order = list.map((_, k) => k).sort((p, q) => {
         const a = this.refs[list[p]!]!.id;
         const b = this.refs[list[q]!]!.id;
         return (span[p]! - span[q]!) || (a < b ? -1 : a > b ? 1 : 0) || (list[p]! - list[q]!);
       });
-      order.forEach((k, rank) => { this.loopRank[list[k]!] = rank; });
+      const loops = order.map((k) => list[k]!);
+      loops.forEach((i, rank) => { this.loopRank[i] = rank; });
+      const first = this.refs[loops[0]!]!;
+      const s: LoopStack = { table: first.source.table, side: loopSide(layoutResolver?.(first.id)), loops, neighbourRoom: Infinity, claims: new Map(), band: null };
+      this.stacks.set(key, s);
+      this.stackedTables.add(s.table);
+      for (const i of loops) this.stackOf[i] = s;
     }
-  }
-
-  /**
-   * Each loop's reach, clamped so its stack keeps `LOOP_CLEARANCE` off the nearest node beside that
-   * side of its table (spec 05 §Self-loops). Without an obstacle query every loop keeps `loopReach`.
-   */
-  private computeLoopReach(layoutResolver: EdgeLayoutResolver | undefined): number[] {
-    const room = new Map<string, number>();
-    const reach = this.refs.map(() => 0);
-    for (const i of this.loopIdx) {
-      const r = this.refs[i]!;
-      const side = loopSide(layoutResolver?.(r.id));
-      const key = portKey(r.source.table, side);
-      const n = this.loopCount.get(key) ?? 1;
-      let free = room.get(key);
-      if (free === undefined) {
-        free = this.loopRoom(r.source.table, side, n);
-        room.set(key, free);
-      }
-      reach[i] = clampedLoopReach(this.loopRank[i]!, n, free);
-    }
-    return reach;
   }
 
   /** Distance from `table`'s `side` to the nearest node level with it, less `LOOP_CLEARANCE`; Infinity when none is in reach. */
@@ -761,7 +1216,7 @@ export class EdgeRouteCache {
       return { ...base, inner, fixed: localX(side, loopTrunkX(side, a, this.loopReachAt[i]!)), floor: 0 };
     }
     const reach = (table: QualifiedName, s: 'left' | 'right'): number => {
-      const n = this.loopCount.get(portKey(table, s)) ?? 0;
+      const n = this.stacks.get(portKey(table, s))?.loops.length ?? 0;
       return n > 0 ? loopReach(n + 1) : MIN_STUB;
     };
     // Rounded in world space exactly as the unnested trunk was, so a C with no neighbours is unchanged.
@@ -879,28 +1334,19 @@ function buildPath(
   targetSide: Side,
   trunkX?: number,
   sJog?: number,
-  zTrunk?: (aStub: Point, bStub: Point, mid: number) => number | undefined,
+  zTrunkX?: number,
 ): { corners: Point[]; aStub: Point; bStub: Point } {
   const dirA = STUB_DIR[sourceSide];
   const dirB = STUB_DIR[targetSide];
-  // Opposed stubs on one axis take at most a quarter of the port distance each, so close tables keep
-  // the central half of the gap as an editable middle instead of two stubs meeting in a rigid line.
-  // Sub-pixel quarters stay fractional so neither stub collapses onto the table border. Same-direction
-  // or perpendicular stubs can never cross, and clamping them would collapse them too (F52).
-  // A narrow gap with room for a jog keeps both stubs full instead (the S, `sJog`). Geometry-only, so
-  // stored waypoints materialized from an S still meet the same stub ends.
-  const narrowS = sJog !== undefined;
-  const opposed = dirA.x === -dirB.x && dirA.y === -dirB.y;
-  const gap = dirA.x !== 0 ? Math.abs(b.x - a.x) : Math.abs(b.y - a.y);
-  const quarter = gap / 4;
-  const stubLen = opposed && !narrowS ? Math.min(MIN_STUB, quarter >= 1 ? Math.floor(quarter) : quarter) : MIN_STUB;
+  // Geometry-only, so stored waypoints materialized from an S still meet the same stub ends.
+  const stubLen = stubLength(a, b, dirA, dirB, sJog !== undefined);
   const aStub = { x: a.x + dirA.x * stubLen, y: a.y + dirA.y * stubLen };
   const bStub = { x: b.x + dirB.x * stubLen, y: b.y + dirB.y * stubLen };
 
   let editable: Point[];
   if (waypoints.length > 0) editable = cornersThrough(aStub, bStub, waypoints, dirA.y !== 0, dirB.y !== 0);
   else if (sJog !== undefined) editable = narrowGapSCorners(aStub, bStub, sJog);
-  else editable = defaultEditableCorners(aStub, bStub, dirA, dirB, legacyDx, trunkX, zTrunk);
+  else editable = defaultEditableCorners(aStub, bStub, dirA, dirB, legacyDx, trunkX, zTrunkX);
   const corners = [{ x: a.x, y: a.y }, ...editable, { x: b.x, y: b.y }];
   return { corners, aStub, bStub };
 }
@@ -918,7 +1364,7 @@ function narrowGapSCorners(aStub: Point, bStub: Point, jogY: number): Point[] {
  * trunk; both vertical ⇒ the V-H-V mirror; one of each ⇒ a single L elbow. Same-direction stubs get a
  * C-route whose trunk sits beyond the farther-reaching stub, so it never doubles back over a stub, or
  * at `nestedTrunkX` when the cache nested it outside loops and other Cs (`nestTrunks`). A facing Z
- * may slide its trunk off a third table's loops (`zTrunk`, `slideZTrunk`). Aligned opposed stubs still get the trunk's two (coincident) corners: the middle is split at its
+ * puts its trunk at `zTrunkX` when it slid off loops (`placeZTrunk`). Aligned opposed stubs still get the trunk's two (coincident) corners: the middle is split at its
  * midpoint into two runs, so either half can be slid or notched. The legacy `dx` offset only ever
  * applied to the horizontal-stub trunk.
  */
@@ -929,7 +1375,7 @@ function defaultEditableCorners(
   dirB: Point,
   legacyDx: number,
   nestedTrunkX?: number,
-  zTrunk?: (aStub: Point, bStub: Point, mid: number) => number | undefined,
+  zTrunkX?: number,
 ): Point[] {
   const aVertical = dirA.y !== 0;
   const bVertical = dirB.y !== 0;
@@ -942,7 +1388,7 @@ function defaultEditableCorners(
     const mid = midpointBetween(aStub.x, bStub.x);
     const trunk = dirA.x === dirB.x
       ? nestedTrunkX ?? Math.round(dirA.x > 0 ? Math.max(aStub.x, bStub.x) : Math.min(aStub.x, bStub.x))
-      : (facing && legacyDx === 0 && aStub.y !== bStub.y ? zTrunk?.(aStub, bStub, mid) : undefined) ?? mid;
+      : (facing && legacyDx === 0 && aStub.y !== bStub.y ? zTrunkX : undefined) ?? mid;
     const midX = legacyDx === 0 ? trunk : Math.round(trunk + legacyDx);
     return [
       { x: aStub.x, y: aStub.y },

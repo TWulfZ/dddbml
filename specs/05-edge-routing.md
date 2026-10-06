@@ -175,13 +175,10 @@ segmentos completos.
   (4) Los carriles salen del pase
   provisional: si una C bloqueada sale de A\* con waypoints, las C despejadas que anidaba pueden
   quedar hasta un escalón más adentro de su carril. ¿Conviene un segundo pase?
-  (5) **Z frente a una pila de lazos sin x libre (Limitaciones 7).** Con el hueco por defecto (64) la
-  Z cruza la pila de una tercera tabla y "Ordenar aristas" no lo corrige. Opciones: (a) aceptarlo
-  (vigente, decisión 2026-10-05: sin x libre el trunk conserva el medio); (b) que la pila ceda un
-  carril a toda Z que pase a su lado, tratando el fin de stub de la Z como un vecino más en
-  `loopRoom` (con 2 lazos y columna a 64 ⇒ lazos a `W+32`/`W+38`, trunk de la Z en `W+47`): el
-  alcance de los lazos pasa a depender de rutas ajenas, y `routeMoved` debe recalcularlo cuando se
-  mueve cualquier Z cercana. Sin decidir.
+  (5) ~~**Z frente a una pila de lazos sin x libre (Limitaciones 7).**~~ **Decidido (2026-10-05,
+  con el usuario): (b)** — la pila cede un carril a la Z ajena que pasa a su lado, en un solo pase
+  determinista (alcance por vecino → reclamos de las Z → alcance final), con fallback al medio cuando
+  ni la pila más comprimida lo abre. Ver §Self-loops "Carril para Z ajenas"; invalidación en spec 04.
 - **S de hueco angosto — pendientes (2026-10-05, no bloqueantes).** (1) En `gap` 47 → 48 → 49 la
   forma es continua (las verticales se juntan en el punto medio y las esquinas conservan el radio). Sí
   hay salto en los otros bordes de la ventana: con `|Δy|` 24 → 23 o al dejar de despejar sus tablas la
@@ -330,19 +327,30 @@ Un punto colineal se emite sólo fuera de los fillets vecinos (dentro haría ret
 coordenadas de fillet se redondean a 2 decimales, no a enteros: un escalón de 1 px tiene fillets de
 0,5 que redondeados a entero colapsaban en un `Q` degenerado y un salto seco.
 
-**Z frente a lazos ajenos (decisión 2026-10-05).** El trunk de una Z enfrentada (sin waypoints ni `dx`
-legacy, filas distintas) que en el punto medio cae dentro de la **envolvente** de los lazos de una
-**tercera** tabla —`borde … trunk del lazo` × filas del lazo, inflada `LOOP_CLEARANCE` (8), con las
-filas solapando (cerrado) el tramo vertical de la Z— se **desliza** a la x libre más cercana al medio,
-estrictamente entre los fines de stub (`slideZTrunk`). Si no hay x libre conserva el medio. Los lazos
-de sus propias tablas no cuentan (su puerto sale por esa envolvente igual). Caso de referencia
-(`selfloop.dbml` + `audit` a 64 px): con los dos lazos de employees recogidos a `W+44`/`W+56`
-(§Self-loops) la franja libre entre stubs (`W+16 … W+48`) queda entera dentro de la envolvente, así
-que la Z departments→audit **conserva** el medio `W+32` y su brazo en la fila de `manager_id` sigue
-sobre el brazo de ese lazo, también tras "Ordenar aristas" (Limitaciones 7); con 120 px de hueco el trunk pasa a `W+68`, fuera de la pila. La S no
-desliza (sus verticales son los stubs completos). En `routeMoved`, cuando cambia la envolvente de un
-lazo (su tabla o un vecino se movió) se re-rutea toda ruta cuyos puertos encierran la envolvente
-vieja o nueva, así coincide con un rebuild.
+**Z frente a lazos (decisión 2026-10-05; lazos propios, revisión 2026-10-05).** El trunk de una Z enfrentada (sin waypoints ni `dx`
+legacy, filas distintas, no la S: su **carril** `facingZLane`, estrictamente entre los fines de stub ×
+sus dos filas) que en el punto medio cae dentro de la **envolvente** de los lazos de una **tercera**
+tabla —`borde … trunk del lazo` × filas del lazo, inflada `LOOP_CLEARANCE` (8), con las filas solapando
+(cerrado) el tramo vertical de la Z— se **desliza** a la x libre más cercana al medio, estrictamente
+entre los fines de stub (`placeZTrunk`). De los lazos de sus **propias** tablas sólo cuenta el
+**trunk**, `trunk ± 8` sobre las filas del lazo (`loopBlock`): su puerto sale por esa envolvente igual,
+así que cruzar sus brazos es inevitable, pero el trunk de la Z nunca corre pegado al del lazo
+(revisión 2026-10-05: con hueco 96 el medio caía justo sobre el lazo `W+48` de departments). La S no
+desliza (sus verticales son los stubs completos).
+**Carril cedido (decisión 2026-10-05, opción (b) de la pregunta abierta (5)).** Si el carril no tiene
+x libre, la pila de lazos que lo bloquea **se recoge** para dejarle una (§Self-loops "Carril para Z
+ajenas"); sólo si ni la pila más comprimida alcanza, el trunk conserva el medio. Caso de referencia
+(`selfloop.dbml` completo + `audit` a 64 px + `departments.audit_id → audit.id`, carril `W+16 … W+48`,
+medio `W+32`): los lazos de employees pasan de `W+44`/`W+56` (recogidos por el vecino) a
+`W+32`/`W+39`, el lazo propio `parent_id` de departments de `W+48` a `W+39`, y el trunk de la Z a
+`W+47`, a 8 px de ambos trunks `W+39`; su brazo en la fila de `manager_id` corre `W+47 → W+64`, el
+del lazo `W → W+32`, y su brazo de salida (fila `audit_id`, bajo el lazo de departments) no cruza
+nada: nada se toca. (La primera versión ignoraba el lazo propio, que quedaba en `W+48` a 1 px del
+trunk `W+47` y desaparecía bajo la Z.) Con 120 px de hueco el trunk ya tiene x libre (`W+68`) y los
+lazos no cambian.
+**`routeMoved`.** Las rutas cuyo carril (índice por x, `LaneGrid`) toca la envolvente vieja o nueva de
+un lazo que cambió se re-rutean; ninguna otra ruta lee envolventes. Así coincide con un rebuild sin
+recorrer todas las rutas.
 
 **Distribuir ports** en cada lado: agrupar por `(table, side)`, sortar por el
 otro extremo a lo largo del lado (reducción baricéntrica de cruces: en `left`/`right` por la `y`
@@ -642,6 +650,10 @@ por una recta vertical (Limitaciones 5). Modelo vigente:
   sin waypoints el render la volvería a anidar contra la tabla que la bloqueó. Una C espejada por el
   render sale `{}` (su par base coincide con `chooseSides`): no se persiste el espejado, así el render
   lo re-decide en vivo si la vecina se mueve. Llega a A\* sólo una C con ambos lados bloqueados.
+  **Z con carril cedido (2026-10-05):** una Z cuya ruta provisional lleva `laneClaim` (§Self-loops
+  "Carril para Z ajenas") y no cruza una tercera tabla también sale `{}`: persistir cualquier forma
+  terminaría su reclamo y la pila volvería a abrirse sobre el carril. Así lo que A\* vio (lazos
+  recogidos) es lo que el render dibuja.
 - **Carriles (lanes) — A\* nunca corre por un trunk de lazo ni de C (decisión 2026-10-05).** El
   adaptador pasa como `lanes` los tramos verticales editables de los lazos, de las C que quedaron al
   render y de las C manuales preservadas; `orderEdges` suma los tramos verticales de cada C que rutea
@@ -650,7 +662,9 @@ por una recta vertical (Limitaciones 5). Modelo vigente:
   `searchGrid` no entra ni sale en N/S de ella, pero cruzarla en horizontal sigue permitido (un
   puerto dentro del tramo de un lazo puede salir). Garantía: ningún tramo vertical de A\* queda a
   menos de `LOOP_STEP` de un carril con extensión solapada; si no hay salida, fallback `ok:false`
-  (ruta por defecto, anidada). Se descartó usar el sobre del lazo como obstáculo duro: bloqueaba
+  (ruta por defecto, anidada). Un lazo recogido por un reclamo aporta **dos** carriles: su trunk
+  dibujado y `unyieldedTrunkX`, donde vuelve cuando la Z que reclamó (y que cruza una tercera tabla,
+  así que va a A\*) persiste sus waypoints y deja de reclamar. Se descartó usar el sobre del lazo como obstáculo duro: bloqueaba
   todo puerto del lado dentro del tramo del lazo y forzaba fallbacks.
 - **Waypoints siempre con sus dos lados; sin waypoints, sólo lados que aportan información**
   (auditoría F20, ajuste 2026-10-03): toda salida de A\* con waypoints persiste `sourceSide` y
@@ -861,6 +875,37 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
   consulta y lazos (una consulta al índice por pila) y re-rutea los lazos que cambian. El piso de
   las C (`loopReach(n + 1)`) y la caja de culling de escena siguen con el alcance sin recoger
   (superset).
+- **Carril para Z ajenas (decisión 2026-10-05).** Con consulta de obstáculos, una pila se recoge más
+  que por su vecino cuando una Z enfrentada que pasa a su lado no tiene x libre
+  (§1 "Z frente a lazos"). Un solo pase, sin realimentación: (1) alcance por vecino
+  (`preReach`, el de arriba) y su envolvente; (2) cada Z con ambas columnas resueltas (`claimLaneOf`:
+  su carril sale de la decisión base y las filas de columna, nunca del reparto de puertos) **reclama**
+  sólo si con esas envolventes queda **atascada** (`placeZTrunk` = `'stuck'`, contando los trunks de
+  sus lazos propios, §1) y apunta su trunk a `free = ⌈hi⌉ − 1` (derecha; izquierda `⌊lo⌋ + 1`). Ceden
+  todas las pilas que la bloquean **y** toda pila de sus propias tablas cuyo trunk, a cualquier
+  alcance entre 32 y su `preReach`, quedaría a menos de 8 de `free` (`trunkMayReach`). Todas deben
+  mirar al carril desde el mismo lado con su tabla en el extremo cercano (pilas derechas con borde
+  `B ≤ lo`, izquierdas con `B ≥ hi`) y poder abrirlo: `roomZ = ⌊free − B − 8⌋` (izquierda
+  `⌊B − 8 − free⌋`) ≥ `minStackReach(n) = 32 + (n − 1)·6`. Si alguna no puede, o hay pilas de ambos
+  lados (p. ej. un lazo propio de la tabla lejana mirando al carril), **ninguna** cede y la Z
+  conserva el medio (fallback). (3) Alcance final = `clampedLoopReach(rango, n, min(roomVecino, roomZ
+  de cada reclamo))`. (4) Trunk specs, anidado, puertos y rutas como siempre, la Z deslizando contra
+  las envolventes **finales**. Por qué alcanza un pase: bajar un alcance achica la envolvente de una
+  tercera tabla (nunca bloquea más), pero **corre hacia adentro** el trunk de un lazo propio, que
+  otro reclamo podría dejar justo en `free`; por eso esas pilas propias se reclaman aunque hoy no
+  bloqueen, y su trunk final queda `≤ B + roomZ`, es decir `trunk + 8 ≤ free`. Así ningún reclamo
+  le cierra el carril a otro; con varias Z sobre una pila gana el `min`, que satisface a todas; los
+  reclamos se leen de `preReach`, así que el orden de las refs no importa. `roomZ` es entero y deja
+  libre `⌈x1 + 8⌉ ≤ free < hi` aun con posiciones fraccionarias.
+  Continuidad (2 lazos, hueco `g` de la columna de audit): 62 ⇒ `32/38`, trunk `W+46`; 64 ⇒ `32/39`,
+  `W+47`; 80 ⇒ `39/51`, `W+59`; 90 ⇒ `47/59`, `W+67`; ≥ 91 el deslizamiento alcanza solo y los lazos
+  quedan `48/60`. El único salto está en el umbral de admisión (61 ↔ 62: `roomZ` 37 < 38), donde el
+  fallback vuelve a `41/53` con la Z al medio. Tres lazos con hueco 64 (`roomZ` 39 < 44) ⇒ fallback
+  (`32/44/56`, Z en `W+32`). La ruta de la Z lleva `laneClaim`, y cada lazo recogido por un reclamo
+  `unyieldedTrunkX` (dónde vuelve sin él), ambos para A\* (§9). Sin consulta de obstáculos (tests,
+  llamadores viejos) no hay reclamos. Las C nunca reclaman; una C que pasa junto a lazos ajenos se
+  anida contra sus trunks finales y puede quedar a pocos px del trunk de una Z que reclamó (C y Z no
+  se conocen entre sí, igual que antes).
 - **C por fuera (decisión 2026-10-05).** Toda C automática de ese lado de la tabla pone su trunk
   `LOOP_STEP` más allá del lazo más lejano (`loopReach(n + 1)`), y una C que pasa junto a lazos de
   una tercera tabla también los esquiva (§1 "Anidado de C"). Los lazos nunca se mueven por una C. En
@@ -905,20 +950,21 @@ Implementación (`edgeRouter.ts` `buildLoopRoute`):
    compartido o bajo la otra tabla (§1, bboxes que se intersecan) y la arista puede quedar casi
    invisible. No se agregan rutas `top`/`bottom` para este caso: separar las tablas la vuelve a
    mostrar.
-7. **Z/S frente a lazos ajenos sin hueco libre.** El trunk de una Z sólo se desliza dentro del hueco
-   entre stubs (§1 "Z frente a lazos ajenos"); con el hueco por defecto (64) junto a una pila de dos
-   lazos no queda x libre y la Z cruza la pila, incluso con un brazo sobre el brazo de un lazo cuando
-   comparten fila. La S tampoco desliza. **"Ordenar aristas" tampoco lo resuelve** (verificado en el
-   caso de referencia: no escribe nada y la Z queda igual): el fin del stub del puerto lejano
-   (`audit.dept_id`, `W+48` con stubs de 16) cae dentro de la envolvente inflada del lazo de
-   `manager_id` (`W … W+44` + 8) y entre los dos trunks de lazo, a menos del `CLEARANCE` (16) de
-   ambos carriles; ninguna ruta ortogonal llega a ese puerto sin entrar en la envolvente y A\* cae a
-   fallback (la ruta por defecto, sin forma persistida). La única salida geométrica es que la pila
-   ceda un carril a la Z: recogida a `W+32`/`W+38` deja libre `W+47`, a 1 px del fin de stub (se
-   dibuja como una esquina normal, porque el radio se mide sobre todo el tramo recto con puntos
-   colineales, §1 "Esquinas"). Eso hace depender el alcance de los lazos de aristas ajenas (las Z que
-   pasan junto a la pila), con su propia invalidación en `routeMoved`; queda como pregunta abierta,
-   no implementado (decisión 2026-10-05: si no hay x libre, el trunk conserva el medio).
+7. **Z/S frente a lazos ajenos sin hueco libre.** ~~Con el hueco por defecto (64) junto a una pila de
+   dos lazos no quedaba x libre y la Z cruzaba la pila, con un brazo sobre el brazo de un lazo, y
+   "Ordenar aristas" tampoco lo resolvía (A\* no encontraba ruta y escribía la ruta por defecto).~~
+   **Resuelto (decisión 2026-10-05, opción (b)):** la pila cede un carril (§Self-loops "Carril para Z
+   ajenas"); en el caso de referencia (`selfloop.dbml` completo, con el lazo propio de departments)
+   lazos de employees `W+32`/`W+39`, lazo de departments `W+39`, trunk `W+47`. Sigue abierto: (a) con
+   una pila que ni comprimida al mínimo abre el carril (hueco < 62 con 2 lazos, 3 lazos a 64), o con
+   pilas que bloquean desde ambos lados (incluido un lazo propio de la tabla lejana mirando al
+   carril), la Z conserva el medio dentro de la pila; (b) una Z con una columna
+   sin resolver no reclama (sólo desliza); (c) la S no reclama ni desliza; (d) en el umbral de
+   admisión la pila salta de golpe (p. ej. `41/53` ↔ `32/38` en 61 ↔ 62 px), inherente al fallback;
+   (e) mover una tabla ajena (la de la Z) cambia la forma de los lazos de otra, que es justo lo
+   pedido pero es nuevo; (f) sin reclamo, la Z que se aparta del trunk de un lazo propio elige la x
+   libre más cercana al medio (empate ⇒ la menor), que puede quedar dentro de la envolvente del lazo
+   y cruzar sus dos brazos en vez de pasar por fuera.
 
 ## Test plan
 
@@ -997,9 +1043,33 @@ intersección (> 30 cada uno). **Vecinos:** sin `ObstacleQuery` el trunk
   (pila que cabe intacta; recogida a la room con `LOOP_STEP`; compresión a `LOOP_STEP/2` sobre 32 y
   pila mínima si no cabe); 2 lazos con columna a 64 ⇒ `W+44`/`W+56` (sin consulta, 48/60); vecino
   fuera de nivel o más allá de la pila no recoge; espejo a la izquierda. Z departments→audit con
-  hueco 120 ⇒ trunk en `W+68` (sin lazos, `W+60`); hueco 64 ⇒ conserva `W+32`; lazos propios o fuera
-  de sus filas no la mueven; `routeMoved` == rebuild en 200 drags de la tabla con lazos, extremos de
-  la Z y un vecino (> 5 deslizamientos vistos).
+  hueco 120 ⇒ trunk en `W+68` (sin lazos, `W+60`); un lazo propio cuyo trunk no estorba (`W+48` con
+  medio `W+60`) o lazos fuera de sus filas no la mueven; con hueco 96 el medio cae sobre el trunk
+  propio `W+48` y la Z se aparta ≥ 8 sin reclamar;
+  `routeMoved` == rebuild en 200 drags de la tabla con lazos, extremos de la Z y un vecino (> 5
+  deslizamientos vistos). **Carril cedido:** hueco 64 ⇒ lazos `W+32`/`W+39`, trunk `W+47`, `laneClaim`,
+  ningún brazo de la Z sobre un brazo de lazo y `unyieldedTrunkX` `W+44`/`W+56`; `selfloop.dbml`
+  completo (lazo propio `parent_id` de departments, Z desde `audit_id`) ⇒ employees `W+32`/`W+39`,
+  departments `W+39` (`unyieldedTrunkX` `W+48`), trunk `W+47`, ninguna vertical de la Z a < 8 de un
+  trunk de lazo sobre filas compartidas (sin consulta: medio `W+32`); 3 lazos a 64 ⇒
+  fallback (`32/44/56`, Z en `W+32`, sin marcadores); hueco 120 o sin consulta ⇒ lazos intactos;
+  un lazo propio que no estorba o lazos fuera de las filas no ceden; waypoints, `dx` legacy, S (hueco 40) o columna sin
+  resolver ⇒ nunca reclama; espejo a la izquierda (`−32/−39`, trunk `−47`); dos pilas del mismo lado
+  ceden ambas, pilas de ambos lados ⇒ fallback; dos Z sobre una pila ⇒ gana el `min` y ambos carriles
+  quedan libres; barrido de hueco 48 → 130 px a px ⇒ reclama exactamente en 62–90 y cada lazo/trunk se
+  mueve ≤ 6 px por px salvo en el umbral 61 ↔ 62; posiciones fraccionarias (+¼, ½, ¾) ⇒ carril libre
+  y trunk estrictamente entre stubs; `routeMoved` == rebuild en 400 drags con pila izquierda, segunda
+  pila, el lazo propio de departments y su Z a audit, y huecos 48–130 (> 100 pasos con reclamos, > 40
+  cambios de reclamo; toda Z que reclama queda a ≥ 8 de todo trunk de lazo — este chequeo encontró
+  que un reclamo ajeno podía correr un lazo propio hasta el `free` de otra Z, de ahí `trunkMayReach`).
+- **Carril cedido en export y A\*:** `imageExport.test.ts` dibuja exactamente las rutas del router vivo
+  (con reclamo); `edgeOrdering.laneClaim.test.ts`: la Z del caso de referencia no llega a A\* y sale
+  `{}` (el render conserva `W+32/W+39` y `W+47`); una Z que reclama pero cruza una tercera tabla va a
+  A\*, que recibe como carriles tanto los trunks recogidos como `unyieldedTrunkX`.
+- **Perf (`dragFrame.perf.test.ts`, variante con lazos):** `huge.dbml` + lazos sintéticos (1 en cada 5ª
+  tabla de la grilla, 2 en cada 10ª, más la tabla arrastrada y la selección) y una Z por pila desde su
+  vecina derecha a la de abajo (> 100 reclamos activos): incremental < 4 ms y < ½ del rebuild con 1
+  tabla; con 50 tablas < 5 ms y < ¼ del rebuild (spec 07).
 - **Culling por extensión (`useVisibleNames.test.ts`):** `routeReachBoxes` cubre todos los puntos de
   30 C anidadas y de un lazo, y omite la Z; con la cámara pasado `tablas + 256 + 50` la caja de escena
   no se ve pero la C exterior sí.
