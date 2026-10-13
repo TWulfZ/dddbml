@@ -68,10 +68,30 @@ describe('code → diagram links (spec 19)', () => {
     const link = links[0]!;
     expect(link.range.start).toMatchObject({ line: 1, character: 0 });
     expect(link.range.end).toMatchObject({ line: 3, character: 1 });
-    expect(link.tooltip).toBe('Show in diagram');
+    expect(link.tooltip).toBe('Focus in diagram');
     expect(link.target?.scheme).toBe('command');
     expect(link.target?.path).toBe('dddbml.revealInDiagram');
     expect(JSON.parse(link.target!.query)).toEqual([doc.uri.toString(), 'auth.users']);
+  });
+
+  it('masks the permanent link underline over each linked block, without unlinking it (#4)', async () => {
+    const uri = Uri.file(join(dir, 'a.dbml'));
+    const doc = await fake.document(uri);
+    fake.visibleEditorUris = [uri];
+    const links = await fake.linkProviders[0]!.provider.provideDocumentLinks(doc);
+    expect(links).toHaveLength(1);
+    expect(fake.decorationsOn(uri)).toEqual([{ options: { textDecoration: 'none' }, ranges: [links[0]!.range] }]);
+  });
+
+  it('flashes the Ctrl+clicked block in its editor, then clears it', async () => {
+    const uri = Uri.file(join(dir, 'a.dbml'));
+    const doc = await fake.document(uri);
+    fake.visibleEditorUris = [uri];
+    const [link] = await fake.linkProviders[0]!.provider.provideDocumentLinks(doc);
+    await commands.executeCommand('dddbml.revealInDiagram', uri.toString(), 'public.a');
+    const flash = () => fake.decorationsOn(uri).find((d) => 'backgroundColor' in d.options);
+    expect(flash()?.ranges).toEqual([link!.range]);
+    await vi.waitFor(() => expect(flash()?.ranges).toEqual([]), { timeout: 2000 });
   });
 
   it('opens the diagram for that file and focuses the table once the webview is ready', async () => {

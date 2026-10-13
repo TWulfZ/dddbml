@@ -103,6 +103,13 @@ export class DocumentLink {
   tooltip?: string;
   constructor(readonly range: Range, readonly target?: Uri) {}
 }
+export class ThemeColor { constructor(readonly id: string) {} }
+
+/** What `setDecorations` last left on a visible editor, per decoration type. */
+export interface FakeDecoration { options: Record<string, unknown>; ranges: Range[] }
+interface FakeDecorationType { key: string; options: Record<string, unknown>; dispose(): void }
+let decorationTypes = 0;
+
 export const ViewColumn = { Active: -1, Beside: -2, One: 1 } as const;
 export const ColorThemeKind = { Light: 1, Dark: 2, HighContrast: 3 } as const;
 export const ConfigurationTarget = { Global: 1, Workspace: 2 } as const;
@@ -213,6 +220,13 @@ export const fake = {
   /** Answer returned by the next modal/choice message (e.g. a confirmation button label). */
   nextChoice: undefined as string | undefined,
   activeEditorUri: null as Uri | null,
+  /** Open documents shown in an editor (`window.visibleTextEditors`). */
+  visibleEditorUris: [] as Uri[],
+  /** Keyed by `<uri>|<decoration type key>`. */
+  decorations: new Map<string, FakeDecoration>(),
+  decorationsOn(uri: Uri): FakeDecoration[] {
+    return [...this.decorations].filter(([k]) => k.startsWith(`${uri.toString()}|`)).map(([, d]) => d);
+  },
   shownDocuments: [] as Array<{ doc: unknown; line: number | undefined; character?: number }>,
   /** Item lists offered by `showQuickPick`, which always resolves as dismissed. */
   quickPicks: [] as Array<Array<{ label: string }>>,
@@ -233,6 +247,8 @@ export const fake = {
     this.linkProviders = [];
     documents.clear();
     this.activeEditorUri = null;
+    this.visibleEditorUris = [];
+    this.decorations = new Map();
     watchers.length = 0;
   },
   /** Deliver a file-system event to every watcher whose base folder contains `uri`. */
@@ -266,6 +282,17 @@ export const window = {
     return p;
   },
   onDidChangeActiveColorTheme: noopEvent,
+  onDidChangeVisibleTextEditors: noopEvent,
+  createTextEditorDecorationType: (options: Record<string, unknown>): FakeDecorationType =>
+    ({ key: `dec-${++decorationTypes}`, options, dispose: () => undefined }),
+  get visibleTextEditors() {
+    return fake.visibleEditorUris.map((uri) => ({
+      document: fake.openDocument(uri),
+      setDecorations: (type: FakeDecorationType, ranges: Range[]) => {
+        fake.decorations.set(`${uri.toString()}|${type.key}`, { options: type.options, ranges });
+      },
+    }));
+  },
   activeColorTheme: { kind: ColorThemeKind.Dark },
   get activeTextEditor() {
     const uri = fake.activeEditorUri;
@@ -355,5 +382,6 @@ export const workspace = {
     update: () => Promise.resolve(),
   }),
   onDidChangeConfiguration: noopEvent,
+  onDidCloseTextDocument: noopEvent,
   workspaceFolders: undefined,
 };
