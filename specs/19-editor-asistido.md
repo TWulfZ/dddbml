@@ -29,6 +29,13 @@ tiene que ser explícita.
   aparece al pasar el mouse sobre cualquier línea de la tabla. Pedido descartado por imposible:
   resaltar el fondo del bloque con Ctrl en vez de subrayar — VS Code pinta el estado activo de un
   link (subrayado + `editorLink.activeForeground`) y la API no expone ni la tecla Ctrl ni el mouse.
+  **Enmienda 2026-10-13 (issue #4):** VS Code subraya **siempre** el rango de un `DocumentLink`,
+  así que la enmienda anterior subrayaba cada bloque entero. Decisión del owner: el link sigue
+  cubriendo el bloque, pero sin raya en reposo; el feedback es el color de link activo que VS Code
+  ya pinta con Ctrl+hover y un flash de fondo del bloque al Ctrl+click. Descartado: raya solo en
+  hover o fondo con Ctrl (sin eventos de mouse/teclado en la API) y F12 (exigiría un
+  `DefinitionProvider` que adivine el click). Tooltip "Focus in diagram" → VS Code lo muestra como
+  "Focus in diagram (ctrl + click)".
 - [x] **Creación de FK.** — **Decisión:** arrastrar desde el puerto de un campo hasta un campo de
   otra tabla; al soltar se elige la cardinalidad; se escribe inline `[ref: > tabla.campo]`. (2026-10-01.)
 - [x] **Alcance v1.** — **Decisión:** navegación código↔diagrama (incluye doble click en campo →
@@ -90,7 +97,12 @@ con el motivo, nunca se aplica.
 - **Código → diagrama:** `DocumentLinkProvider` para `.dbml` que marca **el bloque completo** de
   cada declaración `Table` (de la palabra `Table` a su `}` de cierre, para que el blanco de
   Ctrl+click sea toda la tabla y no solo el nombre) con un link `command:dddbml.revealInDiagram?<qualifiedName>` (tooltip
-  "Show in diagram"). Ctrl+click abre el panel si no está abierto, centra la cámara en la tabla
+  "Focus in diagram"). Una decoración `textDecoration: 'none'` sobre los mismos rangos tapa el
+  subrayado permanente del link (`.monaco-editor .ced-*` gana en especificidad a
+  `.detected-link`; truco de CSS, no API: re-verificar al subir de versión de VS Code). Los rangos
+  se cachean por versión del documento y se re-aplican al volver a mostrarse el editor
+  (`tableLinkStyle.ts`). Al ejecutar el comando, el bloque recibe un flash de fondo de 600 ms
+  (`editor.hoverHighlightBackground`, línea completa). Ctrl+click abre el panel si no está abierto, centra la cámara en la tabla
   (`fitToBbox`) y la selecciona. Una tabla oculta o dentro de un grupo colapsado enfoca su grupo.
 - **Diagrama → código:** doble click en una tabla abre su línea (ya existe); doble click en un
   campo abre la línea de ese campo (`findColumnLocation` en `tableLocation.ts`, op `locateColumn`;
