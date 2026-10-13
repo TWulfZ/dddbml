@@ -25,7 +25,7 @@ Open a `.dbml` file and run **`dddbml: Open Diagram`** (command palette or the e
 - Pan with middle-click, `Space` + drag, or the hand tool. Zoom with the wheel, `Ctrl+=` / `Ctrl+-`, fit with `Ctrl+1`, reset with `Ctrl+0`.
 - Drag tables, marquee-select on empty space, `Shift` to add to the selection, `Esc` to clear. Undo/redo with `Ctrl+Z` / `Ctrl+Shift+Z`.
 - Two detail levels by zoom: full tables, or colored rectangles for a bird's-eye view (threshold configurable).
-- Double-click a table header (or a column) to jump to its declaration in the `.dbml`; `Ctrl`+click a `Table` name in the editor to focus it in the diagram.
+- Double-click a table header (or a column) to jump to its declaration in the `.dbml`; `Ctrl`+click anywhere in a `Table` block in the editor to focus it in the diagram.
 
 **Relationships**
 - Orthogonal edges that leave and enter at the FK/PK column rows, with crow's-foot / bar cardinality markers. Like dbdiagram, edges always leave from the left/right sides: a Z across a wide gap, an S when the tables are close, and a C around the right side once they overlap. Self-references draw as nested loops.

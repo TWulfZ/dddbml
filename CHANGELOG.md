@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] — 2026-10-13
+
+### Fixed
+- `Table` blocks in the editor are no longer underlined from top to bottom ([#4](https://github.com/TWulfZ/dddbml/issues/4)). `Ctrl`+click anywhere in the block still focuses the table in the diagram; while `Ctrl` is held the block takes the link color, and on click it flashes briefly. The tooltip now reads *Focus in diagram*.
+
 ## [0.4.1] — 2026-10-06
 
 Hotfix for 0.4.0: diagrams made with earlier versions keep their hand-arranged relations.
