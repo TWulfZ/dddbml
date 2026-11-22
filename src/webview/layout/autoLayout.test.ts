@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { UiDensity } from '../../shared/types';
+import type { Table, UiDensity } from '../../shared/types';
 import { store } from '../state/store';
 import { columnCenterY, estimateSize } from './autoLayout';
 
@@ -40,4 +40,22 @@ describe('estimateSize / columnCenterY mirror the rendered full-LOD table box', 
       expect(columnCenterY(3)).toBe(borderTop + header + padCols + 3 * row + row / 2);
     });
   }
+});
+
+it('keeps the same full-label table footprint in both print palettes', () => {
+  const table: Table = {
+    name: 'public.example',
+    schemaName: 'public',
+    tableName: 'example',
+    columns: [{ name: 'a_descriptive_column_name_that_needs_more_space', type: 'character varying(255)' }],
+  };
+  const normal = estimateSize(table.columns.length, table);
+  const appearances = ['print-light', 'print-dark'] as const;
+  const printSizes = appearances.map((diagramAppearance) => {
+    store.getState().setSettings({ ...initialSettings, ui: { ...initialSettings.ui, diagramAppearance } });
+    return estimateSize(table.columns.length, table);
+  });
+  expect(printSizes[0]).toEqual(printSizes[1]);
+  expect(printSizes[0]!.width).toBeGreaterThan(normal.width);
+  expect(printSizes[0]!.height).toBe(normal.height);
 });

@@ -13,6 +13,7 @@ interface CollapsedGroupNodeProps {
   w: number;
   h: number;
   color: string;
+  note?: string | null;
   diffStatus?: TableDiffStatus;
 }
 
@@ -22,7 +23,7 @@ export function clearGroupLabel(name: string): void {
   if (store.getState().tooltip?.title === name) store.getState().setTooltip(null);
 }
 
-function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color, diffStatus }: CollapsedGroupNodeProps) {
+function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color, diffStatus, note }: CollapsedGroupNodeProps) {
   useEffect(() => () => clearGroupLabel(name), [name]);
   const onDblClick = () => {
     store.getState().setGroup(name, { collapsed: false });
@@ -32,9 +33,9 @@ function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color, diffStatu
   // screen-space label on hover (shared tooltip slot ⇒ at most one label visible).
   const onEnter = (e: Event) => {
     const s = store.getState();
-    if (lodForZoom(s.viewport.zoom, s.settings.lod) !== 'rect') return;
+    if (lodForZoom(s.viewport.zoom, s.settings.lod) !== 'rect' && !note) return;
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    s.setTooltip({ title: name, body: '', x: r.left, y: r.top });
+    s.setTooltip({ title: name, body: note ?? '', x: r.left, y: r.top });
   };
   const onLeave = () => {
     if (store.getState().tooltip) store.getState().setTooltip(null);
@@ -46,7 +47,7 @@ function CollapsedGroupNodeImpl({ name, tableCount, x, y, w, h, color, diffStatu
       onDblClick={onDblClick}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
-      title={`${name} — ${tableCount} tables (double-click to expand)`}
+      title={note ?? `${name} — ${tableCount} tables (double-click to expand)`}
       style={{
         position: 'absolute',
         transform: `translate(${x}px, ${y}px)`,

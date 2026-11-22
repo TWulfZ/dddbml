@@ -1,3 +1,6 @@
+import { architectureBounds, architectureSelection, buildArchitectureScene, positionArchitectureCaptions, type ArchitectureScene } from '../layout/architectureLayout';
+import { renderArchitecture } from '../render/architectureSvg';
+import { refColor, refMarker, refMarkersSvg, refDescription } from '../render/refMarkers';
 /**
  * Image export — generate a standalone SVG document from the STORE MODEL (tables,
  * columns, groups, edges), not from the live DOM. The render path is culled (only
@@ -9,11 +12,16 @@
  * an injected `resolve` fn (the browser probe in `buildImageSvg`), so the emitted SVG
  * is self-contained and theme-independent. Geometry comes from `densityMetrics()` /
  * `estimateSize()` / `columnCenterY()` — the same layout source of truth the canvas
- * uses — and edge paths are lifted verbatim from `routeRefs()`.
+ * uses — and relationships start from the same routes as the editor.
  */
+import type { LabelLayout } from '../../shared/diagramLabels';
 import type { EdgeLayout, QualifiedName, Ref, Schema, Table, UiDensity } from '../../shared/types';
-import { densityMetrics } from '../layout/density';
-import { columnCenterY, estimateSize, headerCenterY } from '../layout/autoLayout';
+import { densityMetrics, GROUP_CONTAINER_PADDING } from '../layout/density';
+import { foreignKeyColumnsByTable, keyLabel } from '../layout/tableRows';
+import { estimateTextWidth, KEY_GUTTER, measurePrintText, MONO, PAD_X, PRINT_FONT, printTableWidth, TEXT_PX, typeLabel, type MeasureText } from '../layout/printTable';
+import { renderProjectTitleBlock } from '../layout/projectTitleBlock';
+import { LABEL_PADDING, diagramAnnotations, type PlacedLabel } from '../layout/diagramLabels';
+import { printRoute } from './printRoutes';
 import { routeRefs } from '../render/edgeRouter';
 import { depColor, routeDeps } from '../render/depRouter';
 import type { KeyedDepEdge } from '../render/edgeKey';
@@ -27,6 +35,9 @@ export interface ExportOptions {
   scope: ExportScope;
   background: boolean;
   filename: string;
+  printerFriendly?: boolean;
+  includeProjectTitle?: boolean;
+  includeProjectNote?: boolean;
   /** Visible region in WORLD coords — required for scope 'view'. */
   viewRect?: { x: number; y: number; w: number; h: number };
 }
@@ -50,6 +61,10 @@ export interface ExportSource {
   edgeLayouts: Map<string, EdgeLayout>;
   selection: Set<QualifiedName>;
   density: UiDensity;
+  showKeyColumn?: boolean;
+  labelLayouts?: Readonly<Record<string, LabelLayout>>;
+  /** The editor is already showing print-size tables and editable routes. */
+  editingPrintLayout?: boolean;
   derived: ExportDerived;
 }
 
@@ -58,11 +73,13 @@ interface ExportTable {
   schemaName: string; tableName: string;
   /** Raw accent color (table/group color) or null → default accent token. */
   accent: string | null;
-  columns: Array<{ name: string; type: string; pk: boolean; notNull: boolean; unique: boolean }>;
+  columns: Array<{ name: string; type: string; pk: boolean; key: string; notNull: boolean; unique: boolean }>;
 }
 interface ExportContainer { x: number; y: number; w: number; h: number; name: string; color: string }
 interface ExportCollapsed { x: number; y: number; w: number; h: number; name: string; count: number; color: string }
 interface ExportEdge {
+  description?: string;
+  inactive?: boolean;
   d: string;
   color: string | null;
   startMarker: string;
@@ -84,8 +101,12 @@ interface ExportDep {
 export interface ExportModel {
   bounds: { x: number; y: number; w: number; h: number };
   background: boolean;
+  printerFriendly: boolean;
+  keyGutter: number;
   density: UiDensity;
   tables: ExportTable[];
+  labels: PlacedLabel[];
+  architecture?: ArchitectureScene;
   containers: ExportContainer[];
   collapsed: ExportCollapsed[];
   edges: ExportEdge[];
@@ -108,11 +129,12 @@ export interface ThemeTokens {
 const PADDING = 28;
 const RADIUS = 6;
 
-const PAD_X: Record<UiDensity, number> = { compact: 6, cozy: 10, comfortable: 12 };
-const TEXT_PX: Record<UiDensity, number> = { compact: 11, cozy: 12, comfortable: 13 };
-
 const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
-const MONO = "ui-monospace, Menlo, Consolas, monospace";
+
+const PRINT_THEME: ThemeTokens = {
+  canvas: '#fff', surface: '#fff', border: '#000', fg: '#111', fgMuted: '#222',
+  accent: '#111', headerBg: '#e1eef8', edge: '#000', dep: '#000',
+};
 
 function rectsIntersect(a: Bbox, b: { x: number; y: number; w: number; h: number }): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -121,9 +143,20 @@ function rectsIntersect(a: Bbox, b: { x: number; y: number; w: number; h: number
 /**
  * Pick the tables/groups/edges for the scope and compute the export bounds. Pure.
  */
-export function buildExportModel(source: ExportSource, opts: ExportOptions): ExportModel | null {
+export function buildExportModel(
+  source: ExportSource, opts: ExportOptions,
+  measure: MeasureText = estimateTextWidth,
+): ExportModel | null {
   const { schema, positions, tableColors, edgeLayouts, selection, density, derived } = source;
   const m = densityMetrics(density);
+  const printerFriendly = opts.printerFriendly === true;
+  const keyGutter = printerFriendly || source.showKeyColumn ? KEY_GUTTER : 0;
+  const foreignKeys = keyGutter ? foreignKeyColumnsByTable(schema.refs) : undefined;
+  const widthByName = new Map<QualifiedName, number>();
+  const sizeOf = (table: Table | undefined) => ({
+    w: widthByName.get(table?.name ?? '') ?? m.tableWidth,
+    h: m.borderTop + m.headerHeight + (table?.columns.length ?? 0) * m.rowHeight + m.colsPad + m.borderBottom,
+  });
 
   const tablesByName = new Map<QualifiedName, Table>();
   for (const t of schema.tables) tablesByName.set(t.name, t);
@@ -144,14 +177,13 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     const pos = posEff.get(name);
     if (!pos) return undefined;
     const t = tablesByName.get(name);
-    const size = estimateSize(t?.columns.length ?? 0);
-    return { x: pos.x, y: pos.y, w: size.width, h: size.height };
+    return { ...pos, ...sizeOf(t) };
   };
   const columnY = (table: QualifiedName, column: string): number | undefined => {
     const t = tablesByName.get(table);
     if (!t) return undefined;
     const idx = t.columns.findIndex((c) => c.name === column);
-    return idx < 0 ? undefined : columnCenterY(idx);
+    return idx < 0 ? undefined : m.borderTop + m.headerHeight + m.colsPad / 2 + (idx + 0.5) * m.rowHeight;
   };
 
   const colorByGroup = groupColorMap(derived);
@@ -163,13 +195,30 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
   const view = opts.scope === 'view' ? opts.viewRect : undefined;
   const inView = (b: Bbox | { x: number; y: number; w: number; h: number }) => !view || rectsIntersect(b as Bbox, view);
 
+  if (printerFriendly) {
+    for (const table of rendered) {
+      widthByName.set(table.name, printTableWidth(table, density, measure));
+    }
+  }
+
+  const { notes, captions } = diagramAnnotations(
+    schema, source.labelLayouts, opts.includeProjectTitle, opts.includeProjectNote, measure,
+  );
+  const fullArchitecture = schema.architecture ? buildArchitectureScene(schema.architecture, positions, notes, edgeLayouts) : undefined;
+  const architecture = fullArchitecture && opts.scope === 'selection'
+    ? architectureSelection(fullArchitecture, selection)
+    : fullArchitecture;
+  const allNotes = architecture?.notes ?? (opts.scope === 'selection' ? [] : notes);
+  const placedCaptions = architecture ? positionArchitectureCaptions(architecture, captions) : captions;
+  const labels = [...allNotes, ...placedCaptions].filter(inView);
+
   // Which nodes are included for the chosen scope.
   const includedTables = new Set<QualifiedName>();
   for (const t of rendered) {
     if (opts.scope === 'selection' && !selection.has(t.name)) continue;
     if (opts.scope === 'view') {
       const b = bboxOf(t.name);
-      if (!b || !inView(b)) continue;
+      if (!b || !inView(printerFriendly && !source.editingPrintLayout ? { ...b, w: m.tableWidth } : b)) continue;
     }
     includedTables.add(t.name);
   }
@@ -181,19 +230,48 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     }
   }
 
+  if (printerFriendly && !source.editingPrintLayout) {
+    for (const name of widthByName.keys()) {
+      if (!includedTables.has(name)) widthByName.delete(name);
+    }
+
+    // Keep the saved order and move a table right only when widening consumes its clearance.
+    const boxes: Array<{ before: Bbox; after: Bbox }> = derived.collapsedNodes.map((g) => ({ before: g, after: g }));
+    const ordered = rendered.filter((t) => opts.scope !== 'selection' || includedTables.has(t.name))
+      .sort((a, b) => positions.get(a.name)!.x - positions.get(b.name)!.x);
+    for (const table of ordered) {
+      const pos = positions.get(table.name)!;
+      const size = sizeOf(table);
+      const before = { ...pos, w: m.tableWidth, h: size.h };
+      let x = pos.x;
+      for (const box of boxes) {
+        if (before.y >= box.after.y + box.after.h || before.y + before.h <= box.after.y) continue;
+        const previousRight = box.before.x + box.before.w;
+        const expandedRight = box.after.x + box.after.w;
+        if (expandedRight === previousRight && size.w === before.w && x === pos.x) continue;
+        const gap = Math.min(48, Math.max(0, before.x - previousRight));
+        if (x < expandedRight + gap && x + size.w > box.after.x) {
+          x = expandedRight + gap;
+        }
+      }
+      posEff.set(table.name, { x, y: pos.y });
+      boxes.push({ before, after: { x, y: pos.y, ...size } });
+    }
+  }
+
   const tables: ExportTable[] = [];
   for (const t of rendered) {
     if (!includedTables.has(t.name)) continue;
-    const pos = positions.get(t.name)!;
-    const size = estimateSize(t.columns.length);
+    const pos = posEff.get(t.name)!;
     const groupColor = t.groupName ? colorByGroup.get(t.groupName) : undefined;
     const accent = tableColors.get(t.name) ?? t.headerColor ?? groupColor ?? null;
     tables.push({
-      x: pos.x, y: pos.y, w: size.width, h: size.height,
+      ...pos, ...sizeOf(t),
       schemaName: t.schemaName, tableName: t.tableName,
       accent,
       columns: t.columns.map((c) => ({
-        name: c.name, type: c.type, pk: c.pk === true, notNull: c.notNull === true, unique: c.unique === true,
+        name: c.name, type: c.type, pk: c.pk === true,
+        key: keyLabel(c.pk, foreignKeys?.get(t.name)?.has(c.name)), notNull: c.notNull === true, unique: c.unique === true,
       })),
     });
   }
@@ -208,6 +286,17 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
         .filter((c) => inView(c))
         .map((c) => ({ x: c.x, y: c.y, w: c.w, h: c.h, name: c.name, color: c.color }));
 
+  if (printerFriendly) {
+    const containerByName = new Map(containers.map((c) => [c.name, c]));
+    for (const table of rendered) {
+      if (!includedTables.has(table.name) || !table.groupName) continue;
+      const container = containerByName.get(table.groupName);
+      if (!container) continue;
+      const box = bboxOf(table.name)!;
+      container.w = Math.max(container.w, box.x + box.w + GROUP_CONTAINER_PADDING - container.x);
+    }
+  }
+
   // Route every effective ref once (matches the live edge layer), then keep those whose endpoints
   // are part of the included set. `view` keeps any edge touching the region (clipped by the viewBox).
   const refById = new Map<string, Ref>();
@@ -219,10 +308,13 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     if (b) obstacleIndex.insert(t.name, b);
   }
   for (const g of derived.collapsedNodes) obstacleIndex.insert(GROUP_PREFIX + g.name, { x: g.x, y: g.y, w: g.w, h: g.h });
-  const routes = routeRefs(derived.effectiveRefs, bboxOf, columnY, (id) => edgeLayouts.get(id), densityMetrics(density).rowHeight, (box) => obstacleIndex.query(box));
+  const routes = routeRefs(derived.effectiveRefs, bboxOf, columnY, (id) => edgeLayouts.get(id), m.rowHeight, (box) => obstacleIndex.query(box));
   const present = (endpoint: QualifiedName): boolean =>
     endpoint.startsWith(GROUP_PREFIX) ? includedGroups.has(endpoint.slice(GROUP_PREFIX.length)) : includedTables.has(endpoint);
 
+  const printableSegments = printerFriendly && !source.editingPrintLayout ? new Map(routes.map((r) => [
+    r.id, r.segments.map((s): [typeof r.source, typeof r.target] => [{ x: s.x1, y: s.y1 }, { x: s.x2, y: s.y2 }]),
+  ])) : undefined;
   const edges: ExportEdge[] = [];
   for (const route of routes) {
     const ref = refById.get(route.id);
@@ -231,14 +323,27 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
     const tgtIn = present(ref.target.table);
     const keep = opts.scope === 'view' ? srcIn || tgtIn : srcIn && tgtIn;
     if (!keep) continue;
+    let geometry: ReturnType<typeof printRoute> | undefined;
+    if (printableSegments) {
+      printableSegments.delete(route.id);
+      geometry = printRoute(
+        route, bboxOf(ref.source.table)!, bboxOf(ref.target.table)!,
+        (box) => Array.from(obstacleIndex.query(box), (name) => bboxOf(name)!),
+        [...printableSegments.values()].flat(),
+      );
+      const { points } = geometry;
+      printableSegments.set(route.id, points.slice(1).map((point, i) => [points[i]!, point]));
+    }
     edges.push({
-      d: route.d,
-      color: edgeLayouts.get(route.id)?.color ?? null,
-      startMarker: ref.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)',
-      endMarker: ref.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)',
-      source: route.source,
-      target: route.target,
-      corners: route.segments.flatMap((sg) => [{ x: sg.x1, y: sg.y1 }, { x: sg.x2, y: sg.y2 }]),
+      d: geometry?.d ?? route.d,
+      description: refDescription(ref),
+      inactive: ref.inactive,
+      color: refColor(ref, edgeLayouts.get(route.id)) ?? null,
+      startMarker: refMarker(ref.source, true),
+      endMarker: refMarker(ref.target),
+      source: geometry?.points[0] ?? route.source,
+      target: geometry?.points.at(-1) ?? route.target,
+      corners: geometry?.points ?? route.segments.flatMap((sg) => [{ x: sg.x1, y: sg.y1 }, { x: sg.x2, y: sg.y2 }]),
     });
   }
 
@@ -246,7 +351,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
   const depRoutes = routeDeps(
     derived.effectiveDeps ?? [],
     bboxOf,
-    (table, columns, b) => b.y + ((columns[0] ? columnY(table, columns[0]) : undefined) ?? headerCenterY()),
+    (table, columns, b) => b.y + ((columns[0] ? columnY(table, columns[0]) : undefined) ?? (m.borderTop + m.headerHeight / 2)),
     (id) => edgeLayouts.get(id),
   );
   const depById = new Map((derived.effectiveDeps ?? []).map((d) => [d.id, d]));
@@ -275,6 +380,11 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
       if (x + w > maxX) maxX = x + w;
       if (y + h > maxY) maxY = y + h;
     };
+    if (architecture) {
+      const architectureBox = architectureBounds(architecture);
+      if (architectureBox) grow(architectureBox.x, architectureBox.y, architectureBox.w, architectureBox.h);
+    }
+    for (const label of labels) grow(label.x, label.y, label.w, label.h);
     for (const t of tables) grow(t.x, t.y, t.w, t.h);
     for (const c of collapsed) grow(c.x, c.y, c.w, c.h);
     for (const c of containers) grow(c.x, c.y, c.w, c.h);
@@ -294,7 +404,7 @@ export function buildExportModel(source: ExportSource, opts: ExportOptions): Exp
   }
 
   if (bounds.w <= 0 || bounds.h <= 0) return null;
-  return { bounds, background: opts.background, density, tables, containers, collapsed, edges, deps };
+  return { bounds, background: printerFriendly || opts.background, printerFriendly, keyGutter, density, tables, labels, architecture, containers, collapsed, edges, deps };
 }
 
 function groupColorMap(derived: ExportDerived): Map<string, string> {
@@ -306,17 +416,16 @@ function groupColorMap(derived: ExportDerived): Map<string, string> {
 
 /* ----- SVG emission (pure given a ThemeTokens + color resolver) ----- */
 
-const MARKERS = `<defs>` +
-  `<marker id="ddd-mk-many" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M2,2 L10,6 L2,10 M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.2"/></marker>` +
-  `<marker id="ddd-mk-one" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.4"/></marker>` +
-  `<marker id="ddd-mk-many-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,2 L2,6 L10,10 M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.2"/></marker>` +
-  `<marker id="ddd-mk-dep" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M1,1 L9,5 L1,9 Z" fill="currentColor"/></marker>` +
-  `<marker id="ddd-mk-one-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto"><path d="M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.4"/></marker>` +
-  `</defs>`;
+const markers = (circleFill: string, stroke?: string) => `<defs>${refMarkersSvg(circleFill, stroke)}` +
+  `<marker id="ddd-mk-dep" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M1,1 L9,5 L1,9 Z" fill="currentColor"/></marker></defs>`;
 
 /** Render the model to a standalone SVG string. `resolve` turns a CSS color/var into a literal. */
 export function renderSvg(model: ExportModel, theme: ThemeTokens, resolve: (color: string) => string): { svg: string; width: number; height: number } {
-  const { bounds } = model;
+  const { bounds, printerFriendly, keyGutter } = model;
+  if (printerFriendly) {
+    theme = PRINT_THEME;
+    resolve = () => PRINT_THEME.border;
+  }
   const m = densityMetrics(model.density);
   const padX = PAD_X[model.density];
   const textPx = TEXT_PX[model.density];
@@ -324,9 +433,9 @@ export function renderSvg(model: ExportModel, theme: ThemeTokens, resolve: (colo
 
   out.push(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${bounds.w}" height="${bounds.h}" ` +
-    `viewBox="${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}" font-family="${FONT}">`,
+    `viewBox="${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}" font-family="${printerFriendly ? PRINT_FONT : FONT}">`,
   );
-  out.push(MARKERS);
+  out.push(markers(printerFriendly ? theme.surface : theme.canvas, printerFriendly ? theme.edge : undefined));
 
   if (model.background) {
     out.push(`<rect x="${bounds.x}" y="${bounds.y}" width="${bounds.w}" height="${bounds.h}" fill="${theme.canvas}"/>`);
@@ -343,9 +452,8 @@ export function renderSvg(model: ExportModel, theme: ThemeTokens, resolve: (colo
   for (const e of model.edges) {
     const col = e.color ? resolve(e.color) : theme.edge;
     out.push(`<g style="color:${col}">`);
-    out.push(`<path d="${e.d}" fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" marker-start="${e.startMarker}" marker-end="${e.endMarker}"/>`);
-    out.push(`<circle cx="${e.source.x}" cy="${e.source.y}" r="3" fill="${col}"/>`);
-    out.push(`<circle cx="${e.target.x}" cy="${e.target.y}" r="3" fill="${theme.surface}" stroke="${col}" stroke-width="1.5"/>`);
+    if (e.description) out.push(`<title>${esc(e.description)}</title>`);
+    out.push(`<path d="${e.d}" fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"${e.inactive ? ' stroke-dasharray="1 5"' : ''} marker-start="${e.startMarker}" marker-end="${e.endMarker}"/>`);
     out.push(`</g>`);
   }
 
@@ -356,8 +464,8 @@ export function renderSvg(model: ExportModel, theme: ThemeTokens, resolve: (colo
 
   // Tables.
   for (const t of model.tables) {
-    const accent = t.accent ? resolve(t.accent) : theme.accent;
-    const headerBg = t.accent ? rgba(resolve(t.accent), 0.22) : theme.headerBg;
+    const accent = t.accent && !printerFriendly ? resolve(t.accent) : theme.accent;
+    const headerBg = t.accent && !printerFriendly ? rgba(resolve(t.accent), 0.22) : theme.headerBg;
     const avail = t.w - padX * 2;
     out.push(`<g>`);
     // a) surface fill
@@ -365,24 +473,27 @@ export function renderSvg(model: ExportModel, theme: ThemeTokens, resolve: (colo
     // b) header band (rounded top) + c) accent stripe + d) header divider
     const headerBottom = t.y + m.borderTop + m.headerHeight;
     out.push(`<path d="${roundedTopPath(t.x, t.y, t.w, m.borderTop + m.headerHeight, RADIUS)}" fill="${headerBg}"/>`);
-    out.push(`<path d="${roundedTopPath(t.x, t.y, t.w, m.borderTop, m.borderTop)}" fill="${accent}"/>`);
+    if (!printerFriendly) out.push(`<path d="${roundedTopPath(t.x, t.y, t.w, m.borderTop, m.borderTop)}" fill="${accent}"/>`);
     out.push(`<line x1="${t.x}" y1="${headerBottom}" x2="${t.x + t.w}" y2="${headerBottom}" stroke="${theme.border}" stroke-width="1"/>`);
     // e) header title
     const titleY = t.y + m.borderTop + m.headerHeight / 2;
-    out.push(headerTitle(t.x + padX, titleY, t.schemaName, t.tableName, avail, textPx, theme));
+    out.push(headerTitle(t.x + padX, titleY, t.schemaName, t.tableName, printerFriendly ? Infinity : avail, textPx, theme));
     // f) column rows
     for (let i = 0; i < t.columns.length; i++) {
       const c = t.columns[i]!;
-      const cy = t.y + columnCenterY(i);
+      const cy = t.y + m.borderTop + m.headerHeight + m.colsPad / 2 + (i + 0.5) * m.rowHeight;
       const nameColor = c.pk ? accent : theme.fg;
-      const nameW = avail * 0.58;
-      const name = truncate(c.name, nameW, textPx);
+      const nameW = (avail - keyGutter) * 0.58;
+      const name = printerFriendly ? c.name : truncate(c.name, nameW, textPx);
+      if (keyGutter && c.key) {
+        out.push(`<text x="${t.x + padX}" y="${cy}" font-size="${textPx - 2}" font-weight="700" dominant-baseline="central" fill="${theme.fg}">${c.key}</text>`);
+      }
       out.push(
-        `<text x="${t.x + padX}" y="${cy}" font-size="${textPx}" dominant-baseline="central" ` +
+        `<text x="${t.x + padX + keyGutter}" y="${cy}" font-size="${textPx}" dominant-baseline="central" ` +
         `fill="${nameColor}"${c.pk ? ' font-weight="600"' : ''}>${esc(name)}</text>`,
       );
-      const flags = (c.notNull ? ' NN' : '') + (c.unique ? ' U' : '');
-      const typeText = truncate(c.type + flags, avail * 0.42, textPx - 1);
+      const type = typeLabel(c);
+      const typeText = printerFriendly ? type : truncate(type, (avail - keyGutter) * 0.42, textPx - 1);
       out.push(
         `<text x="${t.x + t.w - padX}" y="${cy}" font-size="${textPx - 1}" text-anchor="end" ` +
         `dominant-baseline="central" font-family="${MONO}" fill="${theme.fgMuted}">${esc(typeText)}</text>`,
@@ -400,6 +511,23 @@ export function renderSvg(model: ExportModel, theme: ThemeTokens, resolve: (colo
     const cx = g.x + g.w / 2;
     out.push(`<text x="${cx}" y="${g.y + g.h / 2 - 6}" font-size="13" font-weight="600" text-anchor="middle" dominant-baseline="central" fill="${col}">${esc(truncate(g.name, g.w - 24, 13))}</text>`);
     out.push(`<text x="${cx}" y="${g.y + g.h / 2 + 12}" font-size="11" text-anchor="middle" dominant-baseline="central" fill="${theme.fgMuted}">${g.count} tables</text>`);
+  }
+
+  if (model.architecture) out.push(renderArchitecture(model.architecture, theme, printerFriendly, undefined, resolve));
+
+  for (const label of model.labels) {
+    if (label.titleBlock) {
+      out.push(`<g transform="translate(${label.x} ${label.y})">${renderProjectTitleBlock(label.titleBlock, theme)}</g>`);
+      continue;
+    }
+    if (label.color && !printerFriendly) {
+      out.push(`<rect x="${label.x}" y="${label.y}" width="${label.w}" height="${label.h}" rx="4" fill="${esc(label.color)}"/>`);
+    }
+    for (const [i, line] of label.lines.entries()) {
+      const y = label.y + LABEL_PADDING + (i + 0.5) * label.lineHeight;
+      const fill = label.color && !printerFriendly ? '#111' : theme.fg;
+      out.push(`<text x="${label.x + LABEL_PADDING}" y="${y}" font-family="${esc(label.font)}" font-size="${label.fontSize}" dominant-baseline="central" fill="${fill}" xml:space="preserve">${esc(line)}</text>`);
+    }
   }
 
   out.push(`</svg>`);
@@ -500,8 +628,9 @@ function contrastText(bg: string): string {
  * `getComputedStyle`). Returns null when the chosen scope has nothing to export.
  */
 export function buildImageSvg(source: ExportSource, opts: ExportOptions): { svg: string; width: number; height: number } | null {
-  const model = buildExportModel(source, opts);
+  const model = buildExportModel(source, opts, measurePrintText);
   if (!model) return null;
+  if (model.printerFriendly) return renderSvg(model, PRINT_THEME, () => PRINT_THEME.border);
   const probe = document.createElement('span');
   probe.style.position = 'absolute';
   probe.style.visibility = 'hidden';

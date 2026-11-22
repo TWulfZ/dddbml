@@ -40,6 +40,7 @@ export interface ExporterMeta {
   description?: string;
   language: string;
   optionsSchema: ExporterOptionField[];
+  fullSchemaOnly?: boolean;
 }
 
 export interface ExportInput {
@@ -47,16 +48,19 @@ export interface ExportInput {
   scope: 'all' | 'selected';
   selection: ReadonlyArray<QualifiedName>;
   options: Record<string, unknown>;
+  dbmlSource?: string;
+  channel?: string;
 }
 
 export interface ExportResult {
   language: string;
   content: string;
+  fileExtension?: string;
   warnings?: string[];
 }
 
 export interface Exporter extends ExporterMeta {
-  export(input: ExportInput): ExportResult;
+  export(input: ExportInput): ExportResult | Promise<ExportResult>;
 }
 
 export interface ExportCommandPayload {

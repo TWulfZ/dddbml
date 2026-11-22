@@ -8,6 +8,7 @@ const CONFIG_ROOT = 'dddbml';
 export function loadSettings(): AppSettings {
   const cfg = vscode.workspace.getConfiguration(CONFIG_ROOT);
   const defaults = defaultSettings();
+  const appearance = cfg.get<string>('ui.diagramAppearance');
   return {
     // Ranges also keep zoomMin <= 1 <= zoomMax and zoomStep > 1 consistent with each other.
     zoomStep: clampSetting('zoomStep', cfg.get<number>('zoomStep'), defaults.zoomStep),
@@ -18,6 +19,8 @@ export function loadSettings(): AppSettings {
     },
     ui: {
       density: uiDensityOr(cfg.get<string>('ui.density'), defaults.ui.density),
+      diagramAppearance: appearance === 'print-light' || appearance === 'print-dark' ? appearance : defaults.ui.diagramAppearance,
+      showKeyColumn: boolOr(cfg.get<boolean>('ui.showKeyColumn'), defaults.ui.showKeyColumn),
       snapToGrid: boolOr(cfg.get<boolean>('ui.snapToGrid'), defaults.ui.snapToGrid),
       gridSize: clampSetting('ui.gridSize', cfg.get<number>('ui.gridSize'), defaults.ui.gridSize),
       layoutSpacing: clampSetting('ui.layoutSpacing', cfg.get<number>('ui.layoutSpacing'), defaults.ui.layoutSpacing),

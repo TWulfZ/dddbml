@@ -1,9 +1,10 @@
 import { useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import type { Column, ColumnDiffEntry, QualifiedName, Table, TableDiffStatus, WebviewToHost } from '../../shared/types';
-import { renderedRows, type DiffKind } from '../layout/tableRows';
+import { keyLabel, renderedRows, type DiffKind } from '../layout/tableRows';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
+import { typeLabel } from '../layout/printTable';
 import { startDrag } from '../drag/dragController';
 import { columnAt, startFkDrag } from '../drag/fkDrag';
 import { countResettableSelectionEdges, resetSelectedEdges, runEdgeOrdering, runSmartLayout } from '../layout/smartLayout';
@@ -25,6 +26,7 @@ interface TableNodeProps {
   selected: boolean;
   color?: string;
   fkColumns?: Set<string>;
+  foreignKeys?: Set<string>;
   /** Git diff overlay status for this table — border marker + inline unified-diff rows (spec 16). */
   diffStatus?: TableDiffStatus;
   /** True when "Blur background tables" is on and this table is NOT in the active diff/merge. */
@@ -37,11 +39,13 @@ interface TableNodeProps {
   recordCount?: number;
 }
 
-function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatus, dimmed, diffBase, columnDiff, recordCount }: TableNodeProps) {
+function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, foreignKeys, diffStatus, dimmed, diffBase, columnDiff, recordCount }: TableNodeProps) {
   // The rect LOD sizes itself from estimateSize (density-dependent) instead of CSS, so the memoized
   // node must re-render on a density change or it keeps the previous density's box.
   useAppStore((s) => s.settings.ui.density);
-  const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const printing = useAppStore((s) => s.settings.ui.diagramAppearance !== 'theme');
+  const showKeyColumn = useAppStore((s) => s.settings.ui.showKeyColumn) || printing;
+  const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk) && !printing;
   const rowOpts = { showOnlyPkFk, fkColumns, diffStatus, diffBase, columnDiff };
   /** `column` set = opened on a column row (spec 19: field actions first). */
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; column?: string } | null>(null);
@@ -141,12 +145,12 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
   // Diff marker (border) + background-dim. Column-level changes render inline as a unified diff.
   const diffClass = (diffStatus ? ` is-diff-${diffStatus}` : '') + (dimmed ? ' is-diff-dimmed' : '');
 
-  const headerStyle: Record<string, string> = color
+  const headerStyle: Record<string, string> = color && !printing
     ? { background: withAlpha(color, 0.22), borderTopColor: color }
     : {};
 
-  if (lod === 'rect') {
-    const size = estimateSize(renderedRows(table, rowOpts).length);
+  if (lod === 'rect' && !printing) {
+    const size = estimateSize(renderedRows(table, rowOpts).length, table);
     return (
       <>
         <div
@@ -186,12 +190,13 @@ function TableNodeImpl({ table, x, y, lod, selected, color, fkColumns, diffStatu
         style={{
           position: 'absolute',
           transform: `translate(${x}px, ${y}px)`,
-          borderTopColor: color ?? undefined,
+          width: printing ? `${estimateSize(rows.length, table).width}px` : undefined,
+          borderTopColor: printing ? undefined : color,
         }}
       >
         <TableHeader table={table} configurable headerStyle={headerStyle} recordCount={recordCount} />
         <ul class="ddd-table__cols">
-          {rows.map((r) => <ColumnRow key={r.key} table={table.name} col={r.col} isFk={r.isFk} diffKind={r.kind} onContextMenu={onColumnContextMenu} />)}
+          {rows.map((r) => <ColumnRow key={r.key} table={table.name} col={r.col} isFk={r.isFk} printing={printing} keys={showKeyColumn ? keyLabel(r.col.pk, r.isFk && foreignKeys?.has(r.col.name)) : undefined} diffKind={r.kind} onContextMenu={onColumnContextMenu} />)}
         </ul>
       </div>
       {ctxMenuEl}
@@ -286,11 +291,13 @@ interface ColumnRowProps {
   table: QualifiedName;
   col: Column;
   isFk: boolean;
+  keys?: string;
+  printing: boolean;
   diffKind?: DiffKind;
   onContextMenu: (column: string, e: MouseEvent) => void;
 }
 
-function ColumnRow({ table, col, isFk, diffKind, onContextMenu }: ColumnRowProps) {
+function ColumnRow({ table, col, isFk, keys, printing, diffKind, onContextMenu }: ColumnRowProps) {
   const isAdd = diffKind === 'added' || diffKind === 'changed-new';
   const isDel = diffKind === 'removed' || diffKind === 'changed-old';
   // A diff's removed/old row is a base column the .dbml no longer has: it stays inert, so its
@@ -327,14 +334,15 @@ function ColumnRow({ table, col, isFk, diffKind, onContextMenu }: ColumnRowProps
     >
       {sign ? <span class="ddd-table__col-sign" aria-hidden="true">{sign}</span> : null}
       <span class="ddd-table__col-left">
+        {keys !== undefined ? <span class="ddd-table__col-key">{keys}</span> : null}
         <span class={`ddd-table__col-name${col.pk ? ' is-pk' : ''}`}>{col.name}</span>
-        {col.pk ? <IconKey size={10} /> : null}
+        {col.pk && keys === undefined ? <IconKey size={10} /> : null}
         {col.note ? <IconNote size={10} /> : null}
       </span>
       <span class="ddd-table__col-right">
-        <span class="ddd-table__col-type">{col.type}</span>
-        {col.notNull ? <span class="ddd-table__badge" title="not null">NN</span> : null}
-        {col.unique ? <span class="ddd-table__badge" title="unique">U</span> : null}
+        <span class="ddd-table__col-type">{printing ? typeLabel(col) : col.type}</span>
+        {!printing && col.notNull ? <span class="ddd-table__badge" title="not null">NN</span> : null}
+        {!printing && col.unique ? <span class="ddd-table__badge" title="unique">U</span> : null}
       </span>
       {live ? (
         <span

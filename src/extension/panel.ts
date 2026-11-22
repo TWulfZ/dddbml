@@ -1,8 +1,11 @@
+import { architectureKeys } from '../shared/architecture';
 import * as vscode from 'vscode';
+import { diagramImageFiles, loadDiagramImages, projectImageUri } from './projectImages';
+import { PROJECT_BLOCK_KEY, noteLayoutKey, PROJECT_NOTE_KEY, PROJECT_TITLE_KEY } from '../shared/diagramLabels';
 import type { ExportCommandPayload } from '../shared/exporters/types';
 import type { AutoArrangeMode, FlatSettingsPatch, HostToWebview, Layout, ParseError, QualifiedName, Ref, Schema, ViewportCommand, ViewportLayout, WebviewToHost } from '../shared/types';
 import { locateTableAsync, parseAsync } from './parseService';
-import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
+import { emptyLayout, LayoutConflictError, LayoutParseError, mergeLayout, migrateInlineLabelLayout, parseLayout, readLayout, readSidecarText, serializeSharedLayout, sidecarUri, writeSharedLayout } from './layoutStore';
 import { applyViewState, emptyViewState, extractViewState, mergeViewStateChange, readViewState, sameViewState, writeViewState, type ViewState } from './viewStateStore';
 import { applyDecisions, countKeys, detectSidecarConflict, toSerializableConflicts } from './mergeResolver';
 import { diffSchemas } from './schemaDiff';
@@ -29,7 +32,7 @@ type TimeTravelPayload = Extract<HostToWebview, { type: 'git:timeTravel:enter' }
 type DiffPayload = Extract<HostToWebview, { type: 'git:diff:enter' }>['payload'];
 
 /** The git overlay on screen; time travel keeps its payload so a reloaded webview gets it back. */
-type GitOverlay = { kind: 'timeTravel'; enter: TimeTravelPayload } | { kind: 'diff' };
+type GitOverlay = { kind: 'timeTravel'; enter: TimeTravelPayload; dbmlSource: string } | { kind: 'diff' };
 /** `abortIf` is checked after the async parse, right before posting (F21 overlay-entry race). */
 type SchemaSendOptions = { skipIfUnchanged?: boolean; abortIf?: () => boolean };
 
@@ -75,7 +78,9 @@ export class DiagramPanel {
   /** Tables already told that the layout color overrides their DBML headercolor (once per session). */
   private readonly headerColorNotified = new Set<QualifiedName>();
   private readonly disposables: vscode.Disposable[] = [];
+  private schemaSendId = 0;
   private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
+  private lastValidDbmlSource?: string;
   /** Whether the latest read of the .dbml parsed; lastValidSchema may be stale (or the empty
    *  sentinel) when it did not. */
   private lastParseOk = false;
@@ -156,6 +161,11 @@ export class DiagramPanel {
       refuseWhileReadOnly: (action) => this.refuseWhileReadOnly(action),
       post: (msg) => this.post(msg),
       tableNames: () => this.lastValidSchema.tables.map((t) => t.name),
+      labelLayoutKeys: () => Object.keys(this.currentLayout.labels ?? {}),
+      placeLabel: (key, layout) => {
+        this.onLayoutPersist({ labels: { ...this.currentLayout.labels, [key]: layout } });
+        this.post({ type: 'layout:placeLabel', payload: { key, layout } });
+      },
     });
     this.webviewPanel.webview.html = this.renderHtml();
     this.webviewPanel.webview.onDidReceiveMessage(
@@ -238,22 +248,23 @@ export class DiagramPanel {
       return;
     }
     const preview = this.computePrune();
-    if (preview.removedTables === 0 && preview.removedGroups === 0) {
+    if (preview.removedTables === 0 && preview.removedGroups === 0 && preview.removedLabels === 0) {
       void vscode.window.showInformationMessage('dddbml: no orphan layout entries to prune.');
       return;
     }
     const answer = await vscode.window.showWarningMessage(
-      `dddbml: remove ${preview.removedTables} orphan table(s) and ${preview.removedGroups} orphan group(s) from the layout file? This cannot be undone.`,
+      `dddbml: remove ${preview.removedTables} orphan table(s), ${preview.removedGroups} orphan group(s), and ${preview.removedLabels} orphan label(s) from the layout file? This cannot be undone.`,
       { modal: true },
       'Prune',
     );
     if (answer !== 'Prune' || this.refuseWhileReadOnly('Prune orphans')) return;
     // Recomputed: the layout may have changed while the modal was open.
-    const { tables: nextTables, groups: nextGroups, removedTables, removedGroups } = this.computePrune();
-    this.currentLayout = { ...this.currentLayout, tables: nextTables, groups: nextGroups };
+    const { tables: nextTables, groups: nextGroups, labels, removedTables, removedGroups, removedLabels } = this.computePrune();
+    this.currentLayout = { ...this.currentLayout, tables: nextTables, groups: nextGroups, labels };
+    this.cancelPendingPersist();
     await this.flushPersist(this.currentLayout);
     this.post({ type: 'layout:loaded', payload: this.currentLayout });
-    void vscode.window.showInformationMessage(`dddbml: pruned ${removedTables} orphan table(s), ${removedGroups} orphan group(s).`);
+    void vscode.window.showInformationMessage(`dddbml: pruned ${removedTables} orphan table(s), ${removedGroups} orphan group(s), and ${removedLabels} orphan label(s).`);
   }
 
   /** Host half of the read-only gate: the webview's own gate does not survive a reload, a timer set
@@ -271,8 +282,11 @@ export class DiagramPanel {
     return true;
   }
 
-  private computePrune(): { tables: Layout['tables']; groups: Layout['groups']; removedTables: number; removedGroups: number } {
-    const liveTables = new Set(this.lastValidSchema.tables.map((t) => t.name));
+  private computePrune(): {
+    tables: Layout['tables']; groups: Layout['groups']; labels: Layout['labels'];
+    removedTables: number; removedGroups: number; removedLabels: number;
+  } {
+    const liveTables = new Set([...this.lastValidSchema.tables.map((t) => t.name), ...architectureKeys(this.lastValidSchema.architecture)]);
     const liveGroups = new Set(this.lastValidSchema.groups.map((g) => g.name));
     const tables: Layout['tables'] = {};
     for (const [k, v] of Object.entries(this.currentLayout.tables)) {
@@ -282,9 +296,19 @@ export class DiagramPanel {
     for (const [k, v] of Object.entries(this.currentLayout.groups)) {
       if (liveGroups.has(k)) groups[k] = v;
     }
+    const liveLabels = new Set(this.lastValidSchema.labels?.map((note) => noteLayoutKey(note.name)));
+    if (this.lastValidSchema.project || this.lastValidSchema.architecture?.title) {
+      liveLabels.add(PROJECT_TITLE_KEY);
+      liveLabels.add(PROJECT_BLOCK_KEY);
+    }
+    if (this.lastValidSchema.project?.note) liveLabels.add(PROJECT_NOTE_KEY);
+    const labelEntries = Object.entries(this.currentLayout.labels ?? {});
+    const labels = Object.fromEntries(labelEntries.filter(([key]) => liveLabels.has(key)));
     return {
       tables,
       groups,
+      labels,
+      removedLabels: labelEntries.length - Object.keys(labels).length,
       removedTables: Object.keys(this.currentLayout.tables).length - Object.keys(tables).length,
       removedGroups: Object.keys(this.currentLayout.groups).length - Object.keys(groups).length,
     };
@@ -395,6 +419,9 @@ export class DiagramPanel {
       case 'error:log':
         console.error('[dddbml webview]', msg.payload.message, msg.payload.stack);
         return;
+      case 'schema:editLabel':
+        void this.schemaEditor.editLabel(msg.payload);
+        return;
       case 'schema:addTable':
         void this.schemaEditor.addTable(msg.payload);
         return;
@@ -430,13 +457,15 @@ export class DiagramPanel {
     }
 
     // Export what is on screen: during time travel that is the past revision, not the working tree.
-    const source = this.gitOverlay?.kind === 'timeTravel' ? this.gitOverlay.enter.schema : this.lastValidSchema;
-    const filtered = payload.scope === 'selected'
+    const revision = this.gitOverlay?.kind === 'timeTravel' ? this.gitOverlay : undefined;
+    const source = revision?.enter.schema ?? this.lastValidSchema;
+    const scope = exporter.fullSchemaOnly ? 'all' : payload.scope;
+    const filtered = scope === 'selected'
       ? filterSchemaBySelection(source, new Set(payload.selection))
       : source;
 
-    if (filtered.tables.length === 0) {
-      const message = payload.scope === 'selected'
+    if (filtered.tables.length === 0 && !exporter.fullSchemaOnly) {
+      const message = scope === 'selected'
         ? 'dddbml: nothing to export — selection is empty.'
         : 'dddbml: nothing to export — schema has no tables.';
       void vscode.window.showWarningMessage(message);
@@ -445,18 +474,34 @@ export class DiagramPanel {
     }
 
     try {
-      const result = exporter.export({
+      const result = await exporter.export({
         schema: filtered,
-        scope: payload.scope,
+        scope,
         selection: payload.selection,
         options: payload.options,
+        dbmlSource: revision?.dbmlSource ?? this.lastValidDbmlSource,
+        channel: `export:${this.dbmlUri.toString()}`,
       });
 
-      const doc = await vscode.workspace.openTextDocument({
-        content: result.content,
-        language: result.language,
-      });
-      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Active, preview: false });
+      if (result.fileExtension) {
+        const stem = this.shortName(this.dbmlUri).replace(/\.dbml$/i, '');
+        const target = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.joinPath(this.dbmlUri, '..', `${stem}.${result.fileExtension}`),
+          filters: { [exporter.label]: [result.fileExtension] },
+        });
+        if (!target) {
+          this.post({ type: 'export:result', payload: { ok: false } });
+          return;
+        }
+        await vscode.workspace.fs.writeFile(target, Buffer.from(result.content, 'utf8'));
+        void vscode.window.showInformationMessage(`dddbml: saved ${this.shortName(target)}.`);
+      } else {
+        const doc = await vscode.workspace.openTextDocument({
+          content: result.content,
+          language: result.language,
+        });
+        await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Active, preview: false });
+      }
 
       if (result.warnings && result.warnings.length > 0) {
         const head = result.warnings.slice(0, 3).join('\n');
@@ -562,21 +607,24 @@ export class DiagramPanel {
    * callers (hydrate, time-travel exit) must always post, since the webview state differs.
    */
   private sendSchema(opts: SchemaSendOptions = {}): Promise<void> {
-    const send = this.parseAndPostSchema(opts);
+    const send = this.parseAndPostSchema(opts, ++this.schemaSendId);
     this.latestSchemaSend = send;
     return send;
   }
 
-  private async parseAndPostSchema(opts: SchemaSendOptions): Promise<void> {
+  private async parseAndPostSchema(opts: SchemaSendOptions, sendId: number): Promise<void> {
     const postsBefore = this.schemaPosts;
     let payload: { schema: Schema; parseError: ParseError | null };
     try {
       const bytes = await vscode.workspace.fs.readFile(this.dbmlUri);
       const source = new TextDecoder('utf-8').decode(bytes);
       const result = await parseAsync(source, `live:${this.dbmlUri.toString()}`);
+      const hydrated = result?.schema && diagramImageFiles(result.schema).length
+        ? await loadDiagramImages(this.dbmlUri, result.schema)
+        : result?.schema;
       // A newer save superseded this parse; it posts the fresher schema, and callers that order
       // messages after "schema posted" (hydrate, overlay exits) must still wait for it.
-      if (result === null) {
+      if (result === null || sendId !== this.schemaSendId) {
         // Only sendSchema parses on the live channel, so latestSchemaSend is that newer call.
         await this.latestSchemaSend;
         // That newer send may have skipped (unchanged payload) or aborted (an overlay went up); a
@@ -590,11 +638,17 @@ export class DiagramPanel {
         this.lastParseOk = false;
         payload = { schema: this.lastValidSchema, parseError: result.error };
       } else {
-        this.lastValidSchema = result.schema;
+        this.lastValidSchema = hydrated ?? result.schema;
+        this.lastValidDbmlSource = source;
         this.lastParseOk = true;
-        payload = { schema: result.schema, parseError: null };
+        payload = { schema: this.lastValidSchema, parseError: null };
       }
     } catch (err) {
+      if (sendId !== this.schemaSendId) {
+        await this.latestSchemaSend;
+        if (opts.skipIfUnchanged || opts.abortIf?.() || this.disposed || this.schemaPosts !== postsBefore) return;
+        return this.sendSchema(opts);
+      }
       const message = err instanceof Error ? err.message : String(err);
       this.lastParseOk = false;
       payload = { schema: this.lastValidSchema, parseError: { message } };
@@ -1023,7 +1077,7 @@ export class DiagramPanel {
     await this.flushPendingPersistNow(); // the last working edit lands before the gate closes
     const enter: TimeTravelPayload = { rev: sha, label, schema, layout };
     this.overlayGeneration++;
-    this.gitOverlay = { kind: 'timeTravel', enter };
+    this.gitOverlay = { kind: 'timeTravel', enter, dbmlSource: dbmlSrc };
     this.post({ type: 'git:timeTravel:enter', payload: enter });
   }
 
@@ -1118,6 +1172,10 @@ export class DiagramPanel {
       void vscode.window.showWarningMessage(`dddbml: the working diagram does not parse — ${parsedHead.error.message}`);
       return null;
     }
+    if (parsedBase.schema.architecture || parsedHead.schema.architecture) {
+      void vscode.window.showInformationMessage('dddbml: use the Git source diff to review architecture changes.');
+      return null;
+    }
     const diff = diffSchemas(parsedBase.schema, parsedHead.schema);
     if (diff.tables.length === 0 && diff.refs.length === 0) {
       void vscode.window.showInformationMessage('dddbml: no schema changes vs HEAD.');
@@ -1142,7 +1200,7 @@ export class DiagramPanel {
       this.webviewDiverged = true;
       return;
     }
-    const merged = mergeLayout(this.currentLayout, payload);
+    const merged = migrateInlineLabelLayout(mergeLayout(this.currentLayout, payload), this.lastValidSchema.labels);
     this.currentLayout = merged;
     this.pendingPersist = merged;
     if (this.persistTimer) clearTimeout(this.persistTimer);
@@ -1246,7 +1304,17 @@ export class DiagramPanel {
     layoutWatcher.onDidCreate(onLayoutFs);
     layoutWatcher.onDidDelete(onLayoutFs);
 
-    this.disposables.push(dbmlWatcher, layoutWatcher);
+    const imageWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(parentUri, '*'));
+    const onProjectImageFs = (uri: vscode.Uri) => {
+      if (diagramImageFiles(this.lastValidSchema).some((filename) =>
+        projectImageUri(this.dbmlUri, filename)?.toString() === uri.toString())) {
+        this.scheduleExternalReload(false);
+      }
+    };
+    imageWatcher.onDidChange(onProjectImageFs);
+    imageWatcher.onDidCreate(onProjectImageFs);
+    imageWatcher.onDidDelete(onProjectImageFs);
+    this.disposables.push(dbmlWatcher, layoutWatcher, imageWatcher);
   }
 
   /**

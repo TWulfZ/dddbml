@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { DEFAULT_LABEL_FONT, DEFAULT_LABEL_SIZE, PROJECT_BLOCK_KEY, isLabelCoordinate, isLabelFont, isLabelLayoutKey, isLabelSize, noteLayoutKey, type DiagramLabel, type LabelLayout } from '../shared/diagramLabels';
 import type { EdgeLayout, Layout, GroupLayout, TableLayout, Waypoint } from '../shared/types';
 import { EDGE_ROUTING_VERSION, hasAutoShape, isEdgeSide, resolveEdgeRouting } from '../shared/types';
 import { cmpCodeUnit } from '../shared/compare';
@@ -50,11 +51,34 @@ export function mergeLayout(current: Layout, payload: Partial<Layout>): Layout {
     groups: payload.groups ?? current.groups,
     edges: payload.edges ?? current.edges ?? {},
   };
+  if (payload.labels !== undefined) merged.labels = toLabels(payload.labels);
+  else if (current.labels) merged.labels = current.labels;
   if (tablesFrom.hiddenUnplaced && tablesFrom.hiddenUnplaced.length > 0) merged.hiddenUnplaced = tablesFrom.hiddenUnplaced;
   // The webview never sends the marker: a newer build's value must survive its persists.
   const edgeRouting = payload.edgeRouting ?? current.edgeRouting;
   if (edgeRouting !== undefined) merged.edgeRouting = edgeRouting;
   return merged;
+}
+
+/** Carry old inline label layout forward on the next normal sidecar save. */
+export function migrateInlineLabelLayout(layout: Layout, notes: readonly DiagramLabel[] | undefined): Layout {
+  if (!notes?.length) return layout;
+  const labels = { ...layout.labels };
+  let changed = false;
+  for (const note of notes) {
+    const key = noteLayoutKey(note.name);
+    const prior = labels[key] ?? {};
+    const next = { ...prior };
+    if (prior.x === undefined && note.x !== undefined) next.x = Math.round(note.x);
+    if (prior.y === undefined && note.y !== undefined) next.y = Math.round(note.y);
+    if (prior.font === undefined && note.font !== DEFAULT_LABEL_FONT) next.font = note.font;
+    if (prior.fontSize === undefined && note.fontSize !== DEFAULT_LABEL_SIZE) next.fontSize = note.fontSize;
+    if (Object.keys(next).length > Object.keys(prior).length) {
+      labels[key] = next;
+      changed = true;
+    }
+  }
+  return changed ? { ...layout, labels } : layout;
 }
 
 /** Raw sidecar text, or null when the file is missing/unreadable. */
@@ -118,9 +142,28 @@ export function parseLayout(text: string): Layout {
   const groups = toGroups(r.groups);
   const edges = toEdges(r.edges);
   const layout: Layout = { version: 1, viewport, tables, groups, edges };
+  const labels = toLabels(r.labels);
+  if (Object.keys(labels).length) layout.labels = labels;
   const edgeRouting = toEdgeRouting(r.edgeRouting);
   if (edgeRouting !== undefined) layout.edgeRouting = edgeRouting;
   return layout;
+}
+
+function toLabels(raw: unknown): Record<string, LabelLayout> {
+  const labels: Record<string, LabelLayout> = {};
+  if (!raw || typeof raw !== 'object') return labels;
+  for (const [key, item] of Object.entries(raw)) {
+    if (!isLabelLayoutKey(key) || !item || typeof item !== 'object') continue;
+    const { x, y, font, fontSize, template } = item as Record<string, unknown>;
+    const label: LabelLayout = {};
+    if (isLabelCoordinate(x)) label.x = Math.round(x);
+    if (isLabelCoordinate(y)) label.y = Math.round(y);
+    if (isLabelFont(font)) label.font = font;
+    if (isLabelSize(fontSize)) label.fontSize = fontSize;
+    if (key === PROJECT_BLOCK_KEY && (template === 'title-block' || template === 'captions')) label.template = template;
+    if (Object.keys(label).length) labels[key] = label;
+  }
+  return labels;
 }
 
 function toEdgeRouting(raw: unknown): number | undefined {
@@ -150,7 +193,9 @@ function toEdges(raw: unknown): Record<string, EdgeLayout> {
     if (typeof vv.dy === 'number' && Number.isFinite(vv.dy)) e.dy = Math.round(vv.dy);
     if (typeof vv.color === 'string' && vv.color.length > 0) e.color = vv.color;
     if (isEdgeSide(vv.sourceSide)) e.sourceSide = vv.sourceSide;
+    if (typeof vv.sourcePort === 'number' && Number.isFinite(vv.sourcePort)) e.sourcePort = Math.max(0, Math.min(1, vv.sourcePort));
     if (isEdgeSide(vv.targetSide)) e.targetSide = vv.targetSide;
+    if (typeof vv.targetPort === 'number' && Number.isFinite(vv.targetPort)) e.targetPort = Math.max(0, Math.min(1, vv.targetPort));
     if (vv.auto === true) e.auto = true;
     if (e.auto && !hasAutoShape(k, e)) delete e.auto;
     if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) out[k] = e;
@@ -287,7 +332,9 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
       if (hasAutoShape(k, v)) scalars.push('"auto": true');
       if (v.color) scalars.push(`"color": ${JSON.stringify(v.color)}`);
       if (v.sourceSide) scalars.push(`"sourceSide": ${JSON.stringify(v.sourceSide)}`);
+      if (v.sourcePort !== undefined) scalars.push(`"sourcePort": ${JSON.stringify(v.sourcePort)}`);
       if (v.targetSide) scalars.push(`"targetSide": ${JSON.stringify(v.targetSide)}`);
+      if (v.targetPort !== undefined) scalars.push(`"targetPort": ${JSON.stringify(v.targetPort)}`);
       if (!hasWaypoints) {
         if (v.dx !== undefined) scalars.push(`"dx": ${Math.round(v.dx)}`);
         if (v.dy !== undefined) scalars.push(`"dy": ${Math.round(v.dy)}`);
@@ -305,6 +352,18 @@ function serializeLayoutImpl(layout: Layout, shared: boolean): string {
       } else {
         lines.push(`    ${JSON.stringify(k)}: { ${scalars.join(', ')} }${comma}`);
       }
+    });
+    lines.push('  }');
+  }
+
+  const labels = Object.entries(toLabels(layout.labels)).sort(([a], [b]) => cmpCodeUnit(a, b));
+  if (labels.length) {
+    lines[lines.length - 1] += ',';
+    lines.push('  "labels": {');
+    labels.forEach(([key, label], i) => {
+      const fields = Object.entries(label).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`);
+      const comma = i < labels.length - 1 ? ',' : '';
+      lines.push(`    ${JSON.stringify(key)}: { ${fields.join(', ')} }${comma}`);
     });
     lines.push('  }');
   }

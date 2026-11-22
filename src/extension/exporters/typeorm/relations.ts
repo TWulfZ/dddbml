@@ -118,6 +118,7 @@ function tsTypeFor(
 export function buildRelationPairs(refs: ReadonlyArray<Ref>, opts: PairOpts): RelationPair[] {
   const out: RelationPair[] = [];
   for (const ref of refs) {
+    if (ref.inactive) continue;
     const card = cardinalityOf(ref);
 
     const sourceDecorator = decoratorFor(card, 'source');

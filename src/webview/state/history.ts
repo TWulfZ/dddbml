@@ -1,3 +1,4 @@
+import type { LabelLayout } from '../../shared/diagramLabels';
 import type { EdgeLayout, EdgeSide, QualifiedName, Waypoint } from '../../shared/types';
 
 /**
@@ -35,7 +36,9 @@ export interface WaypointCommand {
 export interface EdgeStyle {
   color?: string;
   sourceSide?: EdgeSide;
+  sourcePort?: number;
   targetSide?: EdgeSide;
+  targetPort?: number;
   auto?: true;
 }
 
@@ -80,7 +83,16 @@ export interface SchemaEditCommand {
   timestamp: number;
 }
 
-export type EditCommand = MoveCommand | WaypointCommand | EdgeStyleCommand | ArrangeCommand | SchemaEditCommand;
+export interface LabelLayoutCommand {
+  kind: 'labelLayout';
+  key: string;
+  from: LabelLayout | undefined;
+  to: LabelLayout;
+  label: string;
+  timestamp: number;
+}
+
+export type EditCommand = LabelLayoutCommand | MoveCommand | WaypointCommand | EdgeStyleCommand | ArrangeCommand | SchemaEditCommand;
 
 /**
  * Build a MoveCommand from a drag's origins map and the post-drag positions.
@@ -170,6 +182,8 @@ export function buildEdgeStyleCommand(
     from.color === to.color &&
     from.sourceSide === to.sourceSide &&
     from.targetSide === to.targetSide &&
+    from.sourcePort === to.sourcePort &&
+    from.targetPort === to.targetPort &&
     from.auto === to.auto
   ) {
     return null;

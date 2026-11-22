@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
+import { noteLayoutKey, type LabelEdit, type LabelLayout } from '../shared/diagramLabels';
 import type { ColumnRef, HostToWebview, QualifiedName, RefOp, SchemaDeleteTarget } from '../shared/types';
 import { parseRequest } from './parseService';
 import type { CursorLine, SchemaEditIntent, SchemaEditResult } from './schemaEdits';
@@ -14,6 +15,8 @@ export interface SchemaEditorHost {
   refuseWhileReadOnly(action: string): boolean;
   post(msg: HostToWebview): void;
   tableNames(): readonly QualifiedName[];
+  placeLabel(key: string, layout: LabelLayout): void;
+  labelLayoutKeys(): string[];
 }
 
 type Applicable = Extract<SchemaEditResult, { ok: true }>;
@@ -88,6 +91,22 @@ export class SchemaEditor {
         },
       });
       if (applied) await this.record(applied, { revealCursor: true });
+    });
+  }
+
+  editLabel(edit: LabelEdit): Promise<void> {
+    return this.serialize(async () => {
+      const action = edit.kind === 'delete' ? 'Delete label' : edit.kind === 'add' ? 'Add label' : 'Edit label';
+      if (this.host.refuseWhileReadOnly(action)) return;
+      const hooks = edit.kind === 'delete' ? { confirm: (result: Applicable) => this.confirmDelete(result) } : undefined;
+      const reservedKeys = edit.kind === 'add' ? this.host.labelLayoutKeys() : undefined;
+      const applied = await this.apply({ kind: 'label', edit, reservedKeys }, action, hooks);
+      if (!applied?.result.edits.length) return;
+      if (edit.kind === 'add' && applied.result.labelName) {
+        const { x, y, font, fontSize } = edit.label;
+        this.host.placeLabel(noteLayoutKey(applied.result.labelName), { x, y, font, fontSize });
+      }
+      await this.record(applied);
     });
   }
 

@@ -76,7 +76,9 @@ export function computeEdgeResets(
     const next: EdgeLayout = {};
     if (existing.color) next.color = existing.color;
     if (existing.sourceSide) next.sourceSide = existing.sourceSide;
+    if (existing.sourcePort !== undefined) next.sourcePort = existing.sourcePort;
     if (existing.targetSide) next.targetSide = existing.targetSide;
+    if (existing.targetPort !== undefined) next.targetPort = existing.targetPort;
     const hasData =
       next.color !== undefined || next.sourceSide !== undefined || next.targetSide !== undefined;
     out.push([r.id, hasData ? next : null]);

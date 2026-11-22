@@ -1,3 +1,4 @@
+import { arrangeArchitecture } from './arrangeArchitecture';
 import type { EdgeLayout, QualifiedName } from '../../shared/types';
 import { store, isCanvasReadOnly } from '../state/store';
 import { schedulePersist } from '../persistence';
@@ -14,15 +15,16 @@ import { buildArrangeCommand } from '../state/history';
  */
 export function resetLayout(): void {
   const s = store.getState();
+  if (s.schema.architecture) return arrangeArchitecture();
   if (isCanvasReadOnly(s) || s.schema.tables.length === 0) return;
 
-  const columnCount = new Map(s.schema.tables.map((t) => [t.name, t.columns.length]));
+  const tablesByName = new Map(s.schema.tables.map((t) => [t.name, t]));
   const placed = placeMissingTables({
     tables: s.schema.tables,
     refs: s.schema.refs,
     groups: s.schema.groups,
     positions: new Map(),
-    sizeOf: (name: QualifiedName) => estimateSize(columnCount.get(name) ?? 0),
+    sizeOf: (name: QualifiedName) => estimateSize(tablesByName.get(name)?.columns.length ?? 0, tablesByName.get(name)),
     spacing: s.settings.ui.layoutSpacing,
   });
   const edgeResets: Array<[string, EdgeLayout | null]> = [];

@@ -13,6 +13,7 @@ interface GroupContainerProps {
   w: number;
   h: number;
   color: string;
+  note?: string | null;
 }
 
 /**
@@ -24,7 +25,7 @@ interface GroupContainerProps {
  *     and clicks on tables inside are unaffected.
  *   - Label is clickable: double-click collapses the group.
  */
-function GroupContainerImpl({ name, x, y, w, h, color }: GroupContainerProps) {
+function GroupContainerImpl({ name, x, y, w, h, color, note }: GroupContainerProps) {
   useEffect(() => () => clearGroupLabel(name), [name]);
   const onLabelDblClick = (e: Event) => {
     e.stopPropagation();
@@ -36,9 +37,9 @@ function GroupContainerImpl({ name, x, y, w, h, color }: GroupContainerProps) {
   // tables use, so a table-inside-a-group hover and a group hover never collide.
   const onLabelEnter = (e: Event) => {
     const s = store.getState();
-    if (lodForZoom(s.viewport.zoom, s.settings.lod) !== 'rect') return;
+    if (lodForZoom(s.viewport.zoom, s.settings.lod) !== 'rect' && !note) return;
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    s.setTooltip({ title: name, body: '', x: r.left, y: r.top });
+    s.setTooltip({ title: name, body: note ?? '', x: r.left, y: r.top });
   };
   const onLabelLeave = () => {
     if (store.getState().tooltip) store.getState().setTooltip(null);
@@ -62,7 +63,7 @@ function GroupContainerImpl({ name, x, y, w, h, color }: GroupContainerProps) {
         onDblClick={onLabelDblClick}
         onMouseEnter={onLabelEnter}
         onMouseLeave={onLabelLeave}
-        title={`${name} (double-click label to collapse)`}
+        title={note ?? `${name} (double-click label to collapse)`}
       >
         {name}
       </div>

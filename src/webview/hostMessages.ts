@@ -109,6 +109,9 @@ export function handleHostMessage(msg: HostToWebview): void {
       // Keep the current (working) schema on screen; overlay the diff and enter read-only.
       state.enterDiff(msg.payload.baseLabel, msg.payload.headLabel, msg.payload.diff);
       return;
+    case 'layout:placeLabel':
+      state.setLabelLayout(msg.payload.key, msg.payload.layout, false);
+      return;
     case 'layout:place': {
       // Arrives before the table does: held now, auto-placement then finds it already positioned.
       const { table, x, y } = msg.payload;

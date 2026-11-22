@@ -1,3 +1,5 @@
+import type { LabelEdit } from '../shared/diagramLabels';
+import { planLabelEdit } from './labelEdits';
 import { addDoubleQuoteIfNeeded } from '@dbml/core';
 import type { ColumnRef, QualifiedName, RefOp, SchemaDeleteTarget } from '../shared/types';
 import {
@@ -15,6 +17,7 @@ import { applyEdits, invertEdits, mergeDeletions, type OffsetEdit } from './text
  */
 
 export type SchemaEditIntent =
+  | { kind: 'label'; edit: LabelEdit; reservedKeys?: string[] }
   | { kind: 'addTable'; schema: string | null; table: string; group?: string }
   | { kind: 'addField'; table: QualifiedName }
   | { kind: 'addRef'; from: ColumnRef; to: ColumnRef; op: RefOp }
@@ -40,6 +43,7 @@ export type SchemaEditResult =
     cascade: string[];
     /** The table an `addTable` creates. */
     table?: QualifiedName;
+    labelName?: string;
     cursorLine?: CursorLine;
   }
   | { ok: false; reason: string };
@@ -67,6 +71,7 @@ function fail(reason: string): SchemaEditResult {
 
 function planFor(src: string, model: Model, intent: SchemaEditIntent): Plan | string {
   switch (intent.kind) {
+    case 'label': return planLabelEdit(src, model, intent.edit, intent.reservedKeys);
     case 'addTable': return planAddTable(src, model, intent.schema, intent.table, intent.group);
     case 'addField': return planAddField(src, model, intent.table);
     case 'addRef': return planAddRef(src, model, intent.from, intent.to, intent.op);

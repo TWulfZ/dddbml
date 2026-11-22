@@ -1,9 +1,10 @@
-import { writeFile } from 'node:fs/promises';
+import type { Schema } from '../shared/types';
+import { readFile, symlink, writeFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('vscode', () => import('./testing/vscodeFake'));
 
-import { fake, FakeMemento } from './testing/vscodeFake';
+import { fake, FakeMemento, Uri } from './testing/vscodeFake';
 import { DiagramPanel } from './panel';
 import { runParseJob } from './parseOps';
 import { setParseWorkerFactory } from './parseService';
@@ -383,5 +384,48 @@ describe('auto-save warning', () => {
     await addRef(h);
     await settle(50);
     expect(warnings().filter((w) => w.includes('Auto Save'))).toHaveLength(0);
+  });
+});
+
+it('writes a newly added label layout to the shared sidecar and migrates legacy coordinates', async () => {
+  const dbml = DBML + "Note old [x: -40, y: 120, font: 'Georgia'] { 'Legacy caption' }\n";
+  const h = await openPanel({ dbml });
+  const layout = { x: 30, y: -48, font: 'Georgia, serif', fontSize: 31 };
+  await h.web.receive({ type: 'schema:editLabel', payload: { kind: 'add', label: { ...layout, text: 'New caption' } } });
+  await vi.waitFor(async () => {
+    const file = JSON.parse(await readFile(h.sidecar.fsPath, 'utf8'));
+    expect(file.labels).toEqual({
+      'note:diagram_label_1': layout,
+      'note:old': { x: -40, y: 120, font: 'Georgia' },
+    });
+  });
+  expect(h.readDbml()).toBe(dbml + "\nNote diagram_label_1 [color: none] {\n  'New caption'\n}\n");
+  expect(h.since('layout:placeLabel')[0]?.payload).toEqual({ key: 'note:diagram_label_1', layout });
+  await settle(50); // Allow the view-state write following the observed sidecar write to finish.
+});
+
+it('refreshes a title-block image when a sibling file is created and rejects paths and symlinks', async () => {
+  const h = await openPanel({
+    dbml: "Project demo {\n  logo: 'company.svg'\n  image: '../other.svg'\n}\n" + DBML,
+  });
+  const filename = Uri.joinPath(h.dbml, '..', 'company.svg');
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="7"/></svg>';
+  await writeFile(filename.fsPath, svg);
+  h.mark();
+  await fake.fireFsEvent('create', filename);
+  await vi.waitFor(() => expect(h.since('schema:update')[0]?.payload).toMatchObject({
+    schema: { project: { images: [
+      { key: 'logo', filename: 'company.svg', dataUri: `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}` },
+      { key: 'image', filename: '../other.svg' },
+    ] } },
+  }));
+  await symlink(filename.fsPath, Uri.joinPath(h.dbml, '..', 'alias.svg').fsPath);
+  h.mark();
+  await writeFile(h.dbml.fsPath, "Project demo { logo: 'alias.svg' }\n" + DBML);
+  await fake.fireFsEvent('change', h.dbml);
+  await vi.waitFor(() => {
+    const message = h.since('schema:update')[0];
+    if (message?.type !== 'schema:update') throw new Error('Waiting for project update');
+    expect((message.payload as { schema: Schema }).schema.project?.images).toEqual([{ key: 'logo', filename: 'alias.svg' }]);
   });
 });

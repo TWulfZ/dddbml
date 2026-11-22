@@ -1,3 +1,4 @@
+import { arrangeArchitecture } from '../arrangeArchitecture';
 import type { AutoArrangeMode, EdgeLayout, QualifiedName, Ref } from '../../../shared/types';
 import { store, isCanvasReadOnly, type AppState } from '../../state/store';
 import { buildArrangeCommand, buildEdgesResetCommand } from '../../state/history';
@@ -124,6 +125,7 @@ export async function runSmartLayout(mode: AutoArrangeMode, opts: ArrangeOptions
   const preserveManual = opts.preserveManualEdges ?? true;
 
   const s = store.getState();
+  if (s.schema.architecture) return arrangeArchitecture(mode);
   if (s.schema.tables.length === 0) return;
   if (isCanvasReadOnly(s)) return; // blocking merge / git overlay (spec 14/16): the layout is read-only
   if (mode === 'selection' && s.selection.size === 0) {
@@ -131,9 +133,8 @@ export async function runSmartLayout(mode: AutoArrangeMode, opts: ArrangeOptions
     return;
   }
 
-  const colCount = new Map<QualifiedName, number>();
-  for (const t of s.schema.tables) colCount.set(t.name, t.columns.length);
-  const sizeOf = (name: QualifiedName) => estimateSize(colCount.get(name) ?? 0);
+  const tablesByName = new Map(s.schema.tables.map((t) => [t.name, t]));
+  const sizeOf = (name: QualifiedName) => estimateSize(tablesByName.get(name)?.columns.length ?? 0, tablesByName.get(name));
 
   const before = new Map(s.positions);
   const edgesBefore = new Map(s.edgeLayouts);

@@ -338,8 +338,14 @@ export const languages = {
   },
 };
 
+export const FileType = { File: 1, Directory: 2, SymbolicLink: 64 };
+
 export const workspace = {
   fs: {
+    stat: async (uri: Uri) => {
+      const stat = await fsp.lstat(uri.fsPath);
+      return { type: stat.isFile() ? FileType.File : stat.isSymbolicLink() ? FileType.SymbolicLink : FileType.Directory, size: stat.size };
+    },
     readFile: async (uri: Uri) => new Uint8Array(await fsp.readFile(uri.fsPath)),
     writeFile: (uri: Uri, bytes: Uint8Array) => fsp.writeFile(uri.fsPath, bytes),
     rename: (from: Uri, to: Uri) => fsp.rename(from.fsPath, to.fsPath),

@@ -34,9 +34,8 @@ export interface EdgeOrderingResult {
 }
 
 function sizeFnFor(schema: Schema): (n: QualifiedName) => { width: number; height: number } {
-  const colCount = new Map<QualifiedName, number>();
-  for (const t of schema.tables) colCount.set(t.name, t.columns.length);
-  return (n) => estimateSize(colCount.get(n) ?? 0);
+  const tablesByName = new Map(schema.tables.map((t) => [t.name, t]));
+  return (n) => estimateSize(tablesByName.get(n)?.columns.length ?? 0, tablesByName.get(n));
 }
 
 /** Resolve a column's port-row Y offset, mirroring what EdgeLayer passes to routeRefs (L/R only). */

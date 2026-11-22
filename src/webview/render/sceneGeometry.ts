@@ -1,3 +1,4 @@
+import { diagramAnnotations, type PlacedLabel } from '../layout/diagramLabels';
 import { estimateSize } from '../layout/autoLayout';
 import { GROUP_CONTAINER_HEADER, GROUP_CONTAINER_PADDING } from '../layout/density';
 import { bcColorFor } from '../groups/bcPalette';
@@ -51,7 +52,7 @@ export function deriveSceneGeometry(
       continue;
     }
     if (!st?.collapsed) {
-      const rects = groupContainerRects(g, st?.color ?? bcColorFor(g.name), positions, hiddenTables, rows, fullRows);
+      const rects = groupContainerRects(g, st?.color ?? g.color ?? bcColorFor(g.name), positions, hiddenTables, rows, fullRows, tablesByName);
       if (rects) {
         containers.push(rects.container);
         exportContainers.push(rects.exportContainer);
@@ -62,7 +63,7 @@ export function deriveSceneGeometry(
     for (const t of g.tables) {
       const pos = positions.get(t);
       if (!pos) continue;
-      const size = estimateSize(tablesByName.get(t)?.columns.length ?? 0);
+      const size = estimateSize(fullRows(t), tablesByName.get(t));
       sumX += pos.x + size.width / 2;
       sumY += pos.y + size.height / 2;
       n++;
@@ -75,7 +76,7 @@ export function deriveSceneGeometry(
         y: Math.round(sumY / n - GROUP_NODE_H / 2),
         w: GROUP_NODE_W,
         h: GROUP_NODE_H,
-        color: st.color ?? bcColorFor(g.name),
+        color: st.color ?? g.color ?? bcColorFor(g.name),
         count: g.tables.length,
       });
     }
@@ -96,6 +97,7 @@ export function groupContainerRects(
   hiddenTables: ReadonlySet<QualifiedName>,
   rows: RowCount,
   fullRows: RowCount,
+  tablesByName?: ReadonlyMap<QualifiedName, Table>,
 ): { container: SceneRect; exportContainer: SceneRect } | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, maxYFull = -Infinity;
   let n = 0;
@@ -103,7 +105,7 @@ export function groupContainerRects(
     if (hiddenTables.has(t)) continue;
     const pos = positions.get(t);
     if (!pos) continue;
-    const size = estimateSize(rows(t));
+    const size = estimateSize(rows(t), tablesByName?.get(t));
     if (pos.x < minX) minX = pos.x;
     if (pos.y < minY) minY = pos.y;
     if (pos.x + size.width > maxX) maxX = pos.x + size.width;
@@ -130,6 +132,7 @@ export function sceneBounds(
   positions: ReadonlyMap<QualifiedName, { x: number; y: number }>,
   scene: SceneGeometry,
   rowCount?: RowCount,
+  visibleLabels: readonly PlacedLabel[] = diagramAnnotations(schema).notes,
 ): Bbox | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const add = (x: number, y: number, w: number, h: number) => {
@@ -142,8 +145,11 @@ export function sceneBounds(
     if (scene.hiddenTables.has(t.name) || scene.collapsedTables.has(t.name)) continue;
     const pos = positions.get(t.name);
     if (!pos) continue;
-    const size = estimateSize(rowCount ? rowCount(t.name) : t.columns.length);
+    const size = estimateSize(rowCount ? rowCount(t.name) : t.columns.length, t);
     add(pos.x, pos.y, size.width, size.height);
+  }
+  for (const label of visibleLabels) {
+    add(label.x, label.y, label.w, label.h);
   }
   for (const g of scene.collapsedNodes) add(g.x, g.y, g.w, g.h);
   for (const c of scene.containers) add(c.x, c.y, c.w, c.h);

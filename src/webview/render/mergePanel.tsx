@@ -148,7 +148,7 @@ function MergePanelImpl() {
 }
 
 function ConflictRow({ conflict, decided }: { conflict: SerializableMergeConflict; decided: 'ours' | 'theirs' | undefined }) {
-  const noun = conflict.section === 'groups' ? 'group' : 'edge';
+  const noun = conflict.section === 'groups' ? 'group' : conflict.section === 'labels' ? 'label' : 'edge';
   const pick = (side: 'ours' | 'theirs') => store.getState().setMergeDecision(conflict.id, side);
   const oursColor = colorOf(conflict.ours);
   const theirsColor = colorOf(conflict.theirs);

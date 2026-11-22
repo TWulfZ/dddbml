@@ -57,7 +57,7 @@ function refSemantics(r: Ref): string {
   const flip = endpointKey(r.target) < endpointKey(r.source);
   const [first, second] = flip ? [r.target, r.source] : [r.source, r.target];
   const pairs = first.columns.map((c, i) => `${c}=${second.columns[i] ?? ''}`).sort();
-  return JSON.stringify([first.table, first.relation, second.table, second.relation, pairs]);
+  return JSON.stringify([first.table, first.relation, second.table, second.relation, pairs, first.optional ?? false, second.optional ?? false, r.color ?? null, r.onDelete ?? null, r.onUpdate ?? null, r.inactive ?? false]);
 }
 
 function diffColumns(base: Column[], head: Column[]): ColumnDiffEntry[] {

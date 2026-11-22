@@ -1,3 +1,4 @@
+import type { Schema } from '../../shared/types';
 import { useEffect, useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
 import { postToHost } from '../vscode';
@@ -9,6 +10,8 @@ import { buildImageSvg, type ExportDerived, type ExportScope, type ExportSource 
 import { blobToBase64, svgToPng } from '../export/raster';
 
 interface ExportImageModalProps {
+  schema: Schema;
+  viewName?: string;
   /** `app.tsx`'s `derived` memo (group containers/collapsed nodes/effective refs). */
   derived: ExportDerived;
 }
@@ -21,13 +24,15 @@ const SCALE: Record<ScaleKey, number> = { '1x': 1, '2x': 2, '3x': 3 };
  * (not the culled DOM — see imageExport.ts), then exports it as SVG, PNG, or clipboard.
  * Scope: whole diagram / current viewport / current selection. See specs/17-export-image.md.
  */
-export function ExportImageModal({ derived }: ExportImageModalProps) {
+export function ExportImageModal({ schema, viewName, derived }: ExportImageModalProps) {
   const open = useAppStore((s) => s.exportImagePromptOpen);
   const selectionSize = useAppStore((s) => s.selection.size);
 
   const [scope, setScope] = useState<ExportScope>('all');
   const [scale, setScale] = useState<ScaleKey>('2x');
   const [background, setBackground] = useState(true);
+  const [printerFriendly, setPrinterFriendly] = useState(false);
+  const [includeProjectNote, setIncludeProjectNote] = useState(false);
   const [filename, setFilename] = useState('diagram');
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -37,25 +42,31 @@ export function ExportImageModal({ derived }: ExportImageModalProps) {
     setScope(selectionSize > 0 ? 'selection' : 'all');
     setScale('2x');
     setBackground(true);
+    setPrinterFriendly(store.getState().settings.ui.diagramAppearance !== 'theme');
     setFilename('diagram');
+    setIncludeProjectNote(store.getState().showProjectNote);
     setBusy(false);
     setNote(null);
   }, [open]);
 
   const hasSelection = selectionSize > 0;
+  const allLabel = viewName ? `Named view (${viewName})` : 'Whole diagram';
   const scopeOptions: ReadonlyArray<{ value: ExportScope; label: string }> = hasSelection
-    ? [{ value: 'all', label: 'Whole diagram' }, { value: 'view', label: 'Current view' }, { value: 'selection', label: `Selection (${selectionSize})` }]
-    : [{ value: 'all', label: 'Whole diagram' }, { value: 'view', label: 'Current view' }];
+    ? [{ value: 'all', label: allLabel }, { value: 'view', label: 'Current viewport' }, { value: 'selection', label: `Selection (${selectionSize})` }]
+    : [{ value: 'all', label: allLabel }, { value: 'view', label: 'Current viewport' }];
 
   const gatherSource = (): ExportSource => {
     const s = store.getState();
     return {
-      schema: s.schema,
+      schema,
       positions: s.positions,
       tableColors: s.tableColors,
       edgeLayouts: s.edgeLayouts,
       selection: s.selection,
       density: s.settings.ui.density,
+      showKeyColumn: s.settings.ui.showKeyColumn,
+      labelLayouts: s.labelLayouts,
+      editingPrintLayout: s.settings.ui.diagramAppearance !== 'theme',
       derived,
     };
   };
@@ -71,8 +82,6 @@ export function ExportImageModal({ derived }: ExportImageModalProps) {
 
   const safeName = () => (filename.trim() || 'diagram').replace(/[\\/:*?"<>|]+/g, '_');
 
-  const build = () => buildImageSvg(gatherSource(), { scope, background, filename: safeName(), viewRect: viewRect() });
-
   const exportAs = async (kind: 'png' | 'svg' | 'copy') => {
     if (busy) return;
     setNote(null);
@@ -81,7 +90,11 @@ export function ExportImageModal({ derived }: ExportImageModalProps) {
     setBusy(true);
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
     try {
-      const built = build();
+      const built = buildImageSvg(gatherSource(), {
+        scope, background, filename: safeName(), viewRect: viewRect(), printerFriendly: kind === 'svg' && printerFriendly,
+        includeProjectTitle: scope !== 'selection' && store.getState().showProjectTitle,
+        includeProjectNote: scope === 'view' ? store.getState().showProjectNote : includeProjectNote,
+      });
       if (!built) {
         setNote(scope === 'selection' ? 'Nothing selected to export.' : 'Nothing to export.');
         return;
@@ -136,7 +149,7 @@ export function ExportImageModal({ derived }: ExportImageModalProps) {
     >
       <RadioGroup<ExportScope>
         label="Scope"
-        hint="Whole diagram is built from the model, so off-screen tables are included."
+        hint="Whole diagram and named view exports include off-screen items."
         value={scope}
         options={scopeOptions}
         onChange={setScope}
@@ -154,6 +167,15 @@ export function ExportImageModal({ derived }: ExportImageModalProps) {
         value={background}
         onCommit={setBackground}
       />
+      <Checkbox
+        label="Printer friendly"
+        hint="SVG only. Uses a white page, full labels, and a PK/FK column."
+        value={printerFriendly}
+        onCommit={setPrinterFriendly}
+      />
+      {schema.project?.note && scope !== 'view' ? (
+        <Checkbox label="Include project note" value={includeProjectNote} onCommit={setIncludeProjectNote} />
+      ) : null}
       <TextField label="File name" value={filename} onCommit={setFilename} />
       {note ? <small class="ddd-field__hint">{note}</small> : null}
     </Modal>

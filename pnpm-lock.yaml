@@ -12,8 +12,8 @@ importers:
         specifier: ^3.0.0
         version: 3.0.0
       '@dbml/core':
-        specifier: ^10.2.0
-        version: 10.2.0
+        specifier: ^12.1.0
+        version: 12.1.0
       '@vscode/codicons':
         specifier: ^0.0.45
         version: 0.0.45
@@ -124,12 +124,12 @@ packages:
   '@dagrejs/graphlib@4.0.1':
     resolution: {integrity: sha512-IvcV6FduIIAmLwnH+yun+QtV36SC7mERqa86aClNqmMN09WhmPPYU8ckHrZBozErf+UvHPWOTJYaGYiIcs0DgA==}
 
-  '@dbml/core@10.2.0':
-    resolution: {integrity: sha512-bixogYBr5QhkcVS09fKmQf2r0OBehdLyowMb4RMek9miUCi+ovTUAbl3y2Jgc2J+hQe/jwrmmjdH+9o8rGkwHQ==}
+  '@dbml/core@12.1.0':
+    resolution: {integrity: sha512-aXR/h7pvw6aaCbpa4I88yOYBJEoVVp6CK4X46j2kcsQdsFMSgbJhBAdgWqrEUpproYW4pwdZpU/i+7tBqwJAOg==}
     engines: {node: '>=16'}
 
-  '@dbml/parse@10.2.0':
-    resolution: {integrity: sha512-jg8j93Wr7fahM5B1Uz0+HO79vdTYfsuJKRfeuHKCQRyE7JDhUrtEnBkdRbOehFmkiSbGJO2mqz6LKJNqlI3RfA==}
+  '@dbml/parse@12.1.0':
+    resolution: {integrity: sha512-A9+HKS+yjQzKr+hKs8NZvsX1W65AiXmHrGAhBzr058Pm3WH0pR/lTD82Gv9QiSXp8YJBEXS353JJ0Ba0bl9OKQ==}
     engines: {node: '>=18'}
 
   '@esbuild/aix-ppc64@0.21.5':
@@ -2196,9 +2196,9 @@ snapshots:
 
   '@dagrejs/graphlib@4.0.1': {}
 
-  '@dbml/core@10.2.0':
+  '@dbml/core@12.1.0':
     dependencies:
-      '@dbml/parse': 10.2.0
+      '@dbml/parse': 12.1.0
       antlr4: 4.13.2
       lodash: 4.18.1
       lodash-es: 4.18.1
@@ -2206,7 +2206,7 @@ snapshots:
       parsimmon: 1.18.1
       pluralize: 8.0.0
 
-  '@dbml/parse@10.2.0':
+  '@dbml/parse@12.1.0':
     dependencies:
       lodash-es: 4.18.1
       luxon: 3.7.2

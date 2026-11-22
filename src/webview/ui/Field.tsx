@@ -98,13 +98,15 @@ export interface SelectFieldProps {
   hint?: string;
   value: string;
   options: SelectOption[];
+  disabled?: boolean;
   onChange: (value: string) => void;
 }
 
-export function SelectField({ label, hint, value, options, onChange }: SelectFieldProps) {
+export function SelectField({ label, hint, value, options, onChange, disabled }: SelectFieldProps) {
   return (
     <Field label={label} hint={hint}>
       <select
+        disabled={disabled}
         class="ddd-field__control"
         value={value}
         onChange={(e) => onChange((e.currentTarget as HTMLSelectElement).value)}

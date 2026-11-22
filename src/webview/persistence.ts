@@ -30,7 +30,9 @@ export function schedulePersist(): void {
     }
     if (v.color) e.color = v.color;
     if (v.sourceSide) e.sourceSide = v.sourceSide;
+    if (v.sourcePort !== undefined) e.sourcePort = v.sourcePort;
     if (v.targetSide) e.targetSide = v.targetSide;
+    if (v.targetPort !== undefined) e.targetPort = v.targetPort;
     if (v.auto && hasAutoShape(id, { ...e, auto: true })) e.auto = true;
     if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
       edges[id] = e;
@@ -42,6 +44,7 @@ export function schedulePersist(): void {
       tables: toTableLayoutRecord(state.positions, state.hiddenTables, state.tableColors),
       groups: state.groups,
       edges,
+      labels: state.labelLayouts,
       // Hidden but not yet placed (no position to carry `hidden` on); always sent, it rides with tables.
       hiddenUnplaced: [...state.hiddenTables].filter((n) => !state.positions.has(n)),
       version: 1,

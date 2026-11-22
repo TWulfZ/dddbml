@@ -56,22 +56,30 @@ interface ModelSchema {
   tableGroups: ModelGroup[];
 }
 
+export interface ModelNote {
+  name: string;
+  content: string;
+  token: ModelToken;
+  metadata: Record<string, { token: ModelToken; value: unknown }>;
+}
+
 export interface Model {
+  notes: ModelNote[];
   tables: ModelTable[];
   refs: ModelRef[];
   groups: ModelGroup[];
 }
 
 export function parseModel(source: string): { model: Model; error: null } | { model: null; error: string } {
-  let schemas: ModelSchema[];
+  let db: { schemas: ModelSchema[]; notes: ModelNote[] };
   try {
-    schemas = (Parser.parse(source, 'dbmlv2') as unknown as { schemas: ModelSchema[] }).schemas;
+    db = Parser.parse(source, 'dbmlv2') as unknown as typeof db;
   } catch (err) {
     return { model: null, error: parseErrorMessage(err) };
   }
   const refs = new Set<ModelRef>();
-  const model: Model = { tables: [], refs: [], groups: [] };
-  for (const s of schemas) {
+  const model: Model = { tables: [], refs: [], groups: [], notes: db.notes };
+  for (const s of db.schemas) {
     model.tables.push(...s.tables);
     for (const r of s.refs) refs.add(r);
     model.groups.push(...s.tableGroups);

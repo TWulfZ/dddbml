@@ -2,7 +2,7 @@
 
 ## Fuente
 
-`@dbml/core` **^10.2** (antes 3.14; el bump es requisito de `Dep`, ver spec 18) expone `Parser.parse(source, 'dbmlv2')` → retorna un objeto `Database` (clase). Llamando `.export()` obtenemos un shape plano JSON-safe con la estructura:
+`@dbml/core` **^12.1** (antes 3.14; el bump es requisito de `Dep`, ver spec 18) expone `Parser.parse(source, 'dbmlv2')` → retorna un objeto `Database` (clase). Llamando `.export()` obtenemos un shape plano JSON-safe con la estructura:
 
 ```
 Database.export() = {
@@ -25,6 +25,10 @@ Trabajamos sobre este `export()`, no sobre la clase `Database`, porque:
 2. API estable; los métodos de la clase cambian entre versiones menores.
 
 10.x omite `increment: false` (sólo aparece si es `true`); el mapeo lo lee como truthy.
+
+### Diagramas de arquitectura
+
+Con `diagram_type: arch` o `architecture`, se mapean nodos, grupos y enlaces a `Schema.architecture`. El mapeo consulta la instancia de `Database` para conservar los identificadores de extremos y miembros de grupos. Los identificadores persistentes usan el alias DBML cuando existe. El sidecar guarda las posiciones de nodos y grupos vacíos en `tables` y las de notas en `labels`. El contorno de cada grupo con miembros se calcula a partir de sus posiciones.
 
 ### Records, Dep y headercolor (spec 18)
 
@@ -73,7 +77,9 @@ DBML permite refs con 2 endpoints. Cada endpoint: `{ schemaName, tableName, fiel
 **Aliases** (`Table core.users as U`): @dbml/core deja `tableName: 'U'` en el endpoint. Si el endpoint no trae schema y `<schemaDefault>.<tableName>` no es una tabla real, se resuelve por el mapa global de aliases al nombre calificado real de la tabla (`core.users`, no `public.users`). La resolución ocurre antes de calcular el ID estable, así edges y `edgeLayouts` usan el nombre real.
 
 **Relation normalization**:
-- `*`, `many`, `>` → `'*'`
+- `*`, `0..*`, `many`, `>` → `'*'`
+- `0..1` y `0..*` conservan `optional: true` en el endpoint; canvas y export usan marcadores con círculo.
+- `color` se conserva en el ref, con prioridad del color guardado en el layout.
 - resto (incluyendo `1`, `-`, `<`) → `'1'`
 - La dirección (`>` vs `<`) se pierde intencionalmente en v1; el orden `source→target` la preserva.
 
@@ -101,7 +107,7 @@ También cada `Table.groupName` apunta al group que la contiene (para lookup rá
 - **StickyNotes**: ignorados.
 - **Records (seed data)**: preview de sólo lectura desde spec 18.
 - **TablePartials** (DBML v3): ignorados en v1 (los partials se inyectan al parsear, así que sus campos aparecen igual en la tabla final; no hay AST dedicado).
-- **Many-to-many refs** (`<>`): tratados como relación bidireccional `'*' '*'`. Render visual no las distingue en v1.
+- **Many-to-many refs** (`<>`): endpoints `'*' '*'`, con crow's-foot en ambos extremos.
 
 ## Error handling
 

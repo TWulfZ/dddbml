@@ -28,7 +28,7 @@ export function liveViewBox(
   }
   const p = positions.get(name);
   if (!p) return null;
-  const s = estimateSize(t.columns.length);
+  const s = estimateSize(t.columns.length, t);
   return { node: name, box: { x: p.x, y: p.y, w: s.width, h: s.height } };
 }
 
@@ -58,7 +58,7 @@ export function DiffGhosts({ ghosts, removedRefs, positions, tablesByName, filte
     }
     const g = ghostByName.get(name);
     if (g) {
-      const s = estimateSize(g.table.columns.length);
+      const s = estimateSize(g.table.columns.length, g.table);
       return { x: g.pos.x + s.width / 2, y: g.pos.y + s.height / 2 };
     }
     return null;
@@ -78,7 +78,7 @@ export function DiffGhosts({ ghosts, removedRefs, positions, tablesByName, filte
         </svg>
       ) : null}
       {ghosts.map((g) => {
-        const s = estimateSize(g.table.columns.length);
+        const s = estimateSize(g.table.columns.length, g.table);
         return (
           <div
             key={g.table.name}

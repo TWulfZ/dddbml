@@ -488,6 +488,12 @@
     flex-shrink: 0;
   }
 
+  .ddd-table__col-key {
+    flex: 0 0 36px;
+    font-size: calc(var(--ddd-text-table) - 2px);
+    font-weight: var(--ddd-weight-semibold);
+  }
+
   .ddd-table__col-name {
     flex: 1;
     overflow: hidden;
@@ -513,7 +519,7 @@
 
   /* ----- Edges (SVG) ----- */
   /* Edges are secondary: faded by default, revealed to full opacity when their table or the edge is
-     focused (hover/selection). The base + dots ride a wrapper group so opacity applies once. */
+     focused (hover/selection). The base strokes ride a wrapper group so opacity applies once. */
   .ddd-edges .ddd-edge-group {
     opacity: 0.4;
     transition: opacity var(--ddd-duration-fast) var(--ddd-ease-out);
@@ -621,18 +627,6 @@
   /* Interactive handle overlay: above tables so handles stay grabbable over a table. */
   .ddd-edges-overlay {
     z-index: 6;
-  }
-  /* Direction dots (visual only): origin (PK) solid, destination (FK) ringed. */
-  .ddd-edges circle.ddd-edge-end-dot {
-    pointer-events: none;
-  }
-  .ddd-edges circle.ddd-edge-end-dot.is-source {
-    fill: var(--ddd-edge);
-  }
-  .ddd-edges circle.ddd-edge-end-dot.is-target {
-    fill: var(--ddd-surface-raised);
-    stroke: var(--ddd-edge);
-    stroke-width: 1.5;
   }
   /* Flowing dots along the relation (source -> target), shown on hover/selected. The loop offset
      (keyframe) and the duration both derive from the dash period (dot+gap), so it never jumps at the
@@ -2533,5 +2527,183 @@
   /* The flow overlay carries no meaning frozen — hide it rather than leave a static dashed line. */
   .ddd-edges path.ddd-edge-flow {
     display: none;
+  }
+}
+
+@layer components {
+  .ddd-viewport[data-appearance='print-light'] {
+    --ddd-surface-canvas: #fff;
+    --ddd-surface-raised: #fff;
+    --ddd-surface-hover: #edf4fa;
+    --ddd-print-header: #e1eef8;
+    --ddd-border: #000;
+    --ddd-fg: #111;
+    --ddd-fg-muted: #222;
+    --ddd-edge: #000;
+  }
+
+  .ddd-viewport[data-appearance='print-dark'] {
+    --ddd-surface-canvas: #151a21;
+    --ddd-surface-raised: #1e2630;
+    --ddd-surface-hover: #303d4e;
+    --ddd-print-header: #2b4056;
+    --ddd-border: #bacbdd;
+    --ddd-fg: #f1f6fc;
+    --ddd-fg-muted: #c9d8e8;
+    --ddd-edge: #d0ddeb;
+  }
+
+  .ddd-viewport:is([data-appearance='print-light'], [data-appearance='print-dark']) {
+    --ddd-dep: var(--ddd-edge);
+    --ddd-font-mono: ui-monospace, Menlo, Consolas, monospace;
+
+    .ddd-table {
+      border-top-width: 1px;
+      border-top-color: var(--ddd-border);
+      font-family: Arial, sans-serif;
+      box-shadow: none;
+    }
+    .ddd-table.is-selected {
+      outline: 2px solid var(--ddd-accent);
+      outline-offset: 2px;
+    }
+    .ddd-table__header {
+      background: var(--ddd-print-header);
+      height: calc(var(--ddd-table-header-h) + 2px);
+      padding-top: 2px;
+      padding-inline: calc(var(--ddd-table-pad-x) - 1px);
+    }
+    .ddd-table__title {
+      gap: 0;
+    }
+    .ddd-table__col {
+      padding-inline: calc(var(--ddd-table-pad-x) - 1px);
+      gap: 14px;
+    }
+    .ddd-table__col-left {
+      gap: 0;
+    }
+    .ddd-table__col-key {
+      flex-basis: 40px;
+      font-weight: 700;
+    }
+    .ddd-table__col-name.is-pk {
+      color: inherit;
+    }
+    .ddd-table__col-name,
+    .ddd-table__col-type {
+      white-space: pre;
+    }
+
+    .ddd-edge-group,
+    .ddd-dep-group {
+      opacity: 1;
+    }
+    .ddd-group-node,
+    .ddd-group-container {
+      border-color: var(--ddd-border) !important;
+    }
+    .ddd-group-container {
+      background: transparent !important;
+    }
+    .ddd-group-node,
+    .ddd-group-container__label {
+      background: var(--ddd-print-header) !important;
+      color: var(--ddd-fg);
+    }
+  }
+}
+
+@layer components {
+  .ddd-diagram-label {
+    position: absolute;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    padding: 8px;
+    color: var(--ddd-fg);
+    text-align: left;
+    white-space: pre;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+  }
+
+  .ddd-diagram-label span { display: block; height: 1lh; }
+  .ddd-diagram-label:active { cursor: grabbing; }
+  .ddd-diagram-label:hover { outline: 1px dashed var(--ddd-border); }
+  .ddd-label-coordinates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ddd-space-3); }
+}
+
+@layer components {
+  .ddd-project-controls { display: grid; gap: var(--ddd-space-2); }
+  .ddd-project-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+}
+
+@layer components {
+  .ddd-project-title-block { padding: 0; }
+  .ddd-project-title-block svg { display: block; overflow: visible; pointer-events: none; }
+}
+
+@layer components {
+  .ddd-architecture-surface {
+    position: absolute;
+    overflow: visible;
+    pointer-events: none;
+    user-select: none;
+    touch-action: none;
+  }
+  .ddd-architecture-surface [data-arch-id] { pointer-events: all; cursor: grab; }
+  .ddd-architecture-surface [data-arch-id]:active { cursor: grabbing; }
+  .ddd-viewport.is-pan-mode .ddd-architecture-surface [data-arch-id] { cursor: grab; }
+}
+
+@layer components {
+  .ddd-architecture-outline-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 5px 8px;
+    background: transparent;
+    color: var(--ddd-fg);
+    border: 0;
+    border-radius: 4px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .ddd-architecture-outline-item:hover { background: var(--ddd-surface-hover); }
+  .ddd-architecture-outline-item small { color: var(--ddd-fg-muted); }
+}
+
+@layer components {
+  path.ddd-waypoint-hit, .ddd-edges path.ddd-waypoint-hit {
+    fill: none;
+    stroke: transparent;
+    pointer-events: stroke;
+    cursor: grab;
+  }
+  .ddd-architecture-link-selected {
+    fill: none;
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 3.5;
+    pointer-events: none;
+  }
+  circle.ddd-waypoint, circle.ddd-waypoint-insert, circle.ddd-movable-endpoint {
+    fill: var(--ddd-surface-raised);
+    stroke: var(--ddd-edge-selected);
+    stroke-width: 1.6;
+    pointer-events: all;
+    cursor: grab;
+  }
+  circle.ddd-waypoint-insert {
+    stroke: var(--ddd-edge-handle);
+  }
+}
+
+@layer components {
+  circle.ddd-movable-endpoint {
+    fill: var(--ddd-edge-selected);
+    stroke: var(--ddd-surface-raised);
   }
 }

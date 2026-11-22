@@ -17,10 +17,14 @@ export type FocusTarget =
  * collapsed group, or — for a hidden table — its group's box with a notice, else just the notice.
  */
 export function resolveFocusTarget(s: AppState, name: QualifiedName): FocusTarget {
-  if (!s.schema.tables.some((t) => t.name === name)) {
+  const table = s.schema.tables.find((t) => t.name === name);
+  if (!table) {
     return { kind: 'none', notice: `${name} is not in the diagram; save the .dbml to update it.` };
   }
-  const { scene, rows } = liveScene(s);
+  const { scene, rows, schema } = liveScene(s);
+  if (!schema.tables.some((t) => t.name === name)) {
+    return { kind: 'none', notice: `${name} is outside the active diagram view.` };
+  }
   const group = s.schema.groups.find((g) => g.tables.includes(name));
   if (scene.collapsedTables.has(name)) {
     const node = scene.collapsedNodes.find((n) => n.name === group?.name);
@@ -33,7 +37,7 @@ export function resolveFocusTarget(s: AppState, name: QualifiedName): FocusTarge
   }
   const pos = s.positions.get(name);
   if (!pos) return { kind: 'none', notice: `${name} has no position yet.` };
-  const size = estimateSize(rows.count(name));
+  const size = estimateSize(rows.count(name), table);
   return { kind: 'table', bbox: { x: pos.x, y: pos.y, w: size.width, h: size.height } };
 }
 

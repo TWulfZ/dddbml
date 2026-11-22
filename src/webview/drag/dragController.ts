@@ -6,7 +6,8 @@ import { screenToWorld, type Point } from '../render/viewport';
 import { gridSnapper } from '../layout/grid';
 import { effectiveEdgeLayout } from '../layout/edgeSides';
 import { computeDragEdgeChanges, hasShape, rawLayoutDeps, rawLayoutRefs } from '../layout/smartLayout/edgeReset';
-import type { EdgeLayout, Waypoint } from '../../shared/types';
+import type { EdgeLayout, EdgeSide, Waypoint } from '../../shared/types';
+import type { Bbox } from '../render/spatialIndex';
 import { isFkDragActive } from './fkDrag';
 
 /**
@@ -371,6 +372,8 @@ export function readEdgeStyle(refId: string): EdgeStyle {
   if (l?.color) s.color = l.color;
   if (l?.sourceSide) s.sourceSide = l.sourceSide;
   if (l?.targetSide) s.targetSide = l.targetSide;
+  if (l?.sourcePort !== undefined) s.sourcePort = l.sourcePort;
+  if (l?.targetPort !== undefined) s.targetPort = l.targetPort;
   if (l?.auto) s.auto = true;
   return s;
 }
@@ -399,76 +402,94 @@ export function flipLoopSide(refId: string): void {
   commitEdgeStyle(refId, before, 'Flip edge port');
 }
 
-/**
- * Drag an edge endpoint across its table to flip the port side (left <-> right). The side is
- * chosen by which half of the table the pointer is over; committed as one EdgeStyleCommand.
- * `loop` flips both ends together.
- */
+/** Closest point on the table perimeter; ratios keep an endpoint attached when tables move/resize. */
+export function nearestTablePort(box: Bbox, point: Point): { side: EdgeSide; ratio: number } {
+  const clamp = (n: number) => Math.max(0.05, Math.min(0.95, n));
+  const xRatio = clamp((point.x - box.x) / Math.max(1, box.w));
+  const yRatio = clamp((point.y - box.y) / Math.max(1, box.h));
+  const options: Array<{ side: EdgeSide; ratio: number; x: number; y: number }> = [
+    { side: 'left', ratio: yRatio, x: box.x, y: box.y + box.h * yRatio },
+    { side: 'right', ratio: yRatio, x: box.x + box.w, y: box.y + box.h * yRatio },
+    { side: 'top', ratio: xRatio, x: box.x + box.w * xRatio, y: box.y },
+    { side: 'bottom', ratio: xRatio, x: box.x + box.w * xRatio, y: box.y + box.h },
+  ];
+  options.sort((a, b) => Math.hypot(point.x - a.x, point.y - a.y) - Math.hypot(point.x - b.x, point.y - b.y));
+  return { side: options[0]!.side, ratio: options[0]!.ratio };
+}
+
+/** Drag an endpoint freely along any table side, committed as one history step. */
 export function startEndpointDrag(
   refId: string,
   end: 'source' | 'target',
-  tableCenterX: number,
+  tableBounds: Bbox,
   e: PointerEvent,
   target: SVGElement | HTMLElement,
-  toWorldX: (clientX: number) => number | null,
-  loop = false,
+  toWorld: (clientX: number, clientY: number) => Point | null = (x, y) => clientToWorld(x, y, viewportOrigin(target)),
+  preserveWaypoints = false,
 ): void {
   if (edgeDragActive || e.button !== 0) return;
-  if (isCanvasReadOnly(store.getState())) return;
+  const state = store.getState();
+  if (state.panMode || state.spacePan || isCanvasReadOnly(state)) return;
   edgeDragActive = true;
   e.stopPropagation();
   e.preventDefault();
   const before = readEdgeStyle(refId);
+  const beforeLayout = store.getState().edgeLayouts.get(refId);
   try { target.setPointerCapture(e.pointerId); } catch { /* noop */ }
   document.body.classList.add('ddd-is-edge-dragging');
 
-  // A top/bottom port sits near the table's centre x, so without a threshold a click's jitter
-  // would pin left/right and silently replace the automatic route.
+  // Click jitter must not replace the automatic route with a manually pinned endpoint.
   let dragging = false;
   const onMove = (ev: PointerEvent) => {
     if (!dragging && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < CLICK_THRESHOLD_PX) return;
     dragging = true;
-    const wx = toWorldX(ev.clientX);
-    if (wx === null) return;
-    const side = wx >= tableCenterX ? 'right' : 'left';
-    if (loop) setLoopSide(refId, side);
-    else store.getState().setEdgeSide(refId, end, side);
+    const point = toWorld(ev.clientX, ev.clientY);
+    if (point === null) return;
+    const port = nearestTablePort(tableBounds, point);
+    store.getState().setEdgeSide(refId, end, port.side, port.ratio, preserveWaypoints);
   };
 
-  const onUp = (ev: PointerEvent) => {
+  const finish = (ev: PointerEvent, cancelled: boolean) => {
     edgeDragActive = false;
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
-    window.removeEventListener('pointercancel', onUp);
+    window.removeEventListener('pointercancel', onCancel);
     try { target.releasePointerCapture(ev.pointerId); } catch { /* noop */ }
     document.body.classList.remove('ddd-is-edge-dragging');
+    if (cancelled) {
+      store.getState().applyEdgeLayouts([[refId, beforeLayout ?? null]]);
+      return;
+    }
     const after = readEdgeStyle(refId);
     const current = store.getState().edgeLayouts.get(refId);
     // Flipped and dragged back: no edit, so the shape stays A*'s and no history entry is pushed.
-    if (before.auto && current && after.sourceSide === before.sourceSide && after.targetSide === before.targetSide) {
-      store.getState().applyEdgeLayouts([[refId, { ...current, auto: true }]]);
+    if (before.auto && current && after.sourceSide === before.sourceSide && after.targetSide === before.targetSide && after.sourcePort === before.sourcePort && after.targetPort === before.targetPort) {
+      store.getState().applyEdgeLayouts([[refId, beforeLayout ?? null]]);
     }
-    commitEdgeStyle(refId, before, 'Flip edge port');
+    const finalLayout = store.getState().edgeLayouts.get(refId) ?? null;
+    if (JSON.stringify(beforeLayout ?? null) === JSON.stringify(finalLayout)) return;
+    const command = buildEdgesResetCommand(new Map(beforeLayout ? [[refId, beforeLayout]] : []), [[refId, finalLayout]], 'Move edge endpoint');
+    if (command) store.getState().pushArrangeCommand(command);
+    schedulePersist();
   };
 
+  const onUp = (ev: PointerEvent) => finish(ev, false);
+  const onCancel = (ev: PointerEvent) => finish(ev, true);
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
-  window.addEventListener('pointercancel', onUp);
+  window.addEventListener('pointercancel', onCancel);
 }
 
-/**
- * Dep edges (spec 18) use FREE waypoints the curve passes through, not orthogonal corners. Dragging a
- * span's insert handle adds a waypoint at `index` (behind the same 8px anti-graze threshold as notches).
- */
-export function startDepWaypointInsert(
-  depKey: string,
+/** Add a free waypoint after the pointer clears the creation threshold. */
+export function startWaypointInsert(
+  edgeId: string,
   index: number,
   at: Point,
   e: PointerEvent,
   target: SVGElement | HTMLElement,
 ): void {
-  const from = snapshotWaypoints(depKey);
-  runEdgeDrag(depKey, e, target, (dxWorld, dyWorld, ev, startX, startY) => {
+  const from = snapshotWaypoints(edgeId);
+  runEdgeDrag(edgeId, e, target, (dxWorld, dyWorld, ev, startX, startY) => {
     if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < CREATE_THRESHOLD_PX) return null;
     const snap = gridSnapper();
     const out = from.map((w) => ({ x: w.x, y: w.y }));
@@ -477,23 +498,23 @@ export function startDepWaypointInsert(
   });
 }
 
-export function startDepWaypointMove(depKey: string, index: number, e: PointerEvent, target: SVGElement | HTMLElement): void {
-  const from = snapshotWaypoints(depKey);
+export function startWaypointMove(edgeId: string, index: number, e: PointerEvent, target: SVGElement | HTMLElement): void {
+  const from = snapshotWaypoints(edgeId);
   const origin = from[index];
   if (!origin) return;
-  runEdgeDrag(depKey, e, target, (dxWorld, dyWorld) => {
+  runEdgeDrag(edgeId, e, target, (dxWorld, dyWorld) => {
     const snap = gridSnapper();
     return from.map((w, i) => (i === index ? { x: snap(origin.x + dxWorld), y: snap(origin.y + dyWorld) } : { x: w.x, y: w.y }));
   });
 }
 
-export function deleteDepWaypoint(depKey: string, index: number): void {
+export function deleteWaypoint(edgeId: string, index: number): void {
   if (isCanvasReadOnly(store.getState())) return;
-  const from = snapshotWaypoints(depKey);
+  const from = snapshotWaypoints(edgeId);
   if (index < 0 || index >= from.length) return;
   const to = from.filter((_, i) => i !== index);
-  store.getState().setEdgeWaypoints(depKey, to);
-  const cmd = buildWaypointCommand(depKey, from, to, 'remove');
+  store.getState().setEdgeWaypoints(edgeId, to);
+  const cmd = buildWaypointCommand(edgeId, from, to, 'remove');
   if (cmd) store.getState().pushWaypointCommand(cmd);
   schedulePersist();
 }

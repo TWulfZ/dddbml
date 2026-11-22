@@ -2,6 +2,7 @@ import * as dagre from '@dagrejs/dagre';
 import type { QualifiedName, Ref, Table } from '../../shared/types';
 import { store } from '../state/store';
 import { densityMetrics } from './density';
+import { printTableWidth } from './printTable';
 
 export interface NodeSize {
   width: number;
@@ -62,10 +63,11 @@ function activeMetrics() {
 /**
  * Estimate node footprint based on column count and the active density.
  */
-export function estimateSize(columnCount: number): NodeSize {
-  const m = activeMetrics();
+export function estimateSize(columnCount: number, table?: Table): NodeSize {
+  const { density, diagramAppearance } = store.getState().settings.ui;
+  const m = densityMetrics(density);
   return {
-    width: m.tableWidth,
+    width: table && diagramAppearance !== 'theme' ? printTableWidth(table, density) : m.tableWidth,
     height: m.borderTop + m.headerHeight + columnCount * m.rowHeight + m.colsPad + m.borderBottom,
   };
 }

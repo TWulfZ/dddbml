@@ -1,9 +1,11 @@
+import type { Architecture } from './architecture';
 /**
  * Shared types between extension host (Node.js) and webview (Preact).
  * These MUST be plain data — no class instances, no functions.
  * They cross the postMessage boundary and are JSON-serialized.
  */
 
+import type { DiagramLabel, LabelEdit, LabelLayout } from './diagramLabels';
 import type { ExportCommandPayload, ExporterMeta } from './exporters/types';
 
 export type QualifiedName = string; // e.g., "public.users"
@@ -38,10 +40,13 @@ export type RefEndpointRelation = '1' | '*'; // one or many
 
 export interface Ref {
   id: string; // stable hash of endpoints
-  source: { table: QualifiedName; columns: string[]; relation: RefEndpointRelation };
-  target: { table: QualifiedName; columns: string[]; relation: RefEndpointRelation };
+  source: { table: QualifiedName; columns: string[]; relation: RefEndpointRelation; optional?: boolean };
+  target: { table: QualifiedName; columns: string[]; relation: RefEndpointRelation; optional?: boolean };
   name?: string | null;
+  /** DBML relationship color; overridden by a saved diagram color. */
+  color?: string;
   /** DBML referential actions as written (`cascade`, `set null`, ...); absent when unspecified. */
+  inactive?: boolean;
   onDelete?: string;
   onUpdate?: string;
 }
@@ -50,6 +55,7 @@ export interface TableGroup {
   name: string;
   tables: QualifiedName[];
   note?: string | null;
+  color?: string;
 }
 
 export interface RecordValue {
@@ -87,10 +93,37 @@ export interface Dep {
   edges: DepEdge[];
 }
 
+export interface DiagramView {
+  name: string;
+  tables: string[] | '*';
+  notes: string[] | '*';
+  groups: string[] | '*';
+  schemas: string[] | '*';
+}
+
+export interface ProjectImage {
+  key: 'logo' | 'image';
+  filename: string;
+  dataUri?: string;
+}
+
+export interface ProjectInfo {
+  fields?: { key: string; value: string }[];
+  images?: ProjectImage[];
+  fontSize?: number;
+  name: string;
+  note?: string;
+  databaseType?: string;
+}
+
 export interface Schema {
+  architecture?: Architecture;
+  project?: ProjectInfo;
+  diagramViews?: DiagramView[];
   tables: Table[];
   refs: Ref[];
   groups: TableGroup[];
+  labels?: DiagramLabel[];
   records?: TableRecords[];
   deps?: Dep[];
 }
@@ -177,13 +210,16 @@ export interface EdgeLayout {
    * Override of the zone-rule source port side (`chooseSides`, spec 05 §1). Absent = `chooseSides`.
    * Written by a user flip, or by the A* pass (marked `auto`): always alongside its waypoints, and
    * without waypoints only when it differs from `chooseSides`.
-   * Only `left`/`right` are drawn. `top`/`bottom` are still read (pre-0.4 routers wrote them, manual
-   * or `auto`), but no current router or UI produces them, so a shape carrying one is ignored whole
-   * (`isLegacyEdgeShape`, spec 05 §11).
+   * Manual endpoint drags support all four sides; the matching port ratio preserves the position.
+   * Vertical overrides without a port ratio remain legacy shapes for backwards compatibility.
    */
   sourceSide?: EdgeSide;
+  /** User-selected position along the source side, normalized to [0, 1]. */
+  sourcePort?: number;
   /** Override of the zone-rule target port side. Absent = `chooseSides`. See `sourceSide`. */
   targetSide?: EdgeSide;
+  /** User-selected position along the target side, normalized to [0, 1]. */
+  targetPort?: number;
   /**
    * The shape (waypoints + sides) came from the A* pass, not the user (spec 05, F20): it does not
    * count as manual and is dropped when an endpoint moves. Any user edit of the shape clears it.
@@ -204,6 +240,7 @@ export interface Layout {
   tables: Record<QualifiedName, TableLayout>;
   groups: Record<string, GroupLayout>;
   edges?: Record<string, EdgeLayout>;
+  labels?: Record<string, LabelLayout>;
   /**
    * Personal hidden flags of tables with no `tables` entry yet (no shared position, e.g. a new or
    * never-dragged table, or a corrupt sidecar at open). Rides with `tables` in both directions and
@@ -214,7 +251,7 @@ export interface Layout {
 
 /* ----- Collaborative merge (see specs/14) ----- */
 
-export type MergeSection = 'tables' | 'groups' | 'edges';
+export type MergeSection = 'tables' | 'groups' | 'edges' | 'labels';
 
 /**
  * A single "both sides changed the same key" conflict, in a shape safe to cross the
@@ -332,6 +369,8 @@ export type SchemaDeleteTarget =
 
 export type UiDensity = 'compact' | 'cozy' | 'comfortable';
 
+export type DiagramAppearance = 'theme' | 'print-light' | 'print-dark';
+
 export interface AppSettings {
   zoomStep: number;
   zoomMin: number;
@@ -341,6 +380,8 @@ export interface AppSettings {
   };
   ui: {
     density: UiDensity;
+    showKeyColumn: boolean;
+    diagramAppearance: DiagramAppearance;
     /** Magnet mode: snap table positions and edge bend vertices to `gridSize`. */
     snapToGrid: boolean;
     /** World-unit grid spacing used when `snapToGrid` is on. */
@@ -368,7 +409,7 @@ export function defaultSettings(): AppSettings {
     zoomMin: 0.08,
     zoomMax: 4,
     lod: { lowThreshold: 0.3 },
-    ui: { density: 'cozy', snapToGrid: false, gridSize: 16, layoutSpacing: 1 },
+    ui: { density: 'cozy', showKeyColumn: false, diagramAppearance: 'theme', snapToGrid: false, gridSize: 16, layoutSpacing: 1 },
     export: {
       defaultFormat: 'typeorm',
       typeorm: {
@@ -445,6 +486,7 @@ export type HostToWebview =
   | { type: 'exportImage:prompt' }
   | { type: 'image:result'; payload: { ok: boolean; path?: string; message?: string } }
   /** World position for a table the host is about to write; it may precede the table in the schema. */
+  | { type: 'layout:placeLabel'; payload: { key: string; layout: LabelLayout } }
   | { type: 'layout:place'; payload: { table: QualifiedName; x: number; y: number } }
   /** Center and select the table (a hidden one or one in a collapsed group focuses its group). */
   | { type: 'diagram:focusTable'; payload: { table: QualifiedName } }
@@ -480,6 +522,7 @@ export type WebviewToHost =
   | { type: 'git:diff:exit' }
   | { type: 'notify:headerColorOverride'; payload: { table: QualifiedName } }
   /** World coords of the context-menu click; `group` = expanded group container under it. */
+  | { type: 'schema:editLabel'; payload: LabelEdit }
   | { type: 'schema:addTable'; payload: { x: number; y: number; group?: string } }
   | { type: 'schema:addField'; payload: { table: QualifiedName } }
   | { type: 'schema:addRef'; payload: { from: ColumnRef; to: ColumnRef; op: RefOp } }
@@ -499,6 +542,8 @@ export interface FlatSettingsPatch {
   'zoomMax': number;
   'lod.lowThreshold': number;
   'ui.density': UiDensity;
+  'ui.showKeyColumn': boolean;
+  'ui.diagramAppearance': DiagramAppearance;
   'ui.snapToGrid': boolean;
   'ui.gridSize': number;
   'ui.layoutSpacing': number;
@@ -521,6 +566,8 @@ export function flattenSettings(s: AppSettings): FlatSettingsPatch {
     'zoomMax': s.zoomMax,
     'lod.lowThreshold': s.lod.lowThreshold,
     'ui.density': s.ui.density,
+    'ui.showKeyColumn': s.ui.showKeyColumn,
+    'ui.diagramAppearance': s.ui.diagramAppearance,
     'ui.snapToGrid': s.ui.snapToGrid,
     'ui.gridSize': s.ui.gridSize,
     'ui.layoutSpacing': s.ui.layoutSpacing,

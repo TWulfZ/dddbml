@@ -18,13 +18,14 @@ function ExportModalImpl() {
   const tableCount = useAppStore((s) => s.schema.tables.length);
 
   const [formatId, setFormatId] = useState<string>(defaultFormat);
-  const [scope, setScope] = useState<Scope>('all');
+  const [requestedScope, setScope] = useState<Scope>('all');
   const [options, setOptions] = useState<Record<string, unknown>>({});
 
   const currentExporter = useMemo<ExporterMeta | null>(() => {
     if (exporters.length === 0) return null;
     return exporters.find((e) => e.id === formatId) ?? exporters[0]!;
   }, [exporters, formatId]);
+  const scope = currentExporter?.fullSchemaOnly ? 'all' : requestedScope;
 
   useEffect(() => {
     if (!open) return;
@@ -57,7 +58,7 @@ function ExportModalImpl() {
   };
 
   const selectedCount = selection.size;
-  const scopeSelectedDisabled = selectedCount === 0;
+  const scopeSelectedDisabled = selectedCount === 0 || currentExporter?.fullSchemaOnly === true;
   const hasExporters = exporters.length > 0;
 
   return (

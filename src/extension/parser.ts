@@ -1,11 +1,19 @@
+import { mapArchitecture } from './architectureParser';
 import { Parser } from '@dbml/core';
+import {
+  DEFAULT_LABEL_FONT, DEFAULT_LABEL_SIZE, isLabelCoordinate, isLabelFont, isLabelSize, type DiagramLabel,
+} from '../shared/diagramLabels';
+import { isName, isPunct, lex, nameOf } from './dbmlScan';
+import type { ModelToken } from './dbmlModel';
 import { cmpCodeUnit } from '../shared/compare';
 import type {
   Column,
   ColumnDefaultKind,
   Dep,
   DepEndpoint,
+  DiagramView,
   ParseError,
+  ProjectInfo,
   QualifiedName,
   Ref,
   RecordValue,
@@ -28,7 +36,13 @@ export function parseDbml(source: string): { schema: Schema; error: null } | { s
   try {
     const db = Parser.parse(source, 'dbmlv2');
     const exported = db.export() as unknown as ExportedDatabase;
-    return { schema: mapExportedToSchema(exported), error: null };
+    const schema = mapExportedToSchema(exported);
+    const architecture = mapArchitecture(db);
+    if (architecture) schema.architecture = architecture;
+    const model = db as unknown as DatabaseAnnotations;
+    if (model.name) schema.project = mapProject(source, model.name, model);
+    if (model.diagramViews?.length) schema.diagramViews = model.diagramViews.map((v) => mapDiagramView(source, v));
+    return { schema, error: null };
   } catch (err) {
     return { schema: null, error: toParseError(err) };
   }
@@ -77,6 +91,7 @@ interface ExportedTable {
 }
 
 interface ExportedRef {
+  inactive?: boolean;
   endpoints: Array<{
     schemaName: string | null;
     tableName: string;
@@ -84,12 +99,15 @@ interface ExportedRef {
     relation: unknown;
   }>;
   name: string | null;
+  color?: string;
   onDelete: unknown;
   onUpdate: unknown;
 }
 
 interface ExportedTableGroup {
   name: string;
+  note?: string | null;
+  color?: string;
   tables: Array<{ schemaName: string | null; tableName: string }>;
 }
 
@@ -121,9 +139,97 @@ interface ExportedRecords {
   values: Array<Array<{ value: unknown; type: string }>>;
 }
 
+interface ExportedNote {
+  name: string;
+  content: string;
+  color?: string;
+  metadata?: Record<string, { value: unknown }>;
+}
+
 interface ExportedDatabase {
+  notes?: ExportedNote[];
   schemas: ExportedSchema[];
   records?: ExportedRecords[];
+}
+
+interface ViewMember { name: string; schemaName?: string }
+interface CoreDiagramView {
+  name: string;
+  schemaName?: string | null;
+  token: ModelToken;
+  visibleEntities: {
+    tables?: ViewMember[] | null;
+    stickyNotes?: ViewMember[] | null;
+    tableGroups?: ViewMember[] | null;
+    schemas?: ViewMember[] | null;
+  };
+}
+interface DatabaseAnnotations {
+  token?: ModelToken;
+  name?: string;
+  note?: string | null;
+  databaseType?: string;
+  diagramViews?: CoreDiagramView[];
+}
+
+function mapProject(source: string, name: string, model: DatabaseAnnotations): ProjectInfo {
+  const project: ProjectInfo = { name };
+  if (model.note) project.note = model.note;
+  if (model.databaseType) project.databaseType = model.databaseType;
+  if (!model.token) return project;
+  const { start, end } = model.token;
+  const tokens = lex(source, start.offset, end.offset).filter((token) => token.kind !== 'comment');
+  const open = tokens.findIndex((token) => isPunct(source, token, '{'));
+  if (open < 0) return project;
+  const fields: NonNullable<ProjectInfo['fields']> = [];
+  const images: NonNullable<ProjectInfo['images']> = [];
+  for (let i = open + 1; i < tokens.length; i++) {
+    const keyToken = tokens[i];
+    const valueToken = tokens[i + 2];
+    if (!isName(keyToken) || !isPunct(source, tokens[i + 1], ':') ||
+        (valueToken?.kind !== 'string' && valueToken?.kind !== 'quoted')) continue;
+    const key = nameOf(source, keyToken);
+    const raw = source.slice(valueToken.start, valueToken.end);
+    const quoteLength = raw.startsWith("'''") ? 3 : 1;
+    const value = raw.slice(quoteLength, -quoteLength).replace(/\\([\\'"nrt])/g, (_match, char: string) =>
+      char === 'n' ? '\n' : char === 'r' ? '\r' : char === 't' ? '\t' : char);
+    const normalized = key.toLowerCase();
+    if (normalized === 'logo' || normalized === 'image') {
+      const previous = images.find((image) => image.key === normalized);
+      if (previous) previous.filename = value;
+      else images.push({ key: normalized, filename: value });
+    }
+    else if (normalized === 'font_size' && isLabelSize(Number(value))) project.fontSize = Number(value);
+    else if (normalized !== 'note' && normalized !== 'font_size') {
+      fields.push({ key, value: normalized === 'database_type' ? model.databaseType ?? value : value });
+    }
+    i += 2;
+  }
+  if (fields.length) project.fields = fields;
+  if (images.length) project.images = images;
+  return project;
+}
+
+function mapDiagramView(source: string, view: CoreDiagramView): DiagramView {
+  // Core uses empty arrays for both some omitted categories and wildcards.
+  const tokens = lex(source, view.token.start.offset, view.token.end.offset).filter((t) => t.kind !== 'comment');
+  const wildcards = new Set<string>();
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (isName(token) && isPunct(source, tokens[i + 1], '{') && isPunct(source, tokens[i + 2], '*')) {
+      wildcards.add(nameOf(source, token).toLowerCase());
+    }
+  }
+  const values = (category: string, members: ViewMember[] | null | undefined, map = (v: ViewMember) => v.name): string[] | '*' =>
+    wildcards.has(category) ? '*' : (members ?? []).map(map);
+  const visible = view.visibleEntities;
+  return {
+    name: view.schemaName ? qualify(view.schemaName, view.name) : view.name,
+    tables: values('tables', visible.tables, (v) => qualify(v.schemaName, v.name)),
+    notes: values('notes', visible.stickyNotes),
+    groups: values('tablegroups', visible.tableGroups),
+    schemas: values('schemas', visible.schemas),
+  };
 }
 
 export function unquote(s: string): string {
@@ -162,7 +268,10 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
         tableToGroup.set(q, groupName);
       }
       members.sort();
-      groups.push({ name: groupName, tables: members });
+      const group: TableGroup = { name: groupName, tables: members };
+      if (g.note) group.note = g.note;
+      if (g.color) group.color = g.color;
+      groups.push(group);
     }
   }
 
@@ -216,10 +325,25 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
   groups.sort((a, b) => cmpCodeUnit(a.name, b.name));
 
   const schema: Schema = { tables, refs, groups };
+  if (db.notes?.length) schema.labels = db.notes.map(mapDiagramLabel);
   const records = mapRecords(db.records ?? [], resolveEndpoint);
   if (records.length > 0) schema.records = records;
   if (deps.length > 0) schema.deps = deps;
   return schema;
+}
+
+function mapDiagramLabel(note: ExportedNote): DiagramLabel {
+  const { font, font_size: size, x, y } = note.metadata ?? {};
+  const label: DiagramLabel = {
+    name: note.name,
+    text: note.content,
+    font: isLabelFont(font?.value) ? font.value : DEFAULT_LABEL_FONT,
+    fontSize: isLabelSize(size?.value) ? size.value : DEFAULT_LABEL_SIZE,
+  };
+  if (isLabelCoordinate(x?.value)) label.x = x.value;
+  if (isLabelCoordinate(y?.value)) label.y = y.value;
+  if (note.color && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(note.color)) label.color = note.color;
+  return label;
 }
 
 function mapRecords(blocks: ExportedRecords[], resolveTable: EndpointResolver): TableRecords[] {
@@ -325,22 +449,30 @@ function mapRef(r: ExportedRef, defaultSchemaName: string, resolveTable: Endpoin
     table: resolveTable(a.schemaName, a.tableName, defaultSchemaName),
     columns: a.fieldNames.map(unquote),
     relation: normalizeRelation(a.relation),
+    ...(isOptionalRelation(a.relation) ? { optional: true } : {}),
   };
   const target = {
     table: resolveTable(b.schemaName, b.tableName, defaultSchemaName),
     columns: b.fieldNames.map(unquote),
     relation: normalizeRelation(b.relation),
+    ...(isOptionalRelation(b.relation) ? { optional: true } : {}),
   };
   const id = stableRefId(source.table, source.columns, target.table, target.columns);
   const ref: Ref = { id, source, target, name: r.name || null };
+  if (r.color) ref.color = r.color;
+  if (r.inactive) ref.inactive = true;
   if (typeof r.onDelete === 'string') ref.onDelete = r.onDelete;
   if (typeof r.onUpdate === 'string') ref.onUpdate = r.onUpdate;
   return ref;
 }
 
 function normalizeRelation(rel: unknown): RefEndpointRelation {
-  if (rel === '*' || rel === 'many' || rel === '>') return '*';
+  if (rel === '*' || rel === '0..*' || rel === 'many' || rel === '>') return '*';
   return '1';
+}
+
+function isOptionalRelation(rel: unknown): boolean {
+  return rel === '0..1' || rel === '0..*';
 }
 
 export function stableRefId(

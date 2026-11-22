@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
+import { PROJECT_BLOCK_KEY, type ProjectTemplate } from '../../shared/diagramLabels';
+import type { Architecture } from '../../shared/architecture';
+import { buildArchitectureScene, nodeSubtitle } from '../layout/architectureLayout';
+import { diagramAnnotations } from '../layout/diagramLabels';
+import { fitToBbox } from '../render/viewport';
 import type { TableGroup } from '../../shared/types';
 import { isCanvasReadOnly, store, useAppStore } from '../state/store';
 import { schedulePersist } from '../persistence';
 import { ColorPopup } from '../render/colorPopup';
+import { Checkbox, SelectField } from '../ui/Field';
+import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Search } from '../ui/Search';
 import { Tooltip } from '../ui/Tooltip';
@@ -22,13 +29,23 @@ import {
 } from '../icons';
 
 function GroupPanelImpl() {
+  const projectTemplate = useAppStore((s) => s.labelLayouts[PROJECT_BLOCK_KEY]?.template ?? 'captions');
+  const architecture = useAppStore((s) => s.schema.architecture);
+  const projectInfo = useAppStore((s) => s.schema.project);
+  const project = projectInfo ?? (architecture?.title ? { name: architecture.title } : undefined);
+  const views = useAppStore((s) => s.schema.diagramViews);
+  const activeView = useAppStore((s) => s.activeDiagramView);
+  const showProjectTitle = useAppStore((s) => s.showProjectTitle);
+  const showProjectNote = useAppStore((s) => s.showProjectNote);
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const groups = useAppStore((s) => s.schema.groups);
   const tables = useAppStore((s) => s.schema.tables);
   const groupState = useAppStore((s) => s.groups);
   const hiddenTables = useAppStore((s) => s.hiddenTables);
   const open = useAppStore((s) => s.viewsPanelOpen);
   const focusNonce = useAppStore((s) => s.viewsSearchFocusNonce);
-  const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const printing = useAppStore((s) => s.settings.ui.diagramAppearance !== 'theme');
+  const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk) && !printing;
   // Hide/collapse/colour are layout edits: during a merge or git overlay they would be reverted on
   // Apply or never saved, so they are locked like the canvas.
   const readOnly = useAppStore(isCanvasReadOnly);
@@ -117,14 +134,15 @@ function GroupPanelImpl() {
           </Tooltip>
         </div>
       </div>
-      <div class="ddd-group-panel__views">
+      {!architecture ? <div class="ddd-group-panel__views">
         <span class="ddd-group-panel__section">View options</span>
         <Button
           variant="action"
           size="sm"
           active={showOnlyPkFk}
+          disabled={printing}
           onClick={() => store.getState().toggleShowOnlyPkFk()}
-          title="Show only primary-key and foreign-key columns"
+          title={printing ? 'Print layouts show all fields' : 'Show only primary-key and foreign-key columns'}
         >
           <IconFilter size={12} />
           <span>PK/FK columns only</span>
@@ -141,9 +159,35 @@ function GroupPanelImpl() {
             <span>Dependencies</span>
           </Button>
         ) : null}
-      </div>
-      <Search value={query} onInput={setQuery} placeholder="Search table or group" inputRef={searchRef} />
-      <ul class="ddd-group-list">
+      </div> : null}
+      {views?.length ? (
+        <SelectField label="Named view" value={views.some((view) => view.name === activeView) ? activeView! : ''}
+          options={[{ value: '', label: 'All diagram items' }, ...views.map((view) => ({ value: view.name, label: view.name }))]}
+          onChange={(value) => store.getState().setActiveDiagramView(value || null)} />
+      ) : null}
+      {project ? (
+        <div class="ddd-project-controls">
+          <SelectField label="Project rendering" value={projectTemplate}
+            options={[{ value: 'captions', label: 'Separate captions' }, { value: 'title-block', label: 'Title block' }]}
+            onChange={(value) => {
+              const state = store.getState();
+              state.setLabelLayout(PROJECT_BLOCK_KEY, { template: value as ProjectTemplate });
+              state.setShowProjectTitle(true);
+              schedulePersist();
+            }} disabled={readOnly} />
+          <Checkbox label={projectTemplate === 'title-block' ? 'Show title block' : 'Show project title'} value={showProjectTitle}
+            onCommit={(value) => store.getState().setShowProjectTitle(value)} />
+          {project.note ? <Checkbox label="Show project note" value={showProjectNote}
+            onCommit={(value) => store.getState().setShowProjectNote(value)} /> : null}
+          <Button variant="secondary" size="sm" onClick={() => setOverviewOpen(true)}>Project overview</Button>
+          <Modal open={overviewOpen} title={project.name} onClose={() => setOverviewOpen(false)}>
+            {project.databaseType ? <p>{project.databaseType}</p> : null}
+            {project.note ? <p class="ddd-project-note">{project.note}</p> : null}
+          </Modal>
+        </div>
+      ) : null}
+      <Search value={query} onInput={setQuery} placeholder={architecture ? 'Search elements or groups' : 'Search table or group'} inputRef={searchRef} />
+      {architecture ? <ArchitectureOutline architecture={architecture} query={lcQuery} /> : <ul class="ddd-group-list">
         {!hasGroups ? (
           <li class="ddd-group-empty">No groups defined</li>
         ) : filtered.length === 0 && ungroupedHidden.length === 0 ? (
@@ -175,9 +219,34 @@ function GroupPanelImpl() {
             </li>
           </>
         ) : null}
-      </ul>
+      </ul>}
     </div>
   );
+}
+
+function ArchitectureOutline({ architecture, query }: { architecture: Architecture; query: string }) {
+  const items = [
+    ...architecture.groups.map((group) => ({ ...group, subtitle: 'Group' })),
+    ...architecture.nodes.map((node) => ({ ...node, subtitle: nodeSubtitle(node) })),
+  ].filter((item) => `${item.name} ${item.subtitle}`.toLowerCase().includes(query));
+  const focus = (id: string) => {
+    const state = store.getState();
+    const { notes } = diagramAnnotations(state.schema, state.labelLayouts);
+    const scene = buildArchitectureScene(architecture, state.positions, notes);
+    const box = [...scene.nodes, ...scene.groups].find((item) => item.id === id);
+    if (box) {
+      if (!isCanvasReadOnly(state)) state.setSelection([id]);
+      fitToBbox(box, { maxZoom: 1.2 });
+    }
+  };
+  return <ul class="ddd-group-list">
+    {items.map((item) => <li key={item.id}>
+      <button class="ddd-architecture-outline-item" type="button" title={item.note} onClick={() => focus(item.id)}>
+        <strong>{item.name}</strong><small>{item.subtitle}</small>
+      </button>
+    </li>)}
+    {!items.length ? <li class="ddd-group-empty">{query ? 'No matching elements or groups' : 'No elements or groups'}</li> : null}
+  </ul>;
 }
 
 interface GroupRowProps {
@@ -194,7 +263,7 @@ function GroupRow({ group, state, hiddenTables, initialExpanded, filter, readOnl
   const [popup, setPopup] = useState<{ x: number; y: number } | null>(null);
   const hidden = state?.hidden ?? false;
   const collapsed = state?.collapsed ?? false;
-  const color = state?.color ?? colorForGroup(group.name);
+  const color = state?.color ?? group.color ?? colorForGroup(group.name);
   // While a filter is active, always expand so matching tables are visible.
   const expanded = filter.length > 0 ? true : userExpanded;
 

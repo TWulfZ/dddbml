@@ -23,6 +23,7 @@ const MENU_HEIGHT_EST = 176;
 const ANCHOR_GAP = 4;
 
 function AppMenuImpl() {
+  const architecture = useAppStore((s) => !!s.schema.architecture);
   const open = useAppStore((s) => s.appMenuOpen);
   const wrapRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -105,14 +106,14 @@ function AppMenuImpl() {
                 <IconSettings size={14} />
                 <span class="ddd-app-menu__label">Settings</span>
               </button>
-              <button
+              {!architecture ? <button
                 class="ddd-app-menu__item"
                 role="menuitem"
                 onClick={pick(() => store.getState().setExportPromptOpen(true))}
               >
                 <IconExport size={14} />
                 <span class="ddd-app-menu__label">Export…</span>
-              </button>
+              </button> : null}
               <button
                 class="ddd-app-menu__item"
                 role="menuitem"

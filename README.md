@@ -22,14 +22,14 @@ Open a `.dbml` file and run **`dddbml: Open Diagram`** (command palette or the e
 
 **Canvas**
 - Tables, refs and groups parsed with the official `@dbml/core` in a background worker; tables with no saved position are arranged by bounded context.
-- Pan with middle-click, `Space` + drag, or the hand tool. Zoom with the wheel, `Ctrl+=` / `Ctrl+-`, fit with `Ctrl+1`, reset with `Ctrl+0`.
-- Drag tables, marquee-select on empty space, `Shift` to add to the selection, `Esc` to clear. Undo/redo with `Ctrl+Z` / `Ctrl+Shift+Z`.
+- Pan by left-dragging empty canvas when no tables are selected. Middle-click, `Space` + drag, and the hand tool also pan. Zoom with the wheel, `Ctrl+=` / `Ctrl+-`, fit with `Ctrl+1`, reset with `Ctrl+0`.
+- Drag tables; use `Shift` + drag on empty space to box-select or add to a selection (`Esc` clears it). With tables selected, ordinary empty-space dragging also box-selects. Undo/redo with `Ctrl+Z` / `Ctrl+Shift+Z`.
 - Two detail levels by zoom: full tables, or colored rectangles for a bird's-eye view (threshold configurable).
 - Double-click a table header (or a column) to jump to its declaration in the `.dbml`; `Ctrl`+click anywhere in a `Table` block in the editor to focus it in the diagram.
 
 **Relationships**
 - Orthogonal edges that leave and enter at the FK/PK column rows, with crow's-foot / bar cardinality markers. Like dbdiagram, edges always leave from the left/right sides: a Z across a wide gap, an S when the tables are close, and a C around the right side once they overlap. Self-references draw as nested loops.
-- Edit an edge by sliding a segment or dragging a ghost handle to add a notch; flip the port side by dragging an endpoint; recolor; "Reset line" to tidy.
+- Edit an edge by sliding a segment or dragging a ghost handle to add a notch; drag an endpoint to any position along the left, right, top, or bottom table border; recolor; "Reset line" to tidy.
 - **Auto-arrange** (whole diagram or the selection) with an obstacle-avoiding edge router, cancelable with real progress.
 
 **Assisted editing** (writes your `.dbml` with minimal edits; `Ctrl+Z` in the diagram undoes them)
@@ -54,6 +54,7 @@ Open a `.dbml` file and run **`dddbml: Open Diagram`** (command palette or the e
 
 **Export**
 - Schema → **TypeORM entities** (PostgreSQL dialect; more dialects pluggable). Export the whole schema or the selection.
+- Schema → **PostgreSQL SQL script**. Choose **PostgreSQL (SQL)** in **Export Schema** to save a `.sql` file containing the full schema, including keys, constraints, indexes, and enums.
 - Diagram → **PNG / SVG / clipboard**, whole diagram, current view or selection. Prefer SVG for very large diagrams.
 
 **Settings** — zoom step and limits, LOD threshold, UI density, snap-to-grid, layout spacing and export defaults, editable from the in-app Settings panel or VS Code settings (`dddbml.*`).
@@ -92,11 +93,36 @@ Keep the `.dbml` about **data** (tables, columns, refs, `records`, `Dep`) and le
 |---|---|
 | `dddbml: Open Diagram` | Open the diagram beside the active `.dbml`. |
 | `dddbml: Auto-arrange Diagram…` | Smart layout (all / new / selection) with edge ordering. |
-| `dddbml: Export Schema…` | TypeORM export. |
+| `dddbml: Export Schema…` | Export TypeORM entities or a PostgreSQL SQL script. |
 | `dddbml: Export Image…` | PNG / SVG / clipboard export. |
 | `dddbml: Reset Layout` | Drop saved positions and re-run auto-layout. |
 | `dddbml: Prune orphan layout entries` | Remove layout entries whose table or group no longer exists. |
 | `dddbml: Zoom In / Zoom Out / Reset View / Fit to Content` | Viewport commands, bound to the shortcuts above while the diagram is focused. |
+
+Drag a database dependency line or an architecture link to add a bend. Click the line to reveal its handles, drag a handle to reposition it, or double-click it to remove the bend. Drag either endpoint handle to move the attachment around the node or table. Bends and attachments are saved in the layout sidecar. Select or right-click a line for **Reset line** and **Edge color**.
+
+## System architecture diagrams
+
+Set `diagram_type: arch` in the front matter and open the file with **dddbml: Open Diagram**.
+
+```dbml
+---
+diagram_type: arch
+title: Orders platform
+---
+Internet clients
+Server "Orders API" as api
+Database "Orders database" as db [type: 'postgres']
+Group Production { api db }
+Link: clients > api [proto: HTTPS, host: 'api.example.test']
+Link: api > db
+```
+
+Edit nodes, links, groups, and notes in the DBML source. The canvas arranges them automatically and saves manual positions in the adjacent `.dbml.layout.json`. Drag a group to move its contents together. Use **Export Image** for SVG or PNG, including printer-friendly output.
+
+For custom node icons, use an image filename beside the DBML file or an embedded image data URI. Remote icon URLs use the role's default symbol.
+
+See the [DBML system architecture syntax](https://dbml.dbdiagram.io/syntax/system-architecture/).
 
 ## Limitations
 
@@ -127,3 +153,14 @@ Performance budgets and how to measure them: `specs/07-performance-budgets.md`.
 ## License
 
 MIT. See `LICENSE`.
+
+
+### DBML compatibility
+
+Parsing uses the official `@dbml/core` v12 parser and its DBML v2 grammar. Tables render the resolved columns from TablePartials, quoted identifiers and types, enum-typed columns, column constraints, notes, and defaults. Composite primary keys are marked on every member column. Records have a read-only preview.
+
+References support inline, short, and long forms; `>`, `<`, `-`, and `<>`; and `?` on either or both sides. Endpoints use standard crow’s-foot notation: double bars for exactly one, a bar plus a crow’s foot for one or many, and a circle plus a bar/crow’s foot for zero or one/many. The crow’s foot spreads toward the table. Schema-qualified names, aliases, composite column lists, multiple inline refs, and self-references are supported. DBML ref colors apply unless a saved diagram color overrides them. Hover an unselected relationship to inspect its name, columns, cardinality, and delete/update actions. SVG and raster exports use the same relationship markers and colors.
+
+Standalone enum definitions and index/check definitions remain in the DBML source. Injected partial columns and index primary keys affect the displayed tables.
+
+Syntax reference: [official DBML documentation](https://dbml.dbdiagram.io/docs/).

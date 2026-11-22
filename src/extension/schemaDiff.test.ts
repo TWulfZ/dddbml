@@ -95,6 +95,15 @@ describe('diffSchemas — refs with the same endpoints but different semantics (
     ]);
   });
 
+  it.each([
+    'Ref: posts.user_id >? users.id',
+    'Ref: posts.user_id > users.id [color: #ff0000]',
+    'Ref: posts.user_id > users.id [delete: cascade]',
+    'Ref: posts.user_id > users.id [update: restrict]',
+  ])('reports changed ref settings: %s', (head) => {
+    expect(refDiff('Ref: posts.user_id > users.id', head).map((r) => r.status)).toEqual(['changed']);
+  });
+
   it('reports a direction change', () => {
     expect(refDiff('Ref: posts.user_id > users.id\n', 'Ref: posts.user_id < users.id\n').map((r) => r.status)).toEqual(['changed']);
   });

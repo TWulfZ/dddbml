@@ -21,6 +21,18 @@ function commands(d: string): Array<{ op: string; pts: Array<{ x: number; y: num
 }
 
 describe('routeDep', () => {
+  it('uses saved top and bottom attachments and keeps the manual bend', () => {
+    const waypoint = { x: 340, y: -100 };
+    const r = routeDep('dep:a', src, tgt, [waypoint], {
+      sourceSide: 'top', sourcePort: 0.25, targetSide: 'bottom', targetPort: 0.75,
+    });
+    expect(r.source).toEqual({ x: 50, y: 0 });
+    expect(r.sourceStub).toEqual({ x: 50, y: -24 });
+    expect(r.target).toEqual({ x: 550, y: 300 });
+    expect(r.targetStub).toEqual({ x: 550, y: 324 });
+    expect(r.spans[0]?.[3]).toEqual(waypoint);
+  });
+
   it('leaves and enters through horizontal 24px stubs on facing sides', () => {
     const r = routeDep('dep:a', src, tgt, []);
     expect(r.source).toEqual({ x: 200, y: 14 });

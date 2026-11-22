@@ -67,6 +67,7 @@ export function applyViewState(shared: Layout, vs: ViewState): Layout {
   const out: Layout = { version: shared.version, viewport: vs.viewport, tables, groups };
   if (shared.edgeRouting !== undefined) out.edgeRouting = shared.edgeRouting;
   if (shared.edges) out.edges = shared.edges;
+  if (shared.labels) out.labels = shared.labels;
   if (hiddenUnplaced.length > 0) out.hiddenUnplaced = hiddenUnplaced;
   return out;
 }

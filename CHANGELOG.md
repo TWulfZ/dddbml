@@ -4,6 +4,82 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] — 2026-11-22
+
+### Added
+- Export the full DBML schema as a PostgreSQL SQL script with tables, keys, constraints, indexes, and enums.
+
+## [1.0.3] — 2026-11-21
+
+### Added
+- Share the relationship toolbar and context menu across references, dependencies, and architecture links, including Reset line and Edge color.
+
+## [1.0.2] — 2026-11-21
+
+### Added
+- Move either attachment of an architecture link or dependency line around its endpoint while keeping saved bends.
+
+## [1.0.1] — 2026-11-21
+
+### Added
+- Drag architecture links and database dependency lines directly to add bends. Save bends in the layout sidecar and include them in exports.
+
+## [1.0.0] — 2026-11-21
+
+### Added
+- Open DBML system architecture diagrams with role-based nodes, nested groups, notes, and labeled links.
+- Auto-arrange architecture diagrams, drag groups and their contents together, and save positions in the layout sidecar.
+- Export architecture diagrams to SVG and PNG with the existing printer-friendly options.
+
+## [0.9.0] — 2026-11-21
+
+### Added
+- Render Project attributes in a movable title block with a separate project name font size.
+- Load sibling logo and image files and embed them in title-block SVG exports.
+
+## [0.8.1] — 2026-11-21
+
+### Fixed
+- Store note and project-caption coordinates and typography in the shared layout sidecar. Copy legacy inline note layout on the next layout save.
+- Render the project note on the canvas and make both project captions draggable and editable through their layout controls.
+
+## [0.8.0] — 2026-11-21
+
+### Added
+- Show the DBML project title and overview. Optionally include the project note in image exports.
+- Select a DBML named diagram view and export its visible tables, groups, and labels.
+- Use DBML table-group colors and show group notes on hover.
+
+### Fixed
+- Draw inactive relationships as dotted lines and exclude them from foreign-key labels and TypeORM relations.
+
+## [0.7.0] — 2026-11-21
+
+### Added
+- Add, drag, and edit diagram labels backed by standalone DBML notes. Labels support custom fonts and font sizes and appear in image exports.
+
+## [0.6.0] — 2026-11-21
+
+### Added
+- Edit the printer-friendly diagram in light or dark mode. Printer-friendly SVG export keeps the positions and routes edited in either mode.
+
+## [0.5.1] — 2026-11-21
+
+### Fixed
+- Show FK for foreign-key fields that also belong to the primary key, on the diagram and in SVG exports.
+
+## [0.5.0] — 2026-11-21
+
+### Added
+- Added a diagram setting for a headerless PK/FK column beside field names.
+- Added printer-friendly SVG export with a light palette, full field labels, and adjusted relationship routes.
+
+### Changed
+- Left-drag on empty canvas pans when no tables are selected; Shift-drag box-selects.
+- Relationship endpoints can be dragged to any position on all four table sides, with persistence and undo/redo. Moving an endpoint reroutes its bends; undo restores the previous shape.
+- Relationship symbols use standard crow’s-foot notation, including optional endpoints; DBML ref colors and relationship details are preserved.
+- Updated the official DBML parser for enum aliases and index column sort order.
+
 ## [0.4.2] — 2026-10-13
 
 ### Fixed

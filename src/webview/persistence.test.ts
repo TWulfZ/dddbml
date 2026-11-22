@@ -98,3 +98,44 @@ describe('pre-0.4 layouts load silently (spec 05 §11: no migration prompt)', ()
     expect('edgeRouting' in (persists()[0]![0] as { payload: object }).payload).toBe(false);
   });
 });
+
+describe('manual endpoint coordinates', () => {
+  it('sends both positions to the host and restores them on reload', () => {
+    const key = 'public.a::id|public.b::id';
+    const edge = { sourceSide: 'top' as const, sourcePort: .3, targetSide: 'bottom' as const, targetPort: .7 };
+    store.getState().setLayout({ version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: { [key]: edge } });
+    expect(store.getState().edgeLayouts.get(key)).toEqual(edge);
+    schedulePersist();
+    const msg = persists().at(-1)![0];
+    expect(msg.type === 'layout:persist' && msg.payload.edges?.[key]).toEqual(edge);
+  });
+});
+
+it('persists project caption moves and undo through layout messages', () => {
+  store.getState().setLayout({
+    version: 1, tables: {}, groups: {}, viewport: { x: 0, y: 0, zoom: 1 },
+    labels: { 'project:title': { x: 8, y: 10 }, 'project:note': { x: 19, y: 20 } },
+  });
+  store.getState().setLabelLayout('project:title', { x: 55, y: -30 });
+  schedulePersist();
+  expect(persists().at(-1)?.[0]).toMatchObject({ payload: {
+    labels: { 'project:title': { x: 55, y: -30 }, 'project:note': { x: 19, y: 20 } },
+  } });
+  store.getState().undo();
+  schedulePersist();
+  expect(persists().at(-1)?.[0]).toMatchObject({ payload: {
+    labels: { 'project:title': { x: 8, y: 10 }, 'project:note': { x: 19, y: 20 } },
+  } });
+});
+
+it('persists an architecture group move with node positions and note positions in the right sections', () => {
+  const nodeKey = 'arch:node:Server:api';
+  const noteKey = 'note:guide';
+  store.getState().setArchitecturePositions([[nodeKey, { x: 120, y: 300 }], [noteKey, { x: 50, y: 60 }]]);
+  schedulePersist();
+  expect(persists().at(-1)?.[0]).toMatchObject({ payload: {
+    tables: { [nodeKey]: { x: 120, y: 300 } },
+    labels: { [noteKey]: { x: 50, y: 60 } },
+  } });
+  expect(store.getState().positions.has(noteKey)).toBe(false);
+});

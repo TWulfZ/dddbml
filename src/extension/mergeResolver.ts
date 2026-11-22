@@ -89,7 +89,7 @@ export function applyDecisions(
 }
 
 export function countKeys(l: Layout): number {
-  return Object.keys(l.tables).length + Object.keys(l.groups).length + Object.keys(l.edges ?? {}).length;
+  return Object.keys(l.tables).length + Object.keys(l.groups).length + Object.keys(l.edges ?? {}).length + Object.keys(l.labels ?? {}).length;
 }
 
 function cloneLayout(l: Layout): Layout {
@@ -100,6 +100,7 @@ function cloneLayout(l: Layout): Layout {
     groups: { ...l.groups },
     edges: { ...(l.edges ?? {}) },
   };
+  if (l.labels) out.labels = { ...l.labels };
   if (l.edgeRouting !== undefined) out.edgeRouting = l.edgeRouting;
   return out;
 }
@@ -107,6 +108,7 @@ function cloneLayout(l: Layout): Layout {
 function sectionRecord(layout: Layout, section: ConflictSection): Record<string, unknown> {
   if (section === 'tables') return layout.tables as Record<string, unknown>;
   if (section === 'groups') return layout.groups as Record<string, unknown>;
+  if (section === 'labels') return (layout.labels ??= {});
   if (!layout.edges) layout.edges = {};
   return layout.edges as Record<string, unknown>;
 }

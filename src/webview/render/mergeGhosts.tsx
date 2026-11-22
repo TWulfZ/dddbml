@@ -42,7 +42,7 @@ function MergeGhostsImpl({ tablesByName, viewportRect, lod }: MergeGhostsProps) 
     const idx = new SpatialIndex();
     const nudge = densityMetrics(density).headerHeight;
     for (const c of tableConflicts) {
-      const size = estimateSize(tablesByName.get(c.key)?.columns.length ?? 0);
+      const size = estimateSize(tablesByName.get(c.key)?.columns.length ?? 0, tablesByName.get(c.key));
       for (const side of SIDES) {
         const p = ghostPos(c, side, nudge);
         if (p) idx.insert(ghostKey(c.id, side), { x: p.x, y: p.y, w: size.width, h: size.height });
@@ -149,7 +149,7 @@ function GhostImpl({ conflict, side, table, lod }: { conflict: SerializableMerge
     );
   }
 
-  const size = estimateSize(table.columns.length);
+  const size = estimateSize(table.columns.length, table);
   if (lod === 'rect') {
     return (
       <div

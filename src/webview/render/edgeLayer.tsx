@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { createPortal, memo } from 'preact/compat';
-import type { QualifiedName, Ref, RefDiffStatus } from '../../shared/types';
+import { useCallback, useMemo, useRef, useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
+import type { QualifiedName, Ref, RefDiffStatus, Table } from '../../shared/types';
 import { columnCenterY, estimateSize, headerCenterY } from '../layout/autoLayout';
 import { densityMetrics } from '../layout/density';
 import type { KeyedDepEdge } from './edgeKey';
@@ -13,14 +13,10 @@ import type { LodLevel } from './lod';
 import { routeReachBoxes, useVisibleEdgeIds, type ViewportRect } from './useVisibleNames';
 import { store, useAppStore, isCanvasReadOnly } from '../state/store';
 import { smallPositionsDelta } from '../state/positionsDelta';
-import { startSegmentSlide, startNotchDrag, startEndpointDrag, resetEdgeWaypoints, readEdgeStyle, commitEdgeStyle, deleteEdgeNotch, flipLoopSide, forgetIgnoredShape } from '../drag/dragController';
-import type { EdgeStyle } from '../state/history';
-import { ColorPopup, popupAnchorFor } from './colorPopup';
-import { Button } from '../ui/Button';
-import { Tooltip } from '../ui/Tooltip';
-import { IconReset, IconSettings, IconSwap, IconTrash } from '../icons';
+import { startSegmentSlide, startNotchDrag, startEndpointDrag, deleteEdgeNotch, forgetIgnoredShape } from '../drag/dragController';
+import { REF_MARKERS, refMarker, refColor, refDescription } from './refMarkers';
 import { postToHost } from '../vscode';
-import { ContextMenu, clampMenuAnchor } from './contextMenu';
+import { EdgeActions, useEdgeActions } from './edgeActions';
 
 interface GroupSize {
   name: string;
@@ -46,6 +42,7 @@ interface EdgeLayerProps {
   positions: ReadonlyMap<QualifiedName, { x: number; y: number }>;
   /** Rendered rows per table (PK/FK filter, inline diff) — sizes and column ports follow these. */
   rows: RowGeometry;
+  tablesByName?: ReadonlyMap<QualifiedName, Table>;
   groupSizes?: GroupSize[];
   worldBbox: { x: number; y: number; w: number; h: number };
   /** Diff overlay (spec 16): composite edge key → status. Tints added refs. Null = not diffing. */
@@ -62,17 +59,6 @@ const SEGMENT_HOVER_THICKNESS = 14;
 const MIN_HANDLE_LEN = 16;
 /** Runs shorter than this get no ¼/¾ ghost handles — too short to fit 3 knobs without overlap. */
 const MIN_GHOST_LEN = 40;
-/** Toolbar offset from the click point (screen px). Tweak to taste. */
-const TOOLBAR_OFFSET_X = 10;
-const TOOLBAR_OFFSET_Y = -40;
-
-interface ColorPopupState {
-  refId: string;
-  x: number;
-  y: number;
-  before: EdgeStyle;
-}
-
 interface HoverState {
   refId: string;
   segIndex: number;
@@ -98,34 +84,34 @@ const straightPath = (r: EdgeRoute) => (r.loop ? r.d : `M ${r.source.x} ${r.sour
  */
 const EdgeStroke = memo(function EdgeStroke({ route: r, edgeRef: ref, color, diff, focused, lowZoom }: EdgeStrokeProps) {
   const diffCls = diff ? ` is-diff-${diff}` : '';
+  const dash = ref?.inactive ? '1 5' : undefined;
   const groupCls = `ddd-edge-group${focused ? ' is-focused' : ''}`;
   if (lowZoom) {
-    // Bird's-eye: straight port-to-port line, no crow's-foot, no direction dots.
+    // Bird's-eye: straight port-to-port line, no cardinality markers.
     return (
       <g class={groupCls}>
-        <path d={straightPath(r)} class={`ddd-edge${diffCls}`} style={color ? { stroke: color } : undefined} />
+        <path d={straightPath(r)} stroke-dasharray={dash} class={`ddd-edge${diffCls}`} style={color ? { stroke: color, color } : undefined} />
       </g>
     );
   }
-  const startMarker = ref?.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)';
-  const endMarker = ref?.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)';
+  const startMarker = refMarker(ref?.source, true);
+  const endMarker = refMarker(ref?.target);
   return (
     <g class={groupCls} style={color ? { color } : undefined}>
       <path
         d={r.d}
         class={`ddd-edge${diffCls}`}
-        style={color ? { stroke: color } : undefined}
+        style={color ? { stroke: color, color } : undefined}
+        stroke-dasharray={dash}
         marker-start={startMarker}
         marker-end={endMarker}
       />
-      {/* Direction dots (visual only): origin endpoint (PK) and destination endpoint (FK). */}
-      <circle class="ddd-edge-end-dot is-source" cx={r.source.x} cy={r.source.y} r={3} />
-      <circle class="ddd-edge-end-dot is-target" cx={r.target.x} cy={r.target.y} r={3} />
     </g>
   );
 });
 
 interface EdgeHitProps {
+  description: string;
   route: EdgeRoute;
   color: string | undefined;
   hovered: boolean;
@@ -135,10 +121,11 @@ interface EdgeHitProps {
 }
 
 /** Hit path (+ hover flow) of an unselected edge in the overlay SVG; memoized like EdgeStroke. */
-const EdgeHit = memo(function EdgeHit({ route: r, color, hovered, onHover, onUnhover, onSelect }: EdgeHitProps) {
+const EdgeHit = memo(function EdgeHit({ route: r, color, description, hovered, onHover, onUnhover, onSelect }: EdgeHitProps) {
   return (
     <g data-edge={r.id} style={color ? { color } : undefined}>
-      {hovered ? <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} /> : null}
+      <title>{description}</title>
+      {hovered ? <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color, color } : undefined} /> : null}
       <path
         d={r.d}
         class="ddd-edge-hit"
@@ -243,24 +230,19 @@ export function SelectedEdgeRuns({ route: r, hover, onRunHover, onRunUnhover, on
   );
 }
 
-function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, ready, lod, positions, rows, groupSizes, worldBbox, refDiff, deps, obstacles }: EdgeLayerProps) {
+function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, ready, lod, positions, rows, tablesByName, groupSizes, worldBbox, refDiff, deps, obstacles }: EdgeLayerProps) {
   const density = useAppStore((s) => s.settings.ui.density);
+  const printing = useAppStore((s) => s.settings.ui.diagramAppearance !== 'theme');
   const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selectedEdgeId = useAppStore((s) => s.selectedEdgeId);
   // Edges are faded by default; they reveal (full opacity) when their table or the edge is focused.
   const hoveredTable = useAppStore((s) => s.hoveredTable);
   const selection = useAppStore((s) => s.selection);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [colorPopup, setColorPopup] = useState<ColorPopupState | null>(null);
   // Merge / git overlay (spec 14/16): no edge selection, handles, toolbar or colour edits.
   const readOnly = useAppStore(isCanvasReadOnly);
-  useEffect(() => {
-    if (readOnly) setColorPopup(null);
-  }, [readOnly]);
   const [hover, setHover] = useState<HoverState | null>(null);
-  const [clickPos, setClickPos] = useState<{ x: number; y: number } | null>(null);
-  const [edgeMenu, setEdgeMenu] = useState<{ x: number; y: number; refId: string } | null>(null);
-  const closeEdgeMenu = useCallback(() => setEdgeMenu(null), []);
+  const { anchor, closeMenu, contextMenu, select } = useEdgeActions();
 
   const groupByName = useMemo(() => {
     const m = new Map<string, GroupSize>();
@@ -277,7 +259,7 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
     }
     const pos = positions.get(name);
     if (!pos) return undefined;
-    const size = estimateSize(rows.count(name));
+    const size = estimateSize(rows.count(name), tablesByName?.get(name));
     return { x: pos.x, y: pos.y, w: size.width, h: size.height };
   };
 
@@ -295,35 +277,35 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
   // A positions-only delta recorded by the store (a drag frame) re-routes just the refs it can
   // change and keeps every other route object, so the memoized strokes below skip their diff.
   const [routeCache] = useState(() => new EdgeRouteCache());
-  const routedRef = useRef<{ refs: Ref[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density; obstacles?: ObstacleQuery } | null>(null);
+  const routedRef = useRef<{ refs: Ref[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density; printing: boolean; tablesByName: EdgeLayerProps['tablesByName']; obstacles?: ObstacleQuery } | null>(null);
   const routes = useMemo(() => {
     const prev = routedRef.current;
-    routedRef.current = { refs, positions, rows, groupSizes, edgeLayouts, density, obstacles };
+    routedRef.current = { refs, positions, rows, groupSizes, edgeLayouts, density, obstacles, printing, tablesByName };
     const layoutOf = (id: string) => edgeLayouts.get(id);
-    if (prev && prev.refs === refs && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts && prev.density === density && prev.obstacles === obstacles) {
+    if (prev && prev.refs === refs && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts && prev.density === density && prev.obstacles === obstacles && prev.printing === printing && prev.tablesByName === tablesByName) {
       const moved = smallPositionsDelta(prev.positions, positions);
       if (moved) return routeCache.routeMoved(moved, bboxOf, columnY, layoutOf);
     }
     return routeCache.routeAll(refs, bboxOf, columnY, layoutOf, densityMetrics(density).rowHeight, obstacles);
-  }, [refs, positions, rows, groupSizes, edgeLayouts, density, obstacles]);
+  }, [refs, positions, rows, groupSizes, edgeLayouts, density, obstacles, printing, tablesByName]);
 
   const [depRouteCache] = useState(() => new DepRouteCache());
-  const depRoutedRef = useRef<{ deps: KeyedDepEdge[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density } | null>(null);
+  const depRoutedRef = useRef<{ deps: KeyedDepEdge[]; positions: EdgeLayerProps['positions']; rows: RowGeometry; groupSizes?: GroupSize[]; edgeLayouts: typeof edgeLayouts; density: typeof density; printing: boolean; tablesByName: EdgeLayerProps['tablesByName'] } | null>(null);
   const depRoutes = useMemo(() => {
     const prev = depRoutedRef.current;
-    depRoutedRef.current = { deps, positions, rows, groupSizes, edgeLayouts, density };
+    depRoutedRef.current = { deps, positions, rows, groupSizes, edgeLayouts, density, printing, tablesByName };
     const headerCenter = headerCenterY();
     const portY = (table: QualifiedName, columns: readonly string[], b: Bbox): number => {
       const y = columns[0] ? columnY(table, columns[0]) : undefined;
       return b.y + (y ?? headerCenter);
     };
     const layoutOf = (id: string) => edgeLayouts.get(id);
-    if (prev && prev.deps === deps && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts && prev.density === density) {
+    if (prev && prev.deps === deps && prev.rows === rows && prev.groupSizes === groupSizes && prev.edgeLayouts === edgeLayouts && prev.density === density && prev.printing === printing && prev.tablesByName === tablesByName) {
       const moved = smallPositionsDelta(prev.positions, positions);
       if (moved) return depRouteCache.routeMoved(moved, bboxOf, portY, layoutOf);
     }
     return depRouteCache.routeAll(deps, bboxOf, portY, layoutOf);
-  }, [deps, positions, rows, groupSizes, edgeLayouts, density]);
+  }, [deps, positions, rows, groupSizes, edgeLayouts, density, printing, tablesByName]);
   const visibleDepRoutes = useMemo(
     () => (visibleRefIds ? depRoutes.filter((r) => visibleRefIds.has(r.id)) : depRoutes),
     [depRoutes, visibleRefIds],
@@ -343,9 +325,9 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
     [routes, visibleRefIds, reachVisible],
   );
 
-  // Low zoom (text illegible): draw each edge as a straight port-to-port line, no markers/dots,
+  // Low zoom (text illegible): draw each edge as a straight port-to-port line, no cardinality markers,
   // and skip the interactive overlay entirely. See spec 05 §8.4.
-  const lowZoom = lod === 'rect';
+  const lowZoom = lod === 'rect' && !printing;
 
   const refById = useMemo(() => {
     const m = new Map<string, Ref>();
@@ -365,28 +347,22 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
     return { x: s.x, y: s.y };
   };
 
-  const clientToWorldX = (clientX: number): number | null => {
+  const clientToWorld = (clientX: number, clientY: number): { x: number; y: number } | null => {
     const svg = svgRef.current;
     if (!svg) return null;
     const ctm = svg.getScreenCTM();
     if (!ctm) return null;
     const pt = svg.createSVGPoint();
     pt.x = clientX;
-    pt.y = 0;
-    return pt.matrixTransform(ctm.inverse()).x;
-  };
-
-  const tableCenterX = (table: QualifiedName | undefined): number | null => {
-    if (!table) return null;
-    const b = bboxOf(table);
-    return b ? b.x + b.w / 2 : null;
+    pt.y = clientY;
+    const point = pt.matrixTransform(ctm.inverse());
+    return { x: point.x, y: point.y };
   };
 
   // Centre handle / run grab → SLIDE the whole run perpendicular (real blue vertex).
   const onSegmentSlideDown = (r: EdgeRoute, segIndex: number, e: PointerEvent) => {
     if (e.button !== 0) return;
-    setClickPos({ x: e.clientX, y: e.clientY });
-    store.getState().setSelectedEdge(r.id);
+    select(r.id, e.clientX, e.clientY);
     startSegmentSlide(r, segIndex, e, e.currentTarget as SVGElement);
   };
 
@@ -394,8 +370,7 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
   const onGhostDown = (r: EdgeRoute, segIndex: number, quarter: number, e: PointerEvent) => {
     if (e.button !== 0) return;
     e.stopPropagation();
-    setClickPos({ x: e.clientX, y: e.clientY });
-    store.getState().setSelectedEdge(r.id);
+    select(r.id, e.clientX, e.clientY);
     startNotchDrag(r, segIndex, quarter, e, e.currentTarget as SVGElement);
   };
 
@@ -409,11 +384,12 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
   const onEndpointPointerDown = (r: EdgeRoute, end: 'source' | 'target', e: PointerEvent) => {
     if (e.button !== 0) return;
     const ref = refById.get(r.id);
-    const cx = tableCenterX(end === 'source' ? ref?.source.table : ref?.target.table);
-    if (cx === null) return;
+    const table = end === 'source' ? ref?.source.table : ref?.target.table;
+    const bounds = table ? bboxOf(table) : undefined;
+    if (!bounds) return;
     store.getState().setSelectedEdge(r.id);
     forgetIgnoredShape(r);
-    startEndpointDrag(r.id, end, cx, e, e.currentTarget as SVGElement, clientToWorldX, r.loop === true);
+    startEndpointDrag(r.id, end, bounds, e, e.currentTarget as SVGElement, clientToWorld);
   };
 
   // Stable identities so the memoized per-edge hit paths only re-render when their own route changes.
@@ -421,9 +397,8 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
   const unhoverEdge = useCallback((refId: string) => setHover((h) => (h && h.refId === refId ? null : h)), []);
   const selectEdge = useCallback((refId: string, e: PointerEvent) => {
     e.stopPropagation();
-    setClickPos({ x: e.clientX, y: e.clientY });
-    store.getState().setSelectedEdge(refId);
-  }, []);
+    select(refId, e.clientX, e.clientY);
+  }, [select]);
 
   const clearHover = (refId: string, segIndex: number) =>
     setHover((h) => (h && h.refId === refId && h.segIndex === segIndex ? null : h));
@@ -466,24 +441,9 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
     if (refId === null || isCanvasReadOnly(store.getState())) return;
     postToHost({ type: 'schema:delete', payload: { kind: 'ref', refId } });
   };
-  const onOverlayContextMenu = (e: MouseEvent) => {
-    const key = (e.target as Element).closest('[data-edge]')?.getAttribute('data-edge');
-    if (!key) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setClickPos({ x: e.clientX, y: e.clientY });
-    store.getState().setSelectedEdge(key);
-    setEdgeMenu({ ...clampMenuAnchor(e.clientX, e.clientY, 200, 40), refId: key });
-  };
-
   const selectedRoute = selectedEdgeId
     ? routes.find((r) => r.id === selectedEdgeId) ?? depRoutes.find((r) => r.id === selectedEdgeId) ?? null
     : null;
-  // Screen anchor: click position + constant offset. Adjust TOOLBAR_OFFSET_X/Y at top of file.
-  const toolbarPos = selectedRoute && clickPos
-    ? { x: clickPos.x + TOOLBAR_OFFSET_X, y: clickPos.y + TOOLBAR_OFFSET_Y }
-    : null;
-
   const svgSize = {
     width: worldBbox.w,
     height: worldBbox.h,
@@ -497,22 +457,18 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
 
   return (
     <>
-      {/* Base layer: edge strokes, arrowheads, direction dots. Painted behind the tables. */}
+      {/* Base layer: edge strokes and cardinality markers. Painted behind the tables. */}
       <svg ref={svgRef} class="ddd-edges" {...svgSize} style={svgStyle}>
         <defs>
-          <marker id="ddd-mk-many" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-            <path d="M2,2 L10,6 L2,10 M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.2" />
-          </marker>
-          <marker id="ddd-mk-one" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-            <path d="M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.4" />
-          </marker>
-          <marker id="ddd-mk-many-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-            <path d="M10,2 L2,6 L10,10 M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.2" />
-          </marker>
-          <marker id="ddd-mk-one-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-            <path d="M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.4" />
-          </marker>
-          <DepMarkerDef />
+          {REF_MARKERS.map(({ id, start, optional, d }) => (
+            <marker key={id} id={id} viewBox="0 0 24 12" refX={start ? 3 : 21} refY="6" markerWidth="24" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto">
+              <g transform={start ? 'translate(24 0) scale(-1 1)' : undefined}>
+                <path d={d} fill="none" stroke={printing ? 'var(--ddd-edge)' : 'currentColor'} stroke-width="1.4" />
+                {optional ? <circle cx="4" cy="6" r="3" fill="var(--ddd-surface-canvas)" stroke={printing ? 'var(--ddd-edge)' : 'currentColor'} stroke-width="1.4" /> : null}
+              </g>
+            </marker>
+          ))}
+          <DepMarkerDef monochrome={printing} />
         </defs>
         {visibleRoutes.map((r) => {
           const diff = refDiff?.get(r.id);
@@ -528,7 +484,7 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
               key={r.id}
               route={r}
               edgeRef={ref}
-              color={edgeLayouts.get(r.id)?.color}
+              color={printing ? undefined : refColor(ref, edgeLayouts.get(r.id))}
               diff={diff}
               focused={focused}
               lowZoom={lowZoom}
@@ -540,6 +496,7 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
           depById={depById}
           edgeLayouts={edgeLayouts}
           lowZoom={lowZoom}
+          monochrome={printing}
           isFocused={(d, id) =>
             id === selectedEdgeId ||
             (hoveredTable != null && (d.upstream.table === hoveredTable || d.downstream.table === hoveredTable)) ||
@@ -550,18 +507,19 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
 
       {/* Overlay layer: interactive handles. z-index above tables so handles stay grabbable
           even where an edge crosses a table. SVG is pointer-transparent; only handles catch. */}
-      <svg class="ddd-edges ddd-edges-overlay" {...svgSize} style={svgStyle} onContextMenu={onOverlayContextMenu}>
+      <svg class="ddd-edges ddd-edges-overlay" {...svgSize} style={svgStyle} onContextMenu={contextMenu}>
         {/* FK drag draft line (spec 19); `d` is written imperatively by fkDrag.ts, never by Preact. */}
         <path class="ddd-fk-draft" />
         {lowZoom || readOnly ? null : visibleRoutes.map((r) => {
           const selected = r.id === selectedEdgeId;
-          const color = edgeLayouts.get(r.id)?.color;
+          const color = refColor(refById.get(r.id), edgeLayouts.get(r.id));
           if (!selected) {
             return (
               <EdgeHit
                 key={r.id}
                 route={r}
                 color={color}
+                description={refById.has(r.id) ? refDescription(refById.get(r.id)!) : ''}
                 hovered={hover?.refId === r.id}
                 onHover={hoverEdge}
                 onUnhover={unhoverEdge}
@@ -573,8 +531,8 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
             <g key={r.id} data-edge={r.id} style={color ? { color } : undefined}>
               {/* Selected highlight first, then the marching-dot flow ON TOP so it stays visible while
                   selected (the opaque highlight used to cover it). */}
-              <path d={r.d} class="ddd-edge is-selected" style={color ? { stroke: color } : undefined} />
-              <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color } : undefined} />
+              <path d={r.d} stroke-dasharray={refById.get(r.id)?.inactive ? '1 5' : undefined} class="ddd-edge is-selected" style={color ? { stroke: color, color } : undefined} />
+              <path d={r.d} class="ddd-edge-flow" style={color ? { stroke: color, color } : undefined} />
               {/* Interactive editing DOM (per-segment slide/ghost handles + endpoint flips) is built
                   ONLY for the selected edge — see spec 05 §8.3. Every other visible edge gets a single
                   transparent hit-path (EdgeHit) that handles select-on-click + hover-flow, instead of a
@@ -616,92 +574,17 @@ function EdgeLayerImpl({ refs, refKeyByStableId, visibleRefIds, viewportRect, re
             depById={depById}
             edgeLayouts={edgeLayouts}
             selectedId={selectedEdgeId}
-            onSelect={(id, x, y) => {
-              setClickPos({ x, y });
-              store.getState().setSelectedEdge(id);
-            }}
+            onSelect={select}
           />
         )}
       </svg>
 
-      {selectedRoute && toolbarPos && !readOnly
-        ? createPortal(
-            <div
-              class="ddd-edge-toolbar"
-              style={{ left: `${toolbarPos.x}px`, top: `${toolbarPos.y}px` }}
-              onPointerDown={(e) => e.stopPropagation()}
-            >
-              {'loop' in selectedRoute && selectedRoute.loop ? (
-                <Tooltip label="Flip side">
-                  <Button
-                    variant="toolbar"
-                    size="tool"
-                    onClick={() => flipLoopSide(selectedRoute.id)}
-                  >
-                    <IconSwap size={13} />
-                  </Button>
-                </Tooltip>
-              ) : (
-                <Tooltip label="Reset line">
-                  <Button
-                    variant="toolbar"
-                    size="tool"
-                    onClick={() => resetEdgeWaypoints(selectedRoute.id)}
-                  >
-                    <IconReset size={13} />
-                  </Button>
-                </Tooltip>
-              )}
-              <Tooltip label="Edge color">
-                <Button
-                  variant="toolbar"
-                  size="tool"
-                  onClick={(e) => {
-                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    const { x, y } = popupAnchorFor(rect);
-                    setColorPopup({ refId: selectedRoute.id, x, y, before: readEdgeStyle(selectedRoute.id) });
-                  }}
-                >
-                  <IconSettings size={13} />
-                </Button>
-              </Tooltip>
-              {refById.has(selectedRoute.id) ? (
-                <Tooltip label="Delete relation">
-                  <Button
-                    variant="toolbar"
-                    size="tool"
-                    disabled={stableRefIdOf(selectedRoute.id) === null}
-                    onClick={() => deleteRelation(selectedRoute.id)}
-                  >
-                    <IconTrash size={13} />
-                  </Button>
-                </Tooltip>
-              ) : null}
-            </div>,
-            document.body,
-          )
-        : null}
-      {edgeMenu && !readOnly ? (
-        <ContextMenu
-          x={edgeMenu.x}
-          y={edgeMenu.y}
-          items={[{ label: 'Delete relation', danger: true, disabled: stableRefIdOf(edgeMenu.refId) === null, onClick: () => deleteRelation(edgeMenu.refId) }]}
-          onClose={closeEdgeMenu}
-        />
-      ) : null}
-      {colorPopup && !readOnly ? (
-        <ColorPopup
-          current={depColor(depById.get(colorPopup.refId), edgeLayouts.get(colorPopup.refId)) ?? '#888888'}
-          x={colorPopup.x}
-          y={colorPopup.y}
-          onPick={(c) => store.getState().setEdgeColor(colorPopup.refId, c)}
-          onReset={() => store.getState().setEdgeColor(colorPopup.refId, null)}
-          onClose={() => {
-            commitEdgeStyle(colorPopup.refId, colorPopup.before, 'Edge color');
-            setColorPopup(null);
-          }}
-        />
-      ) : null}
+      <EdgeActions id={selectedRoute?.id} anchor={anchor} closeMenu={closeMenu}
+        color={(id) => depColor(depById.get(id), edgeLayouts.get(id)) ?? refColor(refById.get(id), edgeLayouts.get(id))}
+        canFlip={selectedRoute != null && 'loop' in selectedRoute && selectedRoute.loop != null}
+        deletion={selectedRoute && refById.has(selectedRoute.id)
+          ? { run: () => deleteRelation(selectedRoute.id), disabled: stableRefIdOf(selectedRoute.id) === null }
+          : undefined} />
     </>
   );
 }

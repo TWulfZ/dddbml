@@ -1,4 +1,5 @@
 import type { EdgeLayout, GroupLayout, QualifiedName, Ref, Schema, Table, TableGroup, UiDensity } from '../../shared/types';
+import type { PlacedLabel } from '../layout/diagramLabels';
 import { estimateSize } from '../layout/autoLayout';
 import type { RowGeometry } from '../layout/tableRows';
 import { smallPositionsDelta } from '../state/positionsDelta';
@@ -31,6 +32,8 @@ export interface SceneInputs {
   edgeLayouts: ReadonlyMap<string, EdgeLayout>;
   /** `estimateSize` reads the live density; it only takes part here as a rebuild trigger. */
   density: UiDensity;
+  editingPrintLayout?: boolean;
+  visibleLabels?: readonly PlacedLabel[];
   /** Hidden deps get no culling box; the edge layer does not draw them either (spec 18). */
   showDeps: boolean;
 }
@@ -102,6 +105,8 @@ function sameExceptPositionsAndEdges(a: SceneInputs, b: SceneInputs): boolean {
     && a.tablesByName === b.tablesByName
     && a.rows === b.rows
     && a.density === b.density
+    && a.editingPrintLayout === b.editingPrintLayout
+    && a.visibleLabels === b.visibleLabels
     && a.showDeps === b.showDeps;
 }
 
@@ -146,7 +151,7 @@ export class SceneCache {
     const geometry = deriveSceneGeometry(schema, positions, next.groupState, next.individuallyHidden, tablesByName, rows.count);
     const { hiddenTables, collapsedTables, collapsedNodes, containers } = geometry;
     const mapEndpoint = (table: QualifiedName): QualifiedName | null => {
-      if (hiddenTables.has(table)) return null;
+      if (!tablesByName.has(table) || hiddenTables.has(table)) return null;
       if (collapsedTables.has(table)) {
         const groupName = tablesByName.get(table)?.groupName;
         return groupName ? groupNodeId(groupName) : null;
@@ -225,7 +230,7 @@ export class SceneCache {
       const slot = this.containerSlot.get(g.name)!;
       const old = d.containers[slot]!;
       const oldExport = d.exportContainers[slot]!;
-      const rects = groupContainerRects(g, old.color, next.positions, d.hiddenTables, next.rows.count, fullRows);
+      const rects = groupContainerRects(g, old.color, next.positions, d.hiddenTables, next.rows.count, fullRows, next.tablesByName);
       if (!rects) return null;
       if (sameRect(old, rects.container) && sameRect(oldExport, rects.exportContainer)) continue;
       if (containers === d.containers) {
@@ -274,7 +279,7 @@ export class SceneCache {
   }
 
   private tableRect(name: QualifiedName, pos: Point, inputs: SceneInputs): Bbox {
-    const size = estimateSize(inputs.rows.count(name));
+    const size = estimateSize(inputs.rows.count(name), inputs.tablesByName.get(name));
     return { x: pos.x, y: pos.y, w: size.width, h: size.height };
   }
 
@@ -305,7 +310,7 @@ export class SceneCache {
     if (g) return g;
     const p = inputs.positions.get(name);
     if (!p) return null;
-    const size = estimateSize(inputs.tablesByName.get(name)?.columns.length ?? 0);
+    const size = estimateSize(inputs.tablesByName.get(name)?.columns.length ?? 0, inputs.tablesByName.get(name));
     return { x: p.x, y: p.y, w: size.width, h: size.height };
   }
 
@@ -317,7 +322,7 @@ export class SceneCache {
 
   /** Waypoint runs can be slid far past the outermost table; without the edge boxes the SVG clips them. */
   private scanContent(derived: DerivedScene, edgeBoxes: readonly EdgeBox[], inputs: SceneInputs): Bbox | null {
-    let content = sceneBounds(inputs.schema, inputs.positions, derived, inputs.rows.count);
+    let content = sceneBounds(inputs.schema, inputs.positions, derived, inputs.rows.count, inputs.visibleLabels);
     if (!content) return null;
     for (const { bbox } of edgeBoxes) content = union(content, bbox);
     return content;

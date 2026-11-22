@@ -2,6 +2,7 @@ import type { EdgeLayout, QualifiedName, Ref, Waypoint } from '../../shared/type
 import { densityMetrics } from '../layout/density';
 import { boxesIntersect, cClearsEndpoints, chooseHorizontalSides, EDGE_CORNER_RADIUS, EDGE_STUB, effectiveEdgeLayout, narrowGapSJog, type PortRows } from '../layout/edgeSides';
 import { isSelfRef } from './edgeKey';
+import { crossesTable, routeAroundTables } from './portRoute';
 import { tidyStubEnds } from './edgeTidy';
 import type { Bbox } from './spatialIndex';
 
@@ -63,7 +64,7 @@ export function loopSide(layout: EdgeLayout | undefined): 'left' | 'right' {
 type Point = { x: number; y: number };
 
 /** Outward unit vector of a stub leaving each table side. */
-const STUB_DIR: Record<Side, Point> = {
+export const STUB_DIR: Record<Side, Point> = {
   left: { x: -1, y: 0 },
   right: { x: 1, y: 0 },
   top: { x: 0, y: -1 },
@@ -151,6 +152,8 @@ interface PortEntry {
   refId: string;
 }
 
+const hasPlacedPort = (layout: EdgeLayout | undefined): boolean => layout?.sourcePort !== undefined || layout?.targetPort !== undefined;
+
 const portKey = (table: QualifiedName, side: Side): string => `${table}|${side}`;
 
 /**
@@ -177,7 +180,7 @@ function decideSides(
   const stored = layoutResolver?.(r.id);
   if (isSelfRef(r)) {
     const side = loopSide(stored);
-    return { ref: r, srcBbox, tgtBbox, sourceSide: side, targetSide: side, layout: stored, shapeIgnored: false };
+    return { ref: r, srcBbox, tgtBbox, sourceSide: hasPlacedPort(stored) ? stored?.sourceSide ?? side : side, targetSide: hasPlacedPort(stored) ? stored?.targetSide ?? side : side, layout: stored, shapeIgnored: false };
   }
   // Filtered here, where both bboxes are known, and carried on the decision so `buildRoute` reads its
   // waypoints from the same layout the sides came from.
@@ -222,18 +225,18 @@ function resolvePorts(
   let sourceY: number | undefined;
   let targetY: number | undefined;
   if (columnYResolver) {
-    if (d.sourceSide === 'left' || d.sourceSide === 'right') {
+    if (d.layout?.sourcePort === undefined && (d.sourceSide === 'left' || d.sourceSide === 'right')) {
       const offset = d.ref.source.columns[0] ? columnYResolver(d.ref.source.table, d.ref.source.columns[0]) : undefined;
       if (offset !== undefined) sourceY = d.srcBbox.y + offset;
     }
-    if (d.targetSide === 'left' || d.targetSide === 'right') {
+    if (d.layout?.targetPort === undefined && (d.targetSide === 'left' || d.targetSide === 'right')) {
       const offset = d.ref.target.columns[0] ? columnYResolver(d.ref.target.table, d.ref.target.columns[0]) : undefined;
       if (offset !== undefined) targetY = d.tgtBbox.y + offset;
     }
   }
   return {
-    a: portPoint(d.srcBbox, d.sourceSide, sourceRatio, sourceY),
-    b: portPoint(d.tgtBbox, d.targetSide, targetRatio, targetY),
+    a: portPoint(d.srcBbox, d.sourceSide, d.layout?.sourcePort ?? sourceRatio, sourceY),
+    b: portPoint(d.tgtBbox, d.targetSide, d.layout?.targetPort ?? targetRatio, targetY),
   };
 }
 
@@ -264,7 +267,7 @@ function buildRoute(
   ctx: RouteContext,
 ): EdgeRoute {
   const { a, b } = resolvePorts(d, sourceRatio, targetRatio, columnYResolver, rowHeight);
-  if (isSelfRef(d.ref)) return buildLoopRoute(d, a, b, ctx.loopReach, ctx.unyieldedReach);
+  if (isSelfRef(d.ref)) return hasPlacedPort(d.layout) ? buildPlacedLoopRoute(d, a, b) : buildLoopRoute(d, a, b, ctx.loopReach, ctx.unyieldedReach);
 
   const layout = d.layout;
   const saved = waypointsOf(layout);
@@ -273,7 +276,11 @@ function buildRoute(
   const sJog = narrowGapSJog(a, b, d.sourceSide, d.targetSide, d.srcBbox, d.tgtBbox);
   const lane = facingZLane(a, b, d.sourceSide, d.targetSide, saved, legacyDx, sJog, d.ref.source.table, d.ref.target.table);
   const zTrunkX = lane ? ctx.placeZ(lane) : undefined;
-  const { corners, aStub, bStub, waypoints } = buildPath(a, b, saved, legacyDx, d.sourceSide, d.targetSide, ctx.trunkX, sJog, zTrunkX);
+  let { corners, aStub, bStub, waypoints } = buildPath(a, b, saved, legacyDx, d.sourceSide, d.targetSide, ctx.trunkX, sJog, zTrunkX);
+  if (hasPlacedPort(layout) && saved.length === 0 && corners.some((p, i) => i > 0 && [d.srcBbox, d.tgtBbox].some((box) => crossesTable(corners[i - 1]!, p, box)))) {
+    const detour = routeAroundTables(aStub, bStub, [d.srcBbox, d.tgtBbox], STUB_DIR[d.sourceSide], STUB_DIR[d.targetSide]);
+    if (detour) corners = [a, ...detour, b];
+  }
   return {
     id: d.ref.id,
     d: roundedPathString(corners, CORNER_RADIUS),
@@ -298,16 +305,25 @@ function loopPorts(
 ): { a: Point; b: Point } {
   const side = d.sourceSide;
   const offsetOf = (cols: string[]) => (columnYResolver && cols[0] ? columnYResolver(d.ref.source.table, cols[0]) : undefined);
-  const sOff = offsetOf(d.ref.source.columns);
-  const tOff = offsetOf(d.ref.target.columns);
-  const a = portPoint(d.srcBbox, side, sourceRatio, sOff === undefined ? undefined : d.srcBbox.y + sOff);
-  const b = portPoint(d.srcBbox, side, targetRatio, tOff === undefined ? undefined : d.srcBbox.y + tOff);
-  if (a.y === b.y) {
+  const sOff = d.layout?.sourcePort === undefined ? offsetOf(d.ref.source.columns) : undefined;
+  const tOff = d.layout?.targetPort === undefined ? offsetOf(d.ref.target.columns) : undefined;
+  const a = portPoint(d.srcBbox, side, d.layout?.sourcePort ?? sourceRatio, sOff === undefined ? undefined : d.srcBbox.y + sOff);
+  const b = portPoint(d.srcBbox, d.targetSide, d.layout?.targetPort ?? targetRatio, tOff === undefined ? undefined : d.srcBbox.y + tOff);
+  if (a.x === b.x && a.y === b.y) {
     const q = Math.round(rowHeight / 4);
-    a.y -= q;
-    b.y += q;
+    if (side === 'top' || side === 'bottom') { a.x -= q; b.x += q; }
+    else { a.y -= q; b.y += q; }
   }
   return { a, b };
+}
+
+/** Manual self-reference: follow the shortest arc outside the table between independent ports. */
+function buildPlacedLoopRoute(d: SideDecision, a: Point, b: Point): EdgeRoute {
+  const sourceStub = { x: a.x + STUB_DIR[d.sourceSide].x * MIN_STUB, y: a.y + STUB_DIR[d.sourceSide].y * MIN_STUB };
+  const targetStub = { x: b.x + STUB_DIR[d.targetSide].x * MIN_STUB, y: b.y + STUB_DIR[d.targetSide].y * MIN_STUB };
+  const arc = routeAroundTables(sourceStub, targetStub, [d.srcBbox], STUB_DIR[d.sourceSide], STUB_DIR[d.targetSide]) ?? [sourceStub, targetStub];
+  const corners = [a, ...arc, b];
+  return { id: d.ref.id, d: roundedPathString(corners, CORNER_RADIUS), waypoints: [], segments: buildSegments(corners, []), source: a, target: b, sourceStub, targetStub, loop: true };
 }
 
 const loopTrunkX = (side: Side, port: Point, reach: number): number => port.x + STUB_DIR[side].x * reach;
@@ -1151,7 +1167,7 @@ export class EdgeRouteCache {
     this.loopIdx = [];
     const bySide = new Map<string, number[]>();
     this.refs.forEach((r, i) => {
-      if (!isSelfRef(r)) return;
+      if (!isSelfRef(r) || hasPlacedPort(layoutResolver?.(r.id))) return;
       this.loopIdx.push(i);
       const key = portKey(r.source.table, loopSide(layoutResolver?.(r.id)));
       const list = bySide.get(key);
@@ -1205,7 +1221,7 @@ export class EdgeRouteCache {
    */
   private trunkSpecOf(i: number, columnYResolver: ColumnYResolver | undefined): TrunkSpec | null {
     const d = this.baseDecisions[i];
-    if (!d) return null;
+    if (!d || (isSelfRef(d.ref) && hasPlacedPort(d.layout))) return null;
     const side = d.sourceSide;
     if ((side !== 'left' && side !== 'right') || d.targetSide !== side) return null;
     const loop = isSelfRef(d.ref);
@@ -1803,7 +1819,7 @@ function centerOf(b: Bbox): { x: number; y: number } {
   return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
 }
 
-function portPoint(b: Bbox, side: Side, ratio: number, overrideY?: number, overrideX?: number): { x: number; y: number } {
+export function portPoint(b: Bbox, side: Side, ratio: number, overrideY?: number, overrideX?: number): { x: number; y: number } {
   const r = Math.max(0.05, Math.min(0.95, ratio));
   switch (side) {
     case 'left':   return { x: b.x,           y: overrideY ?? b.y + b.h * r };

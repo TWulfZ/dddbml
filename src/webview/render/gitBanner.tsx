@@ -36,7 +36,7 @@ export function buildDiffTargets(
   }
   if (diffGhosts) {
     for (const g of diffGhosts) {
-      const s = estimateSize(g.table.columns.length);
+      const s = estimateSize(g.table.columns.length, g.table);
       targets.push({ name: g.table.name, x: g.pos.x, y: g.pos.y, w: s.width, h: s.height });
     }
   }

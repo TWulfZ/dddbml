@@ -258,3 +258,17 @@ describe('generateTypeOrm — entities without a primary column', () => {
     expect(warnings).toEqual([expect.stringContaining('public.logs')]);
   });
 });
+
+it('keeps the underlying column but omits decorators for an inactive reference', () => {
+  const { content } = exportDbml(`
+    Table users { id int [pk] }
+    Table orders {
+      id int [pk]
+      user_id int
+    }
+    Ref: orders.user_id > users.id [inactive]
+  `);
+  expect(entityBlock(content, 'Order')).toContain('user_id');
+  expect(content).not.toContain('@ManyToOne');
+  expect(content).not.toContain('@JoinColumn');
+});

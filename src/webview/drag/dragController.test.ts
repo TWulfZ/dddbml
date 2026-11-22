@@ -4,8 +4,9 @@ vi.mock('../vscode', () => ({ postToHost: vi.fn() }));
 vi.mock('../persistence', () => ({ schedulePersist: vi.fn() }));
 
 import { store } from '../state/store';
+import { startWaypointOnPath } from '../render/waypointHandles';
 import { zoomAt } from '../render/viewport';
-import { commitEdgeStyle, deleteDepWaypoint, flipLoopSide, forgetIgnoredShape, resetEdgeWaypoints, startDepWaypointInsert, startDepWaypointMove, startDrag, startEndpointDrag, startSegmentSlide } from './dragController';
+import { commitEdgeStyle, deleteWaypoint, flipLoopSide, forgetIgnoredShape, resetEdgeWaypoints, startWaypointInsert, startWaypointMove, startDrag, startEndpointDrag, startSegmentSlide } from './dragController';
 import { routeRefs, type EdgeRoute } from '../render/edgeRouter';
 import type { EdgeLayout, Ref } from '../../shared/types';
 import { depKey, edgeKey } from '../render/edgeKey';
@@ -278,9 +279,9 @@ describe('table drag over A* auto edges (F20)', () => {
   });
 
   it('a port flip dragged back to where it started leaves the shape automatic and history empty', () => {
-    const rightAuto: EdgeLayout = { ...autoShape, sourceSide: 'right' };
+    const rightAuto: EdgeLayout = { ...autoShape, sourceSide: 'right', sourcePort: .5 };
     store.setState({ edgeLayouts: new Map([[bc, rightAuto]]) });
-    startEndpointDrag(bc, 'source', 600, ptr(650, 0), fakeNode(), (x) => x);
+    startEndpointDrag(bc, 'source', { x: 500, y: -50, w: 200, h: 100 }, ptr(650, 0), fakeNode(), (x, y) => ({ x, y }));
     move(550, 0);
     expect(store.getState().edgeLayouts.get(bc)?.auto).toBeUndefined();
     move(650, 0);
@@ -363,23 +364,51 @@ describe('dep waypoint edits (spec 18)', () => {
 
   it('are ignored while the canvas is read-only', () => {
     store.setState({ gitView: { kind: 'diff', baseLabel: 'HEAD', headLabel: 'Working tree' } });
-    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    startWaypointMove(dk, 0, ptr(300, 120), fakeNode());
     expect(listeners.size).toBe(0);
-    startDepWaypointInsert(dk, 1, { x: 270, y: 150 }, ptr(320, 170), fakeNode());
+    startWaypointInsert(dk, 1, { x: 270, y: 150 }, ptr(320, 170), fakeNode());
     expect(listeners.size).toBe(0);
-    deleteDepWaypoint(dk, 0);
+    deleteWaypoint(dk, 0);
     expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
     expect(store.getState().past).toHaveLength(0);
+  });
+
+  it('inserts a bend in the grabbed span and undoes the line drag', () => {
+    const target = fakeNode() as unknown as SVGElement;
+    const spans = [
+      [{ x: 150, y: 100 }, { x: 250, y: 100 }],
+      [{ x: 250, y: 100 }, { x: 300, y: 200 }],
+      [{ x: 300, y: 200 }, { x: 450, y: 200 }],
+    ];
+    startWaypointOnPath(dk, spans, ptr(450, 222), target);
+    move(450, 225);
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+    move(450, 260);
+    up(450, 260);
+    expect(store.getState().edgeLayouts.get(dk)).toEqual({
+      ...shape, waypoints: [...shape.waypoints!, { x: 400, y: 238 }],
+    });
+    store.getState().undo();
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
+  });
+
+  it('moves the attachment without discarding dep bends, and restores it on undo', () => {
+    startEndpointDrag(dk, 'source', { x: 0, y: 0, w: 200, h: 100 }, ptr(250, 70), fakeNode(), undefined, true);
+    move(100, 20);
+    up(100, 20);
+    expect(store.getState().edgeLayouts.get(dk)).toEqual({ ...shape, sourceSide: 'top', sourcePort: 0.25 });
+    store.getState().undo();
+    expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
   });
 
   it('never carry the A* marker, even over a sidecar that smuggled one in', () => {
     // Bypasses writeLayout on purpose: a hand-edited sidecar is the only way a dep key could hold it.
     store.setState({ edgeLayouts: new Map([[dk, { ...shape, auto: true }]]) });
-    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    startWaypointMove(dk, 0, ptr(300, 120), fakeNode());
     move(300, 120);
     up(300, 120);
     expect(store.getState().edgeLayouts.get(dk)).toEqual(shape);
-    startDepWaypointMove(dk, 0, ptr(300, 120), fakeNode());
+    startWaypointMove(dk, 0, ptr(300, 120), fakeNode());
     move(340, 160);
     up(340, 160);
     expect(store.getState().edgeLayouts.get(dk)?.auto).toBeUndefined();
@@ -419,11 +448,11 @@ describe('self-loop side flip (spec 05 §Self-loops)', () => {
     expect(store.getState().edgeLayouts.get(loop)).toEqual({ sourceSide: 'left', targetSide: 'left' });
   });
 
-  it('dragging either loop endpoint across the table flips both ends', () => {
-    startEndpointDrag(loop, 'target', 100, ptr(150, 0), fakeNode(), (x) => x, true);
+  it('dragging a loop endpoint pins that endpoint independently', () => {
+    startEndpointDrag(loop, 'target', { x: 0, y: -50, w: 200, h: 100 }, ptr(150, 0), fakeNode(), (x, y) => ({ x, y }));
     move(50, 0);
     up(50, 0);
-    expect(store.getState().edgeLayouts.get(loop)).toEqual({ sourceSide: 'left', targetSide: 'left' });
+    expect(store.getState().edgeLayouts.get(loop)).toEqual({ targetSide: 'left', targetPort: .5 });
     expect(store.getState().past).toHaveLength(1);
   });
 
@@ -439,7 +468,7 @@ describe('endpoint port flip', () => {
 
   it('a click that jitters a pixel on an auto bottom port pins no side', () => {
     // An x-overlap bottom port sits near the table's centre x, so any 1 px jitter lands on one half.
-    startEndpointDrag(k, 'source', 100, ptr(100, 0), fakeNode(), (x) => x);
+    startEndpointDrag(k, 'source', { x: 0, y: -50, w: 200, h: 100 }, ptr(100, 0), fakeNode(), (x, y) => ({ x, y }));
     move(101, 1);
     up(101, 1);
     expect(store.getState().edgeLayouts.has(k)).toBe(false);
@@ -447,20 +476,20 @@ describe('endpoint port flip', () => {
   });
 
   it('a real drag still pins the side under the pointer', () => {
-    startEndpointDrag(k, 'source', 100, ptr(100, 0), fakeNode(), (x) => x);
-    move(60, 0);
-    up(60, 0);
-    expect(store.getState().edgeLayouts.get(k)).toEqual({ sourceSide: 'left' });
+    startEndpointDrag(k, 'source', { x: 0, y: -50, w: 200, h: 100 }, ptr(100, 0), fakeNode(), (x, y) => ({ x, y }));
+    move(-10, 0);
+    up(-10, 0);
+    expect(store.getState().edgeLayouts.get(k)).toEqual({ sourceSide: 'left', sourcePort: .5 });
   });
 
   it('a flip on a route whose legacy auto shape the router ignored does not revive its waypoints', () => {
     const legacy: EdgeLayout = { auto: true, color: '#f00', waypoints: [{ x: 120, y: 132 }, { x: 276, y: 132 }] };
     store.getState().applyEdgeLayouts([[k, legacy]]);
     forgetIgnoredShape({ id: k, shapeIgnored: true } as EdgeRoute);
-    startEndpointDrag(k, 'source', 100, ptr(100, 0), fakeNode(), (x) => x);
-    move(60, 0);
-    up(60, 0);
-    expect(store.getState().edgeLayouts.get(k)).toEqual({ color: '#f00', sourceSide: 'left' });
+    startEndpointDrag(k, 'source', { x: 0, y: -50, w: 200, h: 100 }, ptr(100, 0), fakeNode(), (x, y) => ({ x, y }));
+    move(-10, 0);
+    up(-10, 0);
+    expect(store.getState().edgeLayouts.get(k)).toEqual({ color: '#f00', sourceSide: 'left', sourcePort: .5 });
   });
 
   it('leaves a drawn shape alone', () => {
@@ -469,4 +498,69 @@ describe('endpoint port flip', () => {
     forgetIgnoredShape({ id: k } as EdgeRoute);
     expect(store.getState().edgeLayouts.get(k)).toEqual(shape);
   });
+});
+
+describe('free endpoint placement', () => {
+  const k = edgeKey('a', ['id'], 'b', ['id']);
+  const bounds = { x: 0, y: 0, w: 200, h: 100 };
+  for (const [side, x, y, ratio] of [
+    ['left', -10, 70, .7], ['right', 210, 30, .3],
+    ['top', 60, -10, .3], ['bottom', 140, 110, .7],
+  ] as const) {
+    it(`drags to ${side} and retains the position through undo/redo`, () => {
+      startEndpointDrag(k, 'source', bounds, ptr(200, 50), fakeNode(), (x, y) => ({ x, y }));
+      move(x, y);
+      up(x, y);
+      expect(store.getState().edgeLayouts.get(k)).toMatchObject({ sourceSide: side, sourcePort: ratio });
+      store.getState().undo();
+      expect(store.getState().edgeLayouts.has(k)).toBe(false);
+      store.getState().redo();
+      expect(store.getState().edgeLayouts.get(k)).toMatchObject({ sourceSide: side, sourcePort: ratio });
+      const boxes = (name: string) => name === 'a' ? bounds : { x: 500, y: 0, w: 200, h: 100 };
+      const route = routeRefs([{ id: k, source: { table: 'a', columns: ['id'], relation: '*' }, target: { table: 'b', columns: ['id'], relation: '1' } }], boxes, () => 20, (id) => store.getState().edgeLayouts.get(id))[0]!;
+      expect(route.source).toEqual({ x: side === 'left' ? 0 : side === 'right' ? 200 : 200 * ratio, y: side === 'top' ? 0 : side === 'bottom' ? 100 : 100 * ratio });
+    });
+  }
+});
+
+
+describe('endpoint drag lifecycle', () => {
+  const bounds = { x: 0, y: 0, w: 200, h: 100 };
+  it('cancelling restores the previous shape without an undo entry', () => {
+    const before: EdgeLayout = { color: '#f00', sourceSide: 'right', sourcePort: .5 };
+    store.setState({ edgeLayouts: new Map([['r', before]]) });
+    startEndpointDrag('r', 'source', bounds, ptr(200, 50), fakeNode(), (x, y) => ({ x, y }));
+    move(60, -10);
+    expect(store.getState().edgeLayouts.get('r')?.sourceSide).toBe('top');
+    listeners.get('pointercancel')!(ptr(60, -10));
+    expect(store.getState().edgeLayouts.get('r')).toEqual(before);
+    expect(store.getState().past).toHaveLength(0);
+  });
+  it('transforms both screen axes to world coordinates before placing a target endpoint', () => {
+    startEndpointDrag('r', 'target', bounds, ptr(450, 120), fakeNode(), (x, y) => ({ x: (x - 50) / 2, y: (y - 20) / 2 }));
+    move(170, 0);
+    up(170, 0);
+    expect(store.getState().edgeLayouts.get('r')).toEqual({ targetSide: 'top', targetPort: .3 });
+  });
+  it('does not move endpoints in a read-only view', () => {
+    store.setState({ gitView: { kind: 'diff', baseLabel: 'HEAD', headLabel: 'Working tree' } });
+    startEndpointDrag('r', 'source', bounds, ptr(200, 50), fakeNode(), (x, y) => ({ x, y }));
+    expect(listeners.size).toBe(0);
+    expect(store.getState().edgeLayouts.has('r')).toBe(false);
+  });
+});
+
+
+it('reroutes an existing bent edge for the moved endpoint and restores the bends with one undo', () => {
+  const before: EdgeLayout = { sourceSide: 'right', targetSide: 'left', waypoints: [{ x: 300, y: 50 }, { x: 300, y: 70 }], color: '#f00', auto: true };
+  store.setState({ edgeLayouts: new Map([['r', before]]) });
+  startEndpointDrag('r', 'source', { x: 0, y: 0, w: 200, h: 100 }, ptr(200, 50), fakeNode(), (x, y) => ({ x, y }));
+  move(60, -10);
+  up(60, -10);
+  expect(store.getState().edgeLayouts.get('r')).toEqual({ sourceSide: 'top', sourcePort: .3, targetSide: 'left', color: '#f00' });
+  expect(store.getState().past).toHaveLength(1);
+  store.getState().undo();
+  expect(store.getState().edgeLayouts.get('r')).toEqual(before);
+  store.getState().redo();
+  expect(store.getState().edgeLayouts.get('r')?.sourceSide).toBe('top');
 });

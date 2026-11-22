@@ -100,10 +100,31 @@ export function fkColumnsByTable(refs: readonly Ref[]): Map<QualifiedName, Set<s
     s.add(col);
   };
   for (const r of refs) {
+    if (r.inactive) continue;
     for (const c of r.source.columns) add(r.source.table, c);
     for (const c of r.target.columns) add(r.target.table, c);
   }
   return m;
+}
+
+/** FK labels follow the referencing side. In DBML's one-to-one form it is the second endpoint. */
+export function foreignKeyColumnsByTable(refs: readonly Ref[]): Map<QualifiedName, Set<string>> {
+  const columns = new Map<QualifiedName, Set<string>>();
+  for (const { source, target, inactive } of refs) {
+    if (inactive) continue;
+    // A many-to-many ref creates FKs in a junction table, leaving these endpoint fields untouched.
+    if (source.relation === '*' && target.relation === '*') continue;
+    const endpoint = source.relation === '*' ? source : target;
+    const names = columns.get(endpoint.table) ?? new Set<string>();
+    for (const column of endpoint.columns) names.add(column);
+    columns.set(endpoint.table, names);
+  }
+  return columns;
+}
+
+export function keyLabel(pk: boolean | undefined, fk: boolean | undefined): string {
+  if (fk) return 'FK';
+  return pk ? 'PK' : '';
 }
 
 export function buildRowGeometry(input: RowGeometryInput): RowGeometry {

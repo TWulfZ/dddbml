@@ -1,3 +1,5 @@
+import { architectureKeys } from '../../shared/architecture';
+import type { LabelLayout } from '../../shared/diagramLabels';
 import { createStore } from 'zustand/vanilla';
 import { useEffect, useReducer, useRef } from 'preact/hooks';
 import type { AppSettings, ColumnDiffEntry, ColumnRef, EdgeLayout, EdgeSide, GitCommitMeta, GitStashEntry, GitStatusSummary, GroupLayout, Layout, ParseError, QualifiedName, RefDiff, RefDiffStatus, Schema, SchemaDiff, SerializableMergeConflict, Table, TableDiffStatus, TableLayout, ViewportLayout, Waypoint } from '../../shared/types';
@@ -40,6 +42,7 @@ export interface AppState {
   hiddenTables: Set<QualifiedName>;
   tableColors: Map<QualifiedName, string>;
   edgeLayouts: Map<string, EdgeLayout>;
+  labelLayouts: Record<string, LabelLayout>;
   /** Currently selected edge (ref id) — drives the floating edge toolbar. Null = none. */
   selectedEdgeId: string | null;
   groups: Record<string, GroupLayout>;
@@ -55,6 +58,9 @@ export interface AppState {
   showOnlyPkFk: boolean;
   /** Ephemeral view flag: draw DBML `Dep` edges (spec 18). Not persisted. */
   showDeps: boolean;
+  activeDiagramView: string | null;
+  showProjectTitle: boolean;
+  showProjectNote: boolean;
   /** Table whose sample records are open in the records modal (spec 18). Null = closed. */
   recordsTable: QualifiedName | null;
   settings: AppSettings;
@@ -155,6 +161,7 @@ export interface AppState {
 export interface AppActions {
   setSchema(schema: Schema, parseError: ParseError | null): void;
   setLayout(layout: Layout): void;
+  setArchitecturePositions(entries: Iterable<[string, { x: number; y: number }]>): void;
   setTablePos(name: QualifiedName, x: number, y: number): void;
   setViewport(vp: Partial<ViewportLayout>): void;
   setTheme(kind: 'light' | 'dark'): void;
@@ -166,7 +173,7 @@ export interface AppActions {
   setEdgeWaypoints(refId: string, waypoints: Waypoint[]): void;
   applyEdgeLayouts(entries: Array<[string, EdgeLayout | null]>): void;
   setEdgeColor(refId: string, color: string | null): void;
-  setEdgeSide(refId: string, end: 'source' | 'target', side: EdgeSide | null): void;
+  setEdgeSide(refId: string, end: 'source' | 'target', side: EdgeSide | null, port?: number, preserveWaypoints?: boolean): void;
   resetEdgeShape(refId: string): void;
   setSelectedEdge(refId: string | null): void;
   setSelection(names: Iterable<QualifiedName>): void;
@@ -174,6 +181,10 @@ export interface AppActions {
   setTooltip(t: TooltipState | null): void;
   toggleShowOnlyPkFk(): void;
   toggleShowDeps(): void;
+  setActiveDiagramView(name: string | null): void;
+  setShowProjectTitle(show: boolean): void;
+  setShowProjectNote(show: boolean): void;
+  setLabelLayout(key: string, patch: LabelLayout, record?: boolean): void;
   setRecordsTable(name: QualifiedName | null): void;
   setSettings(s: AppSettings): void;
   setExporters(list: ExporterMeta[]): void;
@@ -248,6 +259,10 @@ const initial: AppState = {
   tooltip: null,
   showOnlyPkFk: false,
   showDeps: true,
+  activeDiagramView: null,
+  showProjectTitle: true,
+  showProjectNote: true,
+  labelLayouts: {},
   recordsTable: null,
   panMode: false,
   spacePan: false,
@@ -312,9 +327,12 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   ...initial,
   setSchema(schema, parseError) {
     set((s) => {
-      const newNames = new Set(schema.tables.map((t) => t.name));
-      const sameTableSet = sameNames(newNames, s.schema.tables.map((t) => t.name));
+      const newNames = new Set([...schema.tables.map((t) => t.name), ...architectureKeys(schema.architecture)]);
+      const sameTableSet = sameNames(newNames, [...s.schema.tables.map((t) => t.name), ...architectureKeys(s.schema.architecture)]);
       const patch: Partial<AppState> = { schema, parseError, ready: true, schemaEchoes: NO_ECHOES };
+      if (s.activeDiagramView && !schema.diagramViews?.some((view) => view.name === s.activeDiagramView)) {
+        patch.activeDiagramView = null;
+      }
       // A diagram edit's own echo keeps the stack: the change is on it and undoes through the host.
       if (!sameTableSet && s.schemaEchoes.size === 0) {
         patch.past = [];
@@ -350,7 +368,9 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       }
       if (eo.color) e.color = eo.color;
       if (isEdgeSide(eo.sourceSide)) e.sourceSide = eo.sourceSide;
+      if (typeof eo.sourcePort === 'number' && Number.isFinite(eo.sourcePort)) e.sourcePort = Math.max(0, Math.min(1, eo.sourcePort));
       if (isEdgeSide(eo.targetSide)) e.targetSide = eo.targetSide;
+      if (typeof eo.targetPort === 'number' && Number.isFinite(eo.targetPort)) e.targetPort = Math.max(0, Math.min(1, eo.targetPort));
       if (eo.auto === true && hasAutoShape(id, { ...e, auto: true })) e.auto = true;
       if (e.waypoints || e.color || e.sourceSide || e.targetSide || e.dx !== undefined || e.dy !== undefined) {
         edgeLayouts.set(id, e);
@@ -362,11 +382,15 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       tableColors,
       edgeLayouts,
       groups: { ...layout.groups },
+      labelLayouts: { ...layout.labels },
       viewport: s.cameraAdopted ? s.viewport : { ...layout.viewport },
       cameraAdopted: true,
       past: [],
       future: [],
     }));
+  },
+  setArchitecturePositions(entries) {
+    set((s) => isCanvasReadOnly(s) ? s : architecturePositionsPatch(s, entries));
   },
   setTablePos(name, x, y) {
     set((s) => {
@@ -472,17 +496,27 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
       return { edgeLayouts: next };
     });
   },
-  setEdgeSide(refId, end, side) {
+  setEdgeSide(refId, end, side, port, preserveWaypoints = false) {
     set((s) => {
+      if (isCanvasReadOnly(s)) return s;
       const current = effectiveEdgeLayout(s.edgeLayouts.get(refId));
       const currentSide = end === 'source' ? current?.sourceSide : current?.targetSide;
-      if ((currentSide ?? null) === side) return s;
+      const currentPort = end === 'source' ? current?.sourcePort : current?.targetPort;
+      if ((currentSide ?? null) === side && currentPort === port) return s;
       const next = new Map(s.edgeLayouts);
       const merged: EdgeLayout = { ...(current ?? {}) };
       if (end === 'source') {
         if (side) merged.sourceSide = side; else delete merged.sourceSide;
+        if (side && port !== undefined) merged.sourcePort = port; else delete merged.sourcePort;
       } else {
         if (side) merged.targetSide = side; else delete merged.targetSide;
+        if (side && port !== undefined) merged.targetPort = port; else delete merged.targetPort;
+      }
+      // A moved endpoint needs bends routed for its new side; history retains the old shape.
+      if (port !== undefined) {
+        if (!preserveWaypoints) delete merged.waypoints;
+        delete merged.dx;
+        delete merged.dy;
       }
       delete merged.auto;
       writeLayout(next, refId, merged);
@@ -515,6 +549,26 @@ export const store = createStore<AppState & AppActions>((set, get) => ({
   },
   toggleShowOnlyPkFk() {
     set((s) => ({ showOnlyPkFk: !s.showOnlyPkFk }));
+  },
+  setActiveDiagramView(name) {
+    set({ activeDiagramView: name, selection: new Set(), selectedEdgeId: null, tooltip: null });
+  },
+  setShowProjectTitle(show) {
+    set({ showProjectTitle: show });
+  },
+  setShowProjectNote(show) {
+    set({ showProjectNote: show });
+  },
+  setLabelLayout(key, patch, record = true) {
+    set((s) => {
+      if (isCanvasReadOnly(s)) return s;
+      const from = s.labelLayouts[key];
+      const to = { ...from, ...patch };
+      const labelLayouts = { ...s.labelLayouts, [key]: to };
+      return record ? { labelLayouts, ...pushHistory(s, {
+        kind: 'labelLayout', key, from, to, label: 'Change label layout', timestamp: Date.now(),
+      }) } : { labelLayouts };
+    });
   },
   toggleShowDeps() {
     set((s) => ({ showDeps: !s.showDeps }));
@@ -828,7 +882,15 @@ function applyCommand(
 ): Partial<AppState> {
   // The host owns the text: the caller posts schema:undo / schema:redo (historyActions.ts).
   if (cmd.kind === 'schema') return {};
+  if (cmd.kind === 'labelLayout') {
+    const labelLayouts = { ...s.labelLayouts };
+    const layout = direction === 'undo' ? cmd.from : cmd.to;
+    if (layout) labelLayouts[cmd.key] = layout;
+    else delete labelLayouts[cmd.key];
+    return { labelLayouts };
+  }
   if (cmd.kind === 'move') {
+    if (s.schema.architecture) return architecturePositionsPatch(s, direction === 'undo' ? cmd.from : cmd.to);
     const positions = new Map(s.positions);
     const entries = direction === 'undo' ? cmd.from : cmd.to;
     for (const [name, pos] of entries) positions.set(name, { x: pos.x, y: pos.y });
@@ -840,7 +902,9 @@ function applyCommand(
     const t = direction === 'undo' ? cmd.from : cmd.to;
     if (t.color !== undefined) merged.color = t.color; else delete merged.color;
     if (t.sourceSide !== undefined) merged.sourceSide = t.sourceSide; else delete merged.sourceSide;
+    if (t.sourcePort !== undefined) merged.sourcePort = t.sourcePort; else delete merged.sourcePort;
     if (t.targetSide !== undefined) merged.targetSide = t.targetSide; else delete merged.targetSide;
+    if (t.targetPort !== undefined) merged.targetPort = t.targetPort; else delete merged.targetPort;
     if (t.auto) merged.auto = true; else delete merged.auto;
     writeLayout(edgeLayouts, cmd.refId, merged);
     return { edgeLayouts };
@@ -865,6 +929,17 @@ function applyCommand(
   if (direction === 'undo' && cmd.fromAuto) merged.auto = true; else delete merged.auto;
   writeLayout(edgeLayouts, cmd.refId, merged);
   return { edgeLayouts };
+}
+
+function architecturePositionsPatch(s: AppState, entries: Iterable<[string, { x: number; y: number }]>): Partial<AppState> {
+  const positions = new Map(s.positions);
+  const labelLayouts = { ...s.labelLayouts };
+  for (const [key, pos] of entries) {
+    const point = { x: Math.round(pos.x), y: Math.round(pos.y) };
+    if (key.startsWith('note:')) labelLayouts[key] = { ...labelLayouts[key], ...point };
+    else positions.set(key, point);
+  }
+  return { positions, labelLayouts };
 }
 
 /** Write a pruned EdgeLayout into the map, or delete the key when it carries no data. */

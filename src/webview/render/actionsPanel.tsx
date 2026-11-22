@@ -30,6 +30,7 @@ function ActionsPanelImpl() {
   const [orderEdges, setOrderEdges] = useState(true);
   const [preserveManual, setPreserveManual] = useState(true);
   const snapToGrid = useAppStore((s) => s.settings.ui.snapToGrid);
+  const architecture = useAppStore((s) => !!s.schema.architecture);
   const selCount = useAppStore((s) => s.selection.size);
 
   const arrange = (mode: AutoArrangeMode) => {
@@ -70,8 +71,8 @@ function ActionsPanelImpl() {
   return (
     <div class="ddd-actions-bar is-expanded">
       <div class="ddd-actions-bar__row">
-        <Tooltip label="Auto-arrange">
-          <Button variant="subtle" size="tool" active={arrangeMenu !== null} onClick={openArrangeMenu}>
+        <Tooltip label={architecture ? 'Re-arrange architecture' : 'Auto-arrange'}>
+          <Button variant="subtle" size="tool" active={arrangeMenu !== null} onClick={architecture ? () => arrange('all') : openArrangeMenu}>
             <IconAutoArrange size={14} />
           </Button>
         </Tooltip>
@@ -85,14 +86,18 @@ function ActionsPanelImpl() {
             <IconMagnet size={14} />
           </Button>
         </Tooltip>
-        <Tooltip label="Search tables & groups">
+        <Tooltip label={architecture ? 'Search elements and groups' : 'Search tables & groups'}>
           <Button variant="subtle" size="tool" onClick={() => store.getState().openViewsAndFocusSearch()}>
             <IconSearch size={14} />
           </Button>
         </Tooltip>
         <span class="ddd-actions-bar__divider" aria-hidden="true" />
-        <Tooltip label="Export…">
-          <Button variant="subtle" size="tool" onClick={() => store.getState().setExportPromptOpen(true)}>
+        <Tooltip label={architecture ? 'Export image…' : 'Export…'}>
+          <Button variant="subtle" size="tool" onClick={() => {
+            const state = store.getState();
+            if (architecture) state.setExportImagePromptOpen(true);
+            else state.setExportPromptOpen(true);
+          }}>
             <IconGoToFile size={14} />
           </Button>
         </Tooltip>

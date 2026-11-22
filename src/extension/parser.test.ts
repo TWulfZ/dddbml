@@ -188,3 +188,146 @@ describe('parseDbml — headercolor', () => {
     expect(s.tables.map((t) => t.headerColor)).toEqual(['#3498DB', undefined]);
   });
 });
+
+
+describe('DBML documentation conformance — references', () => {
+  const operators = [
+    ['>', '*', '1'], ['<', '1', '*'], ['-', '1', '1'], ['<>', '*', '*'],
+  ] as const;
+  for (const [op, left, right] of operators) {
+    for (const optionalLeft of [false, true]) for (const optionalRight of [false, true]) {
+      const operator = `${optionalLeft ? '?' : ''}${op}${optionalRight ? '?' : ''}`;
+      for (const form of ['short', 'long', 'inline']) {
+        it(`${form} ${operator} preserves both endpoint cardinalities`, () => {
+          const inline = form === 'inline' ? `[ref: ${operator} b.id]` : '';
+          const relation = `a.id ${operator} b.id`;
+          const src = `Table a { id int ${inline} }\nTable b { id int }\n` +
+            (form === 'short' ? `Ref link: ${relation}` : form === 'long' ? `Ref link { ${relation} }` : '');
+          const s = parse(src);
+          expect(s.refs).toHaveLength(1);
+          const ref = s.refs[0]!;
+          const a = [ref.source, ref.target].find((e) => e.table === 'public.a')!;
+          const b = [ref.source, ref.target].find((e) => e.table === 'public.b')!;
+          expect([a.relation, b.relation]).toEqual([left, right]);
+          expect([a.optional ?? false, b.optional ?? false]).toEqual([optionalLeft, optionalRight]);
+        });
+      }
+    }
+  }
+
+  it.each(['cascade', 'restrict', 'set null', 'set default', 'no action'])(
+    'preserves referential action %s, name, color, and composite column order', (action) => {
+      const s = parse(`
+        Table core.parent as P { id int
+          country varchar }
+        Table child { parent_id int
+          country varchar }
+        Ref composite: child.(parent_id, country) > P.(id, country) [delete: ${action}, update: ${action}, color: #ff0000]
+      `);
+      expect(s.refs[0]).toMatchObject({
+        name: 'composite', color: '#ff0000', onDelete: action, onUpdate: action,
+        source: { table: 'public.child', columns: ['parent_id', 'country'], relation: '*' },
+        target: { table: 'core.parent', columns: ['id', 'country'], relation: '1' },
+      });
+    },
+  );
+
+  it('keeps repeated inline refs, self refs, and quoted identifiers', () => {
+    const s = parse(`
+      Table "user accounts" { "user id" int [pk, ref: < posts.author, ref: < posts.reviewer]
+        manager int [ref: > "user accounts"."user id"] }
+      Table posts { author int
+        reviewer int }
+    `);
+    expect(s.refs).toHaveLength(3);
+    expect(s.refs.flatMap((r) => [r.source.table, r.target.table])).not.toContain('public.user');
+    expect(s.refs.some((r) => r.source.table === r.target.table)).toBe(true);
+  });
+});
+
+describe('DBML documentation conformance — table syntax', () => {
+  it('renders resolved partials, quoted types, enums, checks, indexes, defaults and notes', () => {
+    const s = parse(`
+      Project sample { database_type: 'PostgreSQL' }
+      Enum core.status as Status { active
+        "not active" }
+      TablePartial base { id int [pk, increment]
+        created_at timestamp [default: \`now()\`] }
+      Table core.users [note: 'Users', headercolor: #123456] {
+        ~base
+        "full name" varchar(255) [not null, unique, note: 'Display name']
+        balance "double precision" [default: 1.5, check: \`balance >= 0\`]
+        enabled boolean [default: false]
+        status Status
+        checks { \`id > 0\` [name: 'positive_id'] }
+        indexes { ("full name" [desc]) [name: 'names'] }
+        records (id, "full name") [example] { 1, 'Alice' }
+      }
+    `);
+    expect(s.tables[0]).toMatchObject({name: 'core.users', note: 'Users', headerColor: '#123456'});
+    expect(s.tables[0]!.columns).toEqual(expect.arrayContaining([
+      expect.objectContaining({name: 'id', pk: true, increment: true}),
+      expect.objectContaining({name: 'full name', type: 'varchar(255)', notNull: true, unique: true, note: 'Display name'}),
+      expect.objectContaining({name: 'balance', type: 'double precision', default: '1.5'}),
+      expect.objectContaining({name: 'enabled', default: 'false'}),
+    ]));
+    expect(s.records?.[0]?.rows).toHaveLength(1);
+  });
+});
+
+describe('diagram annotations', () => {
+  it('reads project info, group appearance, and the exact categories in a named view', () => {
+    const schema = parse(`
+Project demo {
+  database_type: 'PostgreSQL'
+  Note: 'Overview'
+}
+Table core.user { id int [pk] }
+Table orders { user_id int }
+TableGroup app [color: #abc, note: 'Core tables'] { core.user }
+Note caption { 'An annotation' }
+DiagramView focused {
+  Tables { orders }
+  Notes { caption }
+  TableGroups { app }
+  Schemas { core }
+}
+DiagramView table_only { Tables { * } }
+DiagramView all_notes { Notes { * } }
+DiagramView empty {}
+Ref: orders.user_id > core.user.id [inactive]
+    `);
+    expect(schema.project).toMatchObject({ name: 'demo', databaseType: 'PostgreSQL', note: 'Overview' });
+    expect(schema.groups).toEqual([{ name: 'app', tables: ['core.user'], color: '#abc', note: 'Core tables' }]);
+    expect(schema.refs[0]?.inactive).toBe(true);
+    expect(schema.diagramViews).toEqual([
+      { name: 'focused', tables: ['public.orders'], notes: ['caption'], groups: ['app'], schemas: ['core'] },
+      { name: 'table_only', tables: '*', notes: [], groups: [], schemas: [] },
+      { name: 'all_notes', tables: [], notes: '*', groups: [], schemas: [] },
+      { name: 'empty', tables: [], notes: [], groups: [], schemas: [] },
+    ]);
+  });
+});
+
+it('reads ordered title-block fields, title font size, and image filenames from Project', () => {
+  const schema = parse(`Project "Sales database" {
+    database_type: 'Postgres 18.0'
+    created: "31.12.2026"
+    document_type: 'ERD schema'
+    author: 'O\\'Connor'
+    font_size: '42'
+    logo: 'company logo.svg'
+    image: 'mark.png'
+    Note: 'Schema overview'
+  }`);
+  expect(schema.project).toEqual({
+    name: 'Sales database', databaseType: 'Postgres 18.0', fontSize: 42, note: 'Schema overview',
+    fields: [
+      { key: 'database_type', value: 'Postgres 18.0' },
+      { key: 'created', value: '31.12.2026' },
+      { key: 'document_type', value: 'ERD schema' },
+      { key: 'author', value: "O'Connor" },
+    ],
+    images: [{ key: 'logo', filename: 'company logo.svg' }, { key: 'image', filename: 'mark.png' }],
+  });
+});

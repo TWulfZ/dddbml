@@ -9,7 +9,7 @@ function dialectChoices() {
   return all.map((d) => ({ value: d.id, label: d.label }));
 }
 
-export const typeormExporter: Exporter = {
+export const typeormExporter = {
   id: 'typeorm',
   label: 'TypeORM (TypeScript)',
   description: 'Generate TypeORM @Entity classes for the selected SQL dialect.',
@@ -46,4 +46,4 @@ export const typeormExporter: Exporter = {
     },
   ],
   export: generateTypeOrm,
-};
+} satisfies Exporter;

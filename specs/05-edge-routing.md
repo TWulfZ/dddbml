@@ -1299,3 +1299,14 @@ delete), flip y color como replays puros (mismo `WaypointCommand`, op `add`/`mov
   `applyViewState`. `edgeRouter.stub/xOverlap.test.ts` y `store.edgeAuto.test.ts` — `top`/`bottom`
   manual ignorado entero en render y edición; `edgeReset.test.ts` — una forma `top`/`bottom` no cuenta
   como manual.
+
+
+## Manual endpoint placement (2026-11-17)
+
+User endpoint drags support left, right, top and bottom independently, including self-references. `sourcePort` and `targetPort` persist normalized positions along the selected side; horizontal ports with a position override the automatic column-row anchor. The matching ratio distinguishes a current vertical user port from legacy top/bottom shapes described in §11. Moving an endpoint clears bends routed for the old port; the complete previous layout is restored by one undo. Pointer cancellation restores the pre-drag layout without adding history.
+
+Automatic routing keeps the horizontal zone rule. Manual connections that would cross their endpoint tables take an orthogonal detour around those tables; manual self-references follow an external route between the independently placed ports. Saved positions follow table moves and are shared by the diagram and image exporter.
+
+### Edición de enlaces de arquitectura y dependencias
+
+Arrastrar el trazo añade un punto de paso en el tramo más cercano al puntero. Al seleccionar la línea se muestran los puntos existentes y los controles para insertar nuevos puntos. Se guardan bajo `edges[id].waypoints` en el sidecar y se aplican tanto en el lienzo como en la exportación. Los enlaces de arquitectura conservan tramos ortogonales y las dependencias conservan sus curvas.

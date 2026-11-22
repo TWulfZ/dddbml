@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { store, useAppStore, isCanvasReadOnly } from './state/store';
 import { estimateSize } from './layout/autoLayout';
 import { placeMissingTables } from './layout/placeMissing';
-import { buildRowGeometry, fkColumnsByTable as fkColumnsOf } from './layout/tableRows';
+import { buildRowGeometry, foreignKeyColumnsByTable, fkColumnsByTable as fkColumnsOf } from './layout/tableRows';
+import { schemaForView, activeDiagramView } from './layout/diagramView';
+import { architectureBounds, buildArchitectureScene, positionArchitectureCaptions } from './layout/architectureLayout';
+import { ArchitectureLayer } from './render/architectureLayer';
+import { SpatialIndex } from './render/spatialIndex';
+import { diagramAnnotations } from './layout/diagramLabels';
+import { LabelModal, LabelNode, type LabelDraft } from './render/diagramLabel';
 import { TableNode } from './render/tableNode';
 import { EdgeLayer } from './render/edgeLayer';
 import { MergeGhosts } from './render/mergeGhosts';
@@ -15,6 +21,7 @@ import { AppMenu } from './render/appMenu';
 import { undoLatest, redoLatest } from './state/historyActions';
 import { isGestureActive } from './drag/dragController';
 import { panBy, screenToWorld, zoomAt } from './render/viewport';
+import { shouldPanCanvas } from './render/canvasGestures';
 import { newTableRequest } from './render/canvasMenu';
 import { ContextMenu, clampMenuAnchor } from './render/contextMenu';
 import { FkPrompt } from './render/fkPrompt';
@@ -61,14 +68,37 @@ const isTextField = (t: HTMLElement | null): boolean =>
   t != null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 
 export function App(_props: AppProps) {
-  const schema = useAppStore((s) => s.schema);
+  const fullSchema = useAppStore((s) => s.schema);
+  const viewName = useAppStore((s) => s.activeDiagramView);
+  const showProjectTitle = useAppStore((s) => s.showProjectTitle);
+  const showProjectNote = useAppStore((s) => s.showProjectNote);
+  const labelLayouts = useAppStore((s) => s.labelLayouts);
+  const activeView = activeDiagramView(fullSchema, viewName);
+  const schema = useMemo(() => schemaForView(fullSchema, activeView), [fullSchema, activeView]);
+  const groupsByName = useMemo(() => new Map(schema.groups.map((group) => [group.name, group])), [schema.groups]);
+  const annotations = useMemo(() => diagramAnnotations(schema, labelLayouts, showProjectTitle, showProjectNote),
+    [schema, labelLayouts, showProjectTitle, showProjectNote]);
+  const [labelDraft, setLabelDraft] = useState<LabelDraft | null>(null);
   const parseError = useAppStore((s) => s.parseError);
   const positions = useAppStore((s) => s.positions);
+  const edgeLayouts = useAppStore((s) => s.edgeLayouts);
+  const architecture = schema.architecture;
+  const architectureScene = useMemo(() => architecture ? buildArchitectureScene(architecture, positions, annotations.notes, edgeLayouts) : null, [architecture, positions, annotations.notes, edgeLayouts]);
+  const visibleLabels = useMemo(() => architectureScene
+    ? [...positionArchitectureCaptions(architectureScene, annotations.captions), ...architectureScene.notes]
+    : [...annotations.captions, ...annotations.notes], [annotations, architectureScene]);
+  const architectureIndex = useMemo(() => {
+    if (!architectureScene) return null;
+    const index = new SpatialIndex();
+    for (const node of architectureScene.nodes) index.insert(node.id, node);
+    for (const note of architectureScene.notes) index.insert(note.layoutKey, note);
+    return index;
+  }, [architectureScene]);
+  const architectureBox = useMemo(() => architectureScene ? architectureBounds(architectureScene) : null, [architectureScene]);
   const ready = useAppStore((s) => s.ready);
   const groupState = useAppStore((s) => s.groups);
   const individuallyHidden = useAppStore((s) => s.hiddenTables);
   const tableColors = useAppStore((s) => s.tableColors);
-  const edgeLayouts = useAppStore((s) => s.edgeLayouts);
   const selection = useAppStore((s) => s.selection);
   const panMode = useAppStore((s) => s.panMode);
   const spacePan = useAppStore((s) => s.spacePan);
@@ -83,7 +113,9 @@ export function App(_props: AppProps) {
   const diffGhosts = useAppStore((s) => s.diffGhosts);
   const diffRemovedRefs = useAppStore((s) => s.diffRemovedRefs);
   const focusDimming = useAppStore((s) => s.focusDimming);
-  const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
+  const appearance = useAppStore((s) => s.settings.ui.diagramAppearance);
+  const editingPrintLayout = appearance !== 'theme';
+  const showOnlyPkFk = useAppStore((s) => s.settings.ui.diagramAppearance === 'theme' && s.showOnlyPkFk);
   const showDeps = useAppStore((s) => s.showDeps);
   const diffActive = gitView?.kind === 'diff';
   // `viewport` itself is deliberately NOT selected here: it changes on every pan/zoom frame and
@@ -118,13 +150,16 @@ export function App(_props: AppProps) {
     const { ready: isReady, schema: liveSchema, positions: livePositions, settings } = store.getState();
     if (!isReady) return;
     if (liveSchema.tables.every((t) => livePositions.has(t.name))) return;
-    const columnCount = new Map(liveSchema.tables.map((t) => [t.name, t.columns.length]));
+    const tableByName = new Map(liveSchema.tables.map((t) => [t.name, t]));
     const entries = placeMissingTables({
       tables: liveSchema.tables,
       refs: liveSchema.refs,
       groups: liveSchema.groups,
       positions: livePositions,
-      sizeOf: (name: QualifiedName) => estimateSize(columnCount.get(name) ?? 0),
+      sizeOf: (name: QualifiedName) => {
+        const table = tableByName.get(name);
+        return estimateSize(table?.columns.length ?? 0, table);
+      },
       spacing: settings.ui.layoutSpacing,
     });
     if (entries.length > 0) store.getState().setPositionsBatch(entries);
@@ -132,6 +167,7 @@ export function App(_props: AppProps) {
 
   /** Set of "table::column" keys for every column that participates in any ref. */
   const fkColumnsByTable = useMemo(() => fkColumnsOf(schema.refs), [schema]);
+  const foreignKeys = useMemo(() => foreignKeyColumnsByTable(schema.refs), [schema]);
   const recordCountByTable = useMemo(() => {
     const m = new Map<QualifiedName, number>();
     for (const r of schema.records ?? []) m.set(r.table, (m.get(r.table) ?? 0) + r.totalRows);
@@ -149,12 +185,23 @@ export function App(_props: AppProps) {
   // applied incrementally (index moves, edge re-boxing) instead of rebuilding over every table (spec 04).
   const [sceneCache] = useState(() => new SceneCache());
   const scene = useMemo(
-    () => sceneCache.update({ schema, positions, groupState, individuallyHidden, tablesByName, rows: rowGeometry, edgeLayouts, density, showDeps }),
-    [sceneCache, schema, positions, groupState, individuallyHidden, tablesByName, rowGeometry, edgeLayouts, density, showDeps],
+    () => sceneCache.update({ schema, positions, groupState, individuallyHidden, tablesByName, rows: rowGeometry, edgeLayouts, density, editingPrintLayout, showDeps, visibleLabels }),
+    [sceneCache, schema, positions, groupState, individuallyHidden, tablesByName, rowGeometry, edgeLayouts, density, editingPrintLayout, showDeps, visibleLabels],
   );
-  const { derived, spatialIndex, edgeBoxes, worldBbox } = scene;
+  const { derived, edgeBoxes } = scene;
+  const spatialIndex = architectureIndex ?? scene.spatialIndex;
+  const worldBbox = architectureBox ? {
+    x: architectureBox.x - 24, y: architectureBox.y - 24,
+    w: architectureBox.w + 48, h: architectureBox.h + 48,
+  } : scene.worldBbox;
   // Read live: drag frames move nodes inside this same index, and the edge layer re-nests on each.
-  const edgeObstacles = useMemo(() => (box: Bbox) => spatialIndex.query(box), [spatialIndex]);
+  const edgeObstacles = useMemo(() => (box: Bbox) => {
+    const names = spatialIndex.query(box);
+    if (editingPrintLayout) {
+      for (const name of names) if (name.startsWith(CONTAINER_PREFIX)) names.delete(name);
+    }
+    return names;
+  }, [spatialIndex, editingPrintLayout]);
 
   const exportDerived = useMemo(
     () => ({ ...derived, containers: derived.exportContainers, effectiveDeps: showDeps ? derived.effectiveDeps : [] }),
@@ -166,7 +213,7 @@ export function App(_props: AppProps) {
   const [viewportRect, setViewportRect] = useState({ w: 0, h: 0 });
   // A merge mounts the world even with no parsed tables (the .dbml can conflict too): the ghosts
   // fall back to chips, and without them table conflicts could not be picked.
-  const worldMounted = ready && (schema.tables.length > 0 || mergeConflicts != null);
+  const worldMounted = ready && (schema.tables.length > 0 || architectureBox !== null || visibleLabels.length > 0 || mergeConflicts != null);
 
   // The camera is applied imperatively (same technique as the drag controller): Preact never owns
   // `.ddd-world`'s transform, so pan/zoom frames touch one style property and nothing re-renders.
@@ -242,10 +289,12 @@ export function App(_props: AppProps) {
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as HTMLElement;
       const onCanvas = isCanvasTarget(target);
-      // Pan on the middle button, or the left button while the hand tool is active (toggle / Space).
+      const emptyCanvas = target === el || target.classList.contains('ddd-world') || target.classList.contains('ddd-group-container') || target.classList.contains('ddd-grid') || target.classList.contains('ddd-empty');
+      // Empty canvas pans by default; Shift retains box selection.
       const panActive = store.getState().panMode || store.getState().spacePan;
-      if (onCanvas && (e.button === 1 || (e.button === 0 && panActive))) {
+      if (shouldPanCanvas(e, onCanvas, emptyCanvas, store.getState().selection.size, panActive)) {
         e.preventDefault();
+        if (emptyCanvas) store.getState().setSelectedEdge(null);
         panning = true;
         lastX = e.clientX;
         lastY = e.clientY;
@@ -256,7 +305,7 @@ export function App(_props: AppProps) {
       if (e.button === 0) {
         if (isCanvasReadOnly(store.getState())) return; // merge / git overlay: no marquee/selection
         // Only start marquee if click landed on empty viewport (not on a table / group / etc).
-        if (target !== el && !target.classList.contains('ddd-world') && !target.classList.contains('ddd-group-container')) {
+        if (!emptyCanvas) {
           return;
         }
         const rect = el.getBoundingClientRect();
@@ -334,7 +383,7 @@ export function App(_props: AppProps) {
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const world = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-      setCanvasMenu({ ...clampMenuAnchor(e.clientX, e.clientY, 200, 40), request: newTableRequest(world, containersRef.current, gridSnapper()) });
+      setCanvasMenu({ ...clampMenuAnchor(e.clientX, e.clientY, 200, 72), request: newTableRequest(world, containersRef.current, gridSnapper()) });
     };
 
     // Capture phase on purpose: the overlays close on Escape from their own document/dialog
@@ -482,7 +531,7 @@ export function App(_props: AppProps) {
 
   return (
     <>
-      <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} ref={viewportRef} tabIndex={0}>
+      <div class={panActive ? 'ddd-viewport is-pan-mode' : 'ddd-viewport'} data-appearance={appearance} ref={viewportRef} tabIndex={0}>
         {worldMounted ? (
           <ErrorBoundary scope="canvas">
           <div ref={attachWorld} class={readOnly ? 'ddd-world is-merge-locked' : 'ddd-world'}>
@@ -500,9 +549,9 @@ export function App(_props: AppProps) {
             ) : null}
             {derived.containers.map((c) => {
               if (visibleNames && !visibleNames.has(containerId(c.name))) return null;
-              return <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} />;
+              return <GroupContainer key={`container:${c.name}`} name={c.name} x={c.x} y={c.y} w={c.w} h={c.h} color={c.color} note={groupsByName.get(c.name)?.note} />;
             })}
-            <EdgeLayer
+            {architectureScene ? <ArchitectureLayer scene={architectureScene} bounds={worldBbox} printing={editingPrintLayout} /> : <EdgeLayer
               refs={derived.effectiveRefs}
               refKeyByStableId={derived.refKeyByStableId}
               visibleRefIds={visibleRefIds}
@@ -511,18 +560,19 @@ export function App(_props: AppProps) {
               lod={lod}
               positions={positions}
               rows={rowGeometry}
+              tablesByName={tablesByName}
               groupSizes={derived.collapsedNodes}
               worldBbox={worldBbox}
               refDiff={edgeRefDiff}
               deps={shownDeps}
               obstacles={edgeObstacles}
-            />
+            />}
             {renderedTables.map((t) => {
               if (visibleNames && !visibleNames.has(t.name)) return null;
               if (mergeTableKeys.has(t.name)) return null; // shown as ghosts during conflict resolution
               const pos = positions.get(t.name);
               if (!pos) return null;
-              const groupColor = t.groupName ? (groupState[t.groupName]?.color ?? colorForGroup(t.groupName)) : undefined;
+              const groupColor = t.groupName ? (groupState[t.groupName]?.color ?? groupsByName.get(t.groupName)?.color ?? colorForGroup(t.groupName)) : undefined;
               // Sidecar color beats DBML headercolor, which is display-only (spec 18).
               const tColor = tableColors.get(t.name) ?? t.headerColor ?? groupColor;
               return (
@@ -535,6 +585,7 @@ export function App(_props: AppProps) {
                   selected={selection.has(t.name)}
                   color={tColor}
                   fkColumns={fkColumnsByTable.get(t.name)}
+                  foreignKeys={foreignKeys.get(t.name)}
                   recordCount={recordCountByTable.get(t.name)}
                   diffStatus={diffByTable?.get(t.name)}
                   diffBase={diffBaseByTable?.get(t.name)}
@@ -555,10 +606,15 @@ export function App(_props: AppProps) {
                   w={g.w}
                   h={g.h}
                   color={g.color}
+                  note={groupsByName.get(g.name)?.note}
                   diffStatus={groupDiff?.get(g.name)}
                 />
               );
             })}
+            {visibleLabels.map((label) => (
+              <LabelNode key={label.layoutKey} label={label}
+                onEdit={() => setLabelDraft({ position: { x: label.x, y: label.y }, label })} />
+            ))}
             {mergeConflicts ? <MergeGhosts tablesByName={tablesByName} viewportRect={viewportRect} lod={lod} /> : null}
             {diffActive ? (
               <DiffGhosts
@@ -584,8 +640,8 @@ export function App(_props: AppProps) {
           />
         ) : null}
         {!ready ? <div class="ddd-empty">loading…</div> : null}
-        {ready && schema.tables.length === 0 && !parseError ? (
-          <div class="ddd-empty">empty DBML — define a Table to see it here.</div>
+        {ready && !worldMounted && !parseError ? (
+          <div class="ddd-empty">{activeView ? 'This diagram view is empty.' : architecture ? 'Define architecture elements in the DBML file.' : 'Empty diagram. Define a table or right-click to add a label.'}</div>
         ) : null}
         <ErrorBoundary scope="toolbars">
           {ready ? <AppMenu /> : null}
@@ -604,28 +660,39 @@ export function App(_props: AppProps) {
       ) : null}
       {ready ? (
         <div class="ddd-statusbar">
-          {visibleCount}/{totalTableCount} visible · {derived.effectiveRefs.length} refs · zoom <ZoomPct />% · LOD {lod}
+          {architecture ? `${architecture.nodes.length} elements · ${architecture.groups.length} groups · ${architecture.links.length} links`
+            : `${visibleCount}/${totalTableCount} visible · ${derived.effectiveRefs.length} refs`} · zoom <ZoomPct />%
+          {!architecture ? ` · LOD ${lod}` : ''}
           {selection.size > 0 ? ` · ${selection.size} selected` : ''}
         </div>
       ) : null}
       <ErrorBoundary scope="overlays">
         <Tooltip />
         <ExportModal />
-        <ExportImageModal derived={exportDerived} />
+        <ExportImageModal schema={schema} viewName={activeView?.name} derived={exportDerived} />
         <SettingsPanel />
         <RecordsModal />
         <GitPanel />
         <EdgeOrderProgress />
         <Notice />
         <FkPrompt />
+        {labelDraft ? <LabelModal draft={labelDraft} onClose={() => setLabelDraft(null)} /> : null}
         {canvasMenu ? (
           <ContextMenu
             x={canvasMenu.x}
             y={canvasMenu.y}
-            items={[{
+            items={[...(!architecture ? [{
               label: 'New table here',
               disabled: readOnly,
               onClick: () => { if (!isCanvasReadOnly(store.getState())) postToHost(canvasMenu.request); },
+            }] : []), {
+              label: 'Add label here',
+              disabled: readOnly,
+              onClick: () => {
+                if (isCanvasReadOnly(store.getState())) return;
+                const { x, y } = canvasMenu.request.payload;
+                setLabelDraft({ position: { x, y } });
+              },
             }]}
             onClose={closeCanvasMenu}
           />

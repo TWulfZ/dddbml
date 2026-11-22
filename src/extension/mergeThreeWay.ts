@@ -1,4 +1,5 @@
-import type { EdgeLayout, GroupLayout, Layout, TableLayout } from '../shared/types';
+import type { LabelLayout } from '../shared/diagramLabels';
+import type { EdgeLayout, GroupLayout, Layout, MergeSection, TableLayout } from '../shared/types';
 
 /**
  * Pure 3-way merge of the SHARED layout sections (tables, groups, edges) keyed by
@@ -15,7 +16,7 @@ import type { EdgeLayout, GroupLayout, Layout, TableLayout } from '../shared/typ
  * not live in the git file. `viewport` of the result is carried from `ours`.
  */
 
-export type ConflictSection = 'tables' | 'groups' | 'edges';
+export type ConflictSection = MergeSection;
 
 export interface MergeConflict {
   section: ConflictSection;
@@ -82,12 +83,16 @@ export function mergeThreeWay(base: Layout, ours: Layout, theirs: Layout): Merge
   const tables: Record<string, TableLayout> = {};
   const groups: Record<string, GroupLayout> = {};
   const edges: Record<string, EdgeLayout> = {};
+  const labels: Record<string, LabelLayout> = {};
 
   mergeSection('tables', base.tables, ours.tables, theirs.tables, tables, conflicts);
   mergeSection('groups', base.groups, ours.groups, theirs.groups, groups, conflicts);
   mergeSection('edges', base.edges ?? {}, ours.edges ?? {}, theirs.edges ?? {}, edges, conflicts);
 
+  mergeSection('labels', base.labels ?? {}, ours.labels ?? {}, theirs.labels ?? {}, labels, conflicts);
+
   const merged: Layout = { version: 1, viewport: ours.viewport, tables, groups, edges };
+  if (Object.keys(labels).length) merged.labels = labels;
   const edgeRouting = mergeEdgeRouting(ours.edgeRouting, theirs.edgeRouting);
   if (edgeRouting !== undefined) merged.edgeRouting = edgeRouting;
   return { merged, conflicts };

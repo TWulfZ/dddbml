@@ -12,7 +12,7 @@ import { HoverCard } from '../ui/HoverCard';
 import { LodPreview } from './lodPreview';
 import { IconLayout, IconZoom, IconEye, IconExport, IconInfo, IconReset } from '../icons';
 import type { ExporterMeta } from '../../shared/exporters/types';
-import { defaultSettings, flattenSettings, SETTING_RANGES, type FlatSettingsPatch, type NumericSettingKey, type UiDensity } from '../../shared/types';
+import { defaultSettings, flattenSettings, SETTING_RANGES, type DiagramAppearance, type FlatSettingsPatch, type NumericSettingKey, type UiDensity } from '../../shared/types';
 
 type PatchKey = keyof FlatSettingsPatch;
 type Category = 'interface' | 'viewport' | 'lod' | 'export';
@@ -25,7 +25,7 @@ const CATEGORIES: { id: Category; label: string; icon: VNode }[] = [
 ];
 
 const CATEGORY_KEYS: Record<Category, PatchKey[]> = {
-  interface: ['ui.density', 'ui.snapToGrid', 'ui.gridSize', 'ui.layoutSpacing'],
+  interface: ['ui.diagramAppearance', 'ui.density', 'ui.showKeyColumn', 'ui.snapToGrid', 'ui.gridSize', 'ui.layoutSpacing'],
   viewport: ['zoomStep', 'zoomMin', 'zoomMax'],
   lod: ['lod.lowThreshold'],
   export: [
@@ -94,6 +94,17 @@ function SettingsPanelImpl() {
         <div class="ddd-settings__content">
           {active === 'interface' ? (
             <Section category="interface">
+              <RadioGroup<DiagramAppearance>
+                label="Diagram appearance"
+                hint="Edit the print layout in light or dark. Printer-friendly SVGs always use a light palette."
+                value={settings.ui.diagramAppearance}
+                options={[
+                  { value: 'theme', label: 'VS Code theme' },
+                  { value: 'print-light', label: 'Printer friendly · light' },
+                  { value: 'print-dark', label: 'Printer friendly · dark' },
+                ]}
+                onChange={(v) => apply('ui.diagramAppearance', v)}
+              />
               <RadioGroup<UiDensity>
                 label="Density"
                 hint="Table width, row height, and font size."
@@ -104,6 +115,12 @@ function SettingsPanelImpl() {
                   { value: 'comfortable', label: 'Comfortable' },
                 ]}
                 onChange={(v) => apply('ui.density', v)}
+              />
+              <Checkbox
+                label="PK/FK column"
+                hint="Show PK or FK before field names. Print layouts always show keys."
+                value={settings.ui.showKeyColumn}
+                onCommit={(v) => apply('ui.showKeyColumn', v)}
               />
               <Checkbox
                 label="Snap to grid (magnet)"

@@ -1,3 +1,6 @@
+import { architectureBounds, buildArchitectureScene, positionArchitectureCaptions } from '../layout/architectureLayout';
+import { diagramAnnotations } from '../layout/diagramLabels';
+import { activeDiagramView, schemaForView } from '../layout/diagramView';
 import { store, type AppState } from '../state/store';
 import { deriveSceneGeometry, sceneBounds, type SceneGeometry } from './sceneGeometry';
 import { buildRowGeometry, fkColumnsByTable, type RowGeometry } from '../layout/tableRows';
@@ -58,26 +61,35 @@ export function resetView(): void {
 }
 
 /** What is drawn right now, computed from the store (the camera helpers run outside App's memos). */
-export function liveScene(state: AppState): { scene: SceneGeometry; rows: RowGeometry } {
-  const { schema, positions } = state;
+export function liveScene(state: AppState): { scene: SceneGeometry; rows: RowGeometry; schema: AppState['schema'] } {
+  const { positions } = state;
+  const schema = schemaForView(state.schema, activeDiagramView(state.schema, state.activeDiagramView));
   const tablesByName = new Map(schema.tables.map((t) => [t.name, t]));
   const rows = buildRowGeometry({
     tables: schema.tables,
-    showOnlyPkFk: state.showOnlyPkFk,
+    showOnlyPkFk: state.settings.ui.diagramAppearance === 'theme' && state.showOnlyPkFk,
     fkColumnsByTable: fkColumnsByTable(schema.refs),
     diffByTable: state.diffByTable,
     diffBaseByTable: state.diffBaseByTable,
     columnDiffByTable: state.columnDiffByTable,
   });
-  return { scene: deriveSceneGeometry(schema, positions, state.groups, state.hiddenTables, tablesByName, rows.count), rows };
+  return { schema, scene: deriveSceneGeometry(schema, positions, state.groups, state.hiddenTables, tablesByName, rows.count), rows };
 }
 
 export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
   const state = store.getState();
   const { zoomMin, zoomMax } = state.settings;
-  const { schema, positions } = state;
-  const { scene, rows } = liveScene(state);
-  const bounds = sceneBounds(schema, positions, scene, rows.count);
+  const { scene, rows, schema } = liveScene(state);
+  const { notes, captions } = diagramAnnotations(schema, state.labelLayouts, state.showProjectTitle, state.showProjectNote);
+  const architecture = schema.architecture ? buildArchitectureScene(schema.architecture, state.positions, notes, state.edgeLayouts) : null;
+  const placedCaptions = architecture ? positionArchitectureCaptions(architecture, captions) : captions;
+  const base = sceneBounds(schema, state.positions, scene, rows.count, [...(architecture?.notes ?? notes), ...placedCaptions]);
+  const arch = architecture ? architectureBounds(architecture) : null;
+  const bounds = base && arch ? {
+    x: Math.min(base.x, arch.x), y: Math.min(base.y, arch.y),
+    w: Math.max(base.x + base.w, arch.x + arch.w) - Math.min(base.x, arch.x),
+    h: Math.max(base.y + base.h, arch.y + arch.h) - Math.min(base.y, arch.y),
+  } : base ?? arch;
   if (!bounds) return;
   const rect = viewportEl.getBoundingClientRect();
   const availW = Math.max(1, rect.width - padding * 2);

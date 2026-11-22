@@ -2,7 +2,7 @@
   "name": "dddbml",
   "displayName": "dddbml — DBML Diagram with Git-friendly Layout",
   "description": "Interactive DBML diagram renderer for VSCode with per-table position persistence, TableGroup collapse for DDD contexts, and viewport culling for large schemas (5000+ tables).",
-  "version": "0.4.2",
+  "version": "1.1.0",
   "publisher": "TWulfZ",
   "icon": "docs/icon.png",
   "engines": {
@@ -191,6 +191,17 @@
           ],
           "description": "Visual density of tables and rows. Controls table width, row height, padding, and font size."
         },
+        "dddbml.ui.diagramAppearance": {
+          "type": "string",
+          "default": "theme",
+          "enum": ["theme", "print-light", "print-dark"],
+          "description": "Use the VS Code theme or edit the printer-friendly diagram in a light or dark palette."
+        },
+        "dddbml.ui.showKeyColumn": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show a headerless PK/FK column before the field names on diagram tables."
+        },
         "dddbml.ui.snapToGrid": {
           "type": "boolean",
           "default": false,
@@ -261,7 +272,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "@dbml/core": "^10.2.0",
+    "@dbml/core": "^12.1.0",
     "@vscode/codicons": "^0.0.45",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

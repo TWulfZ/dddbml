@@ -1,5 +1,6 @@
 import type { EdgeLayout, QualifiedName, Waypoint } from '../../shared/types';
 import type { KeyedDepEdge } from './edgeKey';
+import { portPoint, STUB_DIR } from './edgeRouter';
 import type { Bbox } from './spatialIndex';
 
 /** Matches the ref stub length (edgeRouter MIN_STUB) so dep and FK edges leave tables identically. */
@@ -25,11 +26,14 @@ export interface DepRoute {
   d: string;
   source: Point;
   target: Point;
+  sourceBox: Bbox;
+  targetBox: Bbox;
   sourceStub: Point;
   targetStub: Point;
   waypoints: Waypoint[];
   /** One per curve span (stub end → waypoint → … → stub end), at the span's t=0.5 point. */
   inserts: DepInsertHandle[];
+  spans: Array<[Point, Point, Point, Point]>;
 }
 
 /** Resolves the absolute port Y of a dep endpoint (column row center, else header center). */
@@ -58,11 +62,13 @@ function routeKeyedDep(
   const a = bboxOf(d.upstream.table);
   const b = bboxOf(d.downstream.table);
   if (!a || !b) return null;
+  const layout = layoutOf(d.id);
   return routeDep(
     d.id,
     { bbox: a, portY: portY(d.upstream.table, d.upstream.columns, a) },
     { bbox: b, portY: portY(d.downstream.table, d.downstream.columns, b) },
-    layoutOf(d.id)?.waypoints ?? [],
+    layout?.waypoints ?? [],
+    layout,
   );
 }
 
@@ -126,21 +132,24 @@ export function depColor(dep: KeyedDepEdge | undefined, layout: EdgeLayout | und
 }
 
 /**
- * Smooth (non-orthogonal) dep route: rigid horizontal stubs at both ends, and between them a
+ * Smooth (non-orthogonal) dep route: rigid outward stubs at both ends, and between them a
  * curve that passes THROUGH the user's waypoints (Catmull-Rom converted to cubic beziers).
  * Spec 18 §Render.
  */
-export function routeDep(id: string, src: DepEndpointGeom, tgt: DepEndpointGeom, waypoints: readonly Waypoint[]): DepRoute {
+export function routeDep(
+  id: string, src: DepEndpointGeom, tgt: DepEndpointGeom, waypoints: readonly Waypoint[], layout?: EdgeLayout,
+): DepRoute {
   const forward = src.bbox.x + src.bbox.w / 2 <= tgt.bbox.x + tgt.bbox.w / 2;
-  const dirA = forward ? 1 : -1;
-  const dirB = -dirA;
-  const a: Point = { x: forward ? src.bbox.x + src.bbox.w : src.bbox.x, y: src.portY };
-  const b: Point = { x: forward ? tgt.bbox.x : tgt.bbox.x + tgt.bbox.w, y: tgt.portY };
+  const sourceSide = layout?.sourceSide ?? (forward ? 'right' : 'left');
+  const targetSide = layout?.targetSide ?? (forward ? 'left' : 'right');
+  const dirA = STUB_DIR[sourceSide], dirB = STUB_DIR[targetSide];
+  const a = portPoint(src.bbox, sourceSide, layout?.sourcePort ?? 0.5, layout?.sourcePort === undefined ? src.portY : undefined);
+  const b = portPoint(tgt.bbox, targetSide, layout?.targetPort ?? 0.5, layout?.targetPort === undefined ? tgt.portY : undefined);
 
-  // Same clamp as refs: overlapping-in-x tables would otherwise get stubs that cross each other.
-  const stubLen = Math.max(0, Math.min(DEP_STUB, Math.floor(Math.abs(b.x - a.x) / 2)));
-  const aStub: Point = { x: a.x + dirA * stubLen, y: a.y };
-  const bStub: Point = { x: b.x + dirB * stubLen, y: b.y };
+  const stubLen = layout?.sourceSide || layout?.targetSide ? DEP_STUB
+    : Math.min(DEP_STUB, Math.floor(Math.abs(b.x - a.x) / 2));
+  const aStub = { x: a.x + dirA.x * stubLen, y: a.y + dirA.y * stubLen };
+  const bStub = { x: b.x + dirB.x * stubLen, y: b.y + dirB.y * stubLen };
 
   const pts: Point[] = [aStub, ...waypoints.map((w) => ({ x: w.x, y: w.y })), bStub];
   const spans = bezierSpans(pts, dirA, dirB);
@@ -158,10 +167,13 @@ export function routeDep(id: string, src: DepEndpointGeom, tgt: DepEndpointGeom,
     d,
     source: a,
     target: b,
+    sourceBox: src.bbox,
+    targetBox: tgt.bbox,
     sourceStub: aStub,
     targetStub: bStub,
     waypoints: waypoints.map((w) => ({ x: w.x, y: w.y })),
     inserts,
+    spans,
   };
 }
 
@@ -169,20 +181,26 @@ export function routeDep(id: string, src: DepEndpointGeom, tgt: DepEndpointGeom,
  * Endpoint tangents are forced along the stub direction so the curve is C1-continuous with the
  * straight stubs (no visible kink where it leaves the table).
  */
-function bezierSpans(pts: Point[], dirA: number, dirB: number): Array<[Point, Point, Point, Point]> {
+function bezierSpans(pts: Point[], dirA: Point, dirB: Point): Array<[Point, Point, Point, Point]> {
   const n = pts.length;
   const first = pts[0]!;
   const last = pts[n - 1]!;
 
   if (n === 2) {
-    const h = Math.max(MIN_HANDLE, Math.abs(last.x - first.x) / 2);
-    return [[first, { x: first.x + dirA * h, y: first.y }, { x: last.x + dirB * h, y: last.y }, last]];
+    const h = Math.max(MIN_HANDLE, (dirA.y || dirB.y ? dist(first, last) : Math.abs(last.x - first.x)) / 2);
+    return [[first, { x: first.x + dirA.x * h, y: first.y + dirA.y * h }, { x: last.x + dirB.x * h, y: last.y + dirB.y * h }, last]];
   }
 
   const tangents: Point[] = pts.map((p, i) => {
-    if (i === 0) return { x: dirA * dist(p, pts[1]!), y: 0 };
+    if (i === 0) {
+      const length = dist(p, pts[1]!);
+      return { x: dirA.x * length, y: dirA.y * length };
+    }
     // Entering bStub the curve travels opposite to dirB (towards the table).
-    if (i === n - 1) return { x: -dirB * dist(pts[n - 2]!, p), y: 0 };
+    if (i === n - 1) {
+      const length = dist(pts[n - 2]!, p);
+      return { x: -dirB.x * length, y: -dirB.y * length };
+    }
     const prev = pts[i - 1]!;
     const next = pts[i + 1]!;
     return { x: (next.x - prev.x) / 2, y: (next.y - prev.y) / 2 };

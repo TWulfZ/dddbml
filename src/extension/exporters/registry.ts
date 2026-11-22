@@ -19,6 +19,7 @@ export function listExporters(): ExporterMeta[] {
       description: e.description,
       language: e.language,
       optionsSchema: e.optionsSchema,
+      fullSchemaOnly: e.fullSchemaOnly,
     });
   }
   out.sort((a, b) => a.label.localeCompare(b.label));

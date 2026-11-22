@@ -137,8 +137,8 @@ const isVerticalSide = (side: string | undefined): boolean => side === 'top' || 
 /**
  * A saved shape the current zone rule cannot draw, so render and edits ignore it whole (sides +
  * waypoints, which were routed for other ports), keeping only its color (spec 05 §11).
- * - Any `top`/`bottom` port, manual or `auto`: no current router or UI writes one (the endpoint flip
- *   only pins left/right), so it can only be a pre-0.4 router's choice.
+ * - A `top`/`bottom` port without its normalized endpoint position: this is an older layout.
+ *   Current manual drags always write a position, and all four sides are honoured for those.
  * - Side-less `auto` waypoints between x-overlapping tables (needs both bboxes): older passes left the
  *   sides implicit, routing for bottom/top (v0.3.0) or centre-ordered left/right, never for today's
  *   zones. The pass now always writes both sides with its waypoints, so no current shape matches.
@@ -146,7 +146,7 @@ const isVerticalSide = (side: string | undefined): boolean => side === 'top' || 
  */
 export function isLegacyEdgeShape(layout: EdgeLayout | undefined, src?: Bbox, tgt?: Bbox): boolean {
   if (!layout) return false;
-  if (isVerticalSide(layout.sourceSide) || isVerticalSide(layout.targetSide)) return true;
+  if ((isVerticalSide(layout.sourceSide) && layout.sourcePort === undefined) || (isVerticalSide(layout.targetSide) && layout.targetPort === undefined)) return true;
   if (layout.auto !== true) return false;
   if (!src || !tgt || !layout.waypoints?.length || layout.sourceSide || layout.targetSide) return false;
   return xOverlaps(src, tgt);

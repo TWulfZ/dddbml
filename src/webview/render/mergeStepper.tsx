@@ -36,7 +36,7 @@ export function MergeStepper() {
     const c = conflicts[cursor];
     if (!c || c.section !== 'tables') return;
     const table = schema.tables.find((t) => t.name === c.key);
-    const size = estimateSize(table?.columns.length ?? 0);
+    const size = estimateSize(table?.columns.length ?? 0, table);
     // Frame the cards where MergeGhosts actually draws them (incoming may be nudged).
     const nudge = densityMetrics(store.getState().settings.ui.density).headerHeight;
     const a = c.ours ? bboxAt(ghostPos(c, 'ours', nudge), size) : null;
@@ -59,7 +59,7 @@ export function MergeStepper() {
   if (!c) return null;
 
   const decided = decisions[c.id];
-  const noun = c.section === 'tables' ? 'table' : c.section === 'groups' ? 'group' : 'edge';
+  const noun = c.section === 'tables' ? 'table' : c.section === 'groups' ? 'group' : c.section === 'labels' ? 'label' : 'edge';
 
   const pick = (side: 'ours' | 'theirs') => {
     store.getState().setMergeDecision(c.id, side);
